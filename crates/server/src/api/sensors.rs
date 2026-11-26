@@ -78,6 +78,9 @@ pub struct EntryRequest {
     /// `port`, `user` and `password` (kept sealed as above), and `tls`
     /// (`prefer`, `verify` or `off`): `postgresql` also `database` and
     /// `slow_after`, `mysql` (MySQL and MariaDB) and `redis` nothing more.
+    /// `jmx` (a Java virtual machine through Jolokia) takes `tls` `off` or
+    /// `verify` only, its password over HTTPS or to the loopback only, and
+    /// also `path` (`/jolokia/`) and `groups` (`tomcat`, `kafka`, `none`).
     /// `docker`, run by the agent only, takes `engine` (`docker` or
     /// `podman`), `containers` (a regular expression on names) and
     /// `stats`. `GET /api/check-templates` lists what each measures.
@@ -912,7 +915,7 @@ pub fn probe_kind(kind: &str) -> bool {
 }
 
 const PROBE_KINDS_TEXT: &str =
-    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql`, `redis`, `aws` and `azure`";
+    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql`, `redis`, `jmx`, `aws` and `azure`";
 
 async fn create(
     state: &ApiState,

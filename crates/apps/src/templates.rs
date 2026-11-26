@@ -2,7 +2,7 @@
 //! the template the server applies when a check is added with its
 //! default alerts, and lists in its API.
 
-use crate::{DOCKER, MYSQL, POSTGRESQL, REDIS};
+use crate::{DOCKER, JMX, MYSQL, POSTGRESQL, REDIS};
 
 /// One metric of a kind, by its suffix: the check's name, `_`, then this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -455,6 +455,256 @@ pub const REDIS_TEMPLATE: Template = Template {
     ],
 };
 
+pub const JMX_TEMPLATE: Template = Template {
+    kind: JMX,
+    title: "Java (JMX)",
+    runs: "agent_or_probe",
+    default_port: Some(crate::jmx::DEFAULT_PORT),
+    params: &[
+        HOST,
+        p("port", Some("8778"), "Port of the Jolokia agent"),
+        p("path", Some("/jolokia/"), "Path Jolokia answers on"),
+        p("user", None, "Jolokia's HTTP Basic user; none by default"),
+        p(
+            "password",
+            None,
+            "Kept sealed by the server, never returned; sent over HTTPS only, or to the loopback",
+        ),
+        p(
+            "tls",
+            Some("off"),
+            "`off` (HTTP) or `verify` (HTTPS, certificate and name verified)",
+        ),
+        p(
+            "groups",
+            Some("tomcat,kafka"),
+            "MBeans read besides the JVM's, where they exist: `tomcat`, `kafka`, or `none`",
+        ),
+    ],
+    metrics: &[
+        m(
+            "up",
+            "",
+            None,
+            "1 when Jolokia answered with the JVM's memory; 0 with labels `reason` and `error`",
+        ),
+        m(
+            "response_seconds",
+            "seconds",
+            None,
+            "Time Jolokia took to answer every read",
+        ),
+        m("heap_used_bytes", "bytes", None, "Heap in use"),
+        m(
+            "heap_committed_bytes",
+            "bytes",
+            None,
+            "Heap the JVM holds from the system",
+        ),
+        m("heap_max_bytes", "bytes", None, "Largest heap (`-Xmx`)"),
+        m(
+            "heap_usage_ratio",
+            "ratio",
+            None,
+            "Heap in use against its maximum",
+        ),
+        m(
+            "non_heap_used_bytes",
+            "bytes",
+            None,
+            "Metaspace, code cache and other memory outside the heap",
+        ),
+        m(
+            "non_heap_committed_bytes",
+            "bytes",
+            None,
+            "Non-heap memory the JVM holds from the system",
+        ),
+        m(
+            "non_heap_max_bytes",
+            "bytes",
+            None,
+            "Largest non-heap memory, when set",
+        ),
+        m(
+            "non_heap_usage_ratio",
+            "ratio",
+            None,
+            "Non-heap memory in use against its maximum, when set",
+        ),
+        m(
+            "gc_collections",
+            "count",
+            Some("collector"),
+            "Collections since the last collection",
+        ),
+        m(
+            "gc_seconds",
+            "seconds",
+            Some("collector"),
+            "Time spent collecting since the last collection",
+        ),
+        m(
+            "gc_time_ratio",
+            "ratio",
+            None,
+            "Share of time every collector spent collecting since the last collection",
+        ),
+        m("threads", "count", None, "Live threads"),
+        m("threads_daemon", "count", None, "Live daemon threads"),
+        m(
+            "threads_peak",
+            "count",
+            None,
+            "Most live threads since the JVM started",
+        ),
+        m(
+            "threads_deadlocked",
+            "count",
+            None,
+            "Threads deadlocked; absent when a Jolokia policy refuses `exec`",
+        ),
+        m(
+            "process_cpu_ratio",
+            "ratio",
+            None,
+            "Share of the machine's processor time the JVM uses",
+        ),
+        m(
+            "file_descriptors_open",
+            "count",
+            None,
+            "Open file descriptors (Unix)",
+        ),
+        m(
+            "file_descriptors_ratio",
+            "ratio",
+            None,
+            "Open file descriptors against the process's limit (Unix)",
+        ),
+        m(
+            "uptime_seconds",
+            "seconds",
+            None,
+            "Time since the JVM started",
+        ),
+        m(
+            "tomcat_threads_busy",
+            "count",
+            Some("connector"),
+            "Tomcat: threads serving a request",
+        ),
+        m(
+            "tomcat_threads_max",
+            "count",
+            Some("connector"),
+            "Tomcat: `maxThreads`",
+        ),
+        m(
+            "tomcat_threads_ratio",
+            "ratio",
+            Some("connector"),
+            "Tomcat: busy threads against `maxThreads`",
+        ),
+        m(
+            "tomcat_requests_per_second",
+            "per_second",
+            Some("connector"),
+            "Tomcat: requests per second",
+        ),
+        m(
+            "tomcat_errors",
+            "count",
+            Some("connector"),
+            "Tomcat: responses with an error status (400 or more) since the last collection",
+        ),
+        m(
+            "tomcat_request_seconds",
+            "seconds",
+            Some("connector"),
+            "Tomcat: average time per request since the last collection",
+        ),
+        m(
+            "tomcat_sessions",
+            "count",
+            Some("context"),
+            "Tomcat: active sessions of each web application",
+        ),
+        m(
+            "kafka_under_replicated",
+            "count",
+            None,
+            "Kafka: partitions led here with fewer in-sync replicas than replicas",
+        ),
+        m(
+            "kafka_under_min_isr",
+            "count",
+            None,
+            "Kafka: partitions led here under `min.insync.replicas`, refusing `acks=all` writes",
+        ),
+        m(
+            "kafka_offline_partitions",
+            "count",
+            None,
+            "Kafka, on the active controller: partitions without a leader",
+        ),
+        m(
+            "kafka_active_controller",
+            "",
+            None,
+            "Kafka: 1 on the broker that is the active controller",
+        ),
+        m(
+            "kafka_partitions",
+            "count",
+            None,
+            "Kafka: partitions on this broker",
+        ),
+        m(
+            "kafka_isr_shrinks",
+            "count",
+            None,
+            "Kafka: times a replica fell out of sync since the last collection",
+        ),
+        m(
+            "kafka_messages_in_per_second",
+            "per_second",
+            None,
+            "Kafka: messages received per second",
+        ),
+        m(
+            "kafka_bytes_in_per_second",
+            "per_second",
+            None,
+            "Kafka: bytes received from clients per second",
+        ),
+        m(
+            "kafka_bytes_out_per_second",
+            "per_second",
+            None,
+            "Kafka: bytes sent to clients per second",
+        ),
+        m(
+            "kafka_handler_idle_ratio",
+            "ratio",
+            None,
+            "Kafka: share of time request handler threads are idle, over a minute",
+        ),
+    ],
+    alerts: &[
+        a("up", "<", None, Some(1.0), 2),
+        a("heap_usage_ratio", ">", Some(0.9), Some(0.95), 10),
+        a("gc_time_ratio", ">", Some(0.1), Some(0.25), 10),
+        a("threads_deadlocked", ">", None, Some(0.0), 0),
+        a("file_descriptors_ratio", ">", Some(0.8), Some(0.95), 5),
+        a("tomcat_threads_ratio", ">", Some(0.9), None, 5),
+        a("kafka_under_replicated", ">", Some(0.0), None, 5),
+        a("kafka_under_min_isr", ">", None, Some(0.0), 2),
+        a("kafka_offline_partitions", ">", None, Some(0.0), 2),
+        a("kafka_handler_idle_ratio", "<", Some(0.2), None, 10),
+    ],
+};
+
 pub const DOCKER_TEMPLATE: Template = Template {
     kind: DOCKER,
     title: "Docker containers",
@@ -555,10 +805,11 @@ pub const DOCKER_TEMPLATE: Template = Template {
 };
 
 /// Every template, in the order they are offered.
-pub const TEMPLATES: [Template; 4] = [
+pub const TEMPLATES: [Template; 5] = [
     POSTGRESQL_TEMPLATE,
     MYSQL_TEMPLATE,
     REDIS_TEMPLATE,
+    JMX_TEMPLATE,
     DOCKER_TEMPLATE,
 ];
 
@@ -589,6 +840,11 @@ mod tests {
                 );
                 assert!(alert.warning.is_some() || alert.critical.is_some());
                 assert!(matches!(alert.comparison, ">" | ">=" | "<" | "<="));
+            }
+            // An imported check's name of up to 32 bytes, `_` and the
+            // suffix fit the 64 of a sensor's name.
+            for metric in t.metrics {
+                assert!(metric.suffix.len() <= 31, "{} {}", t.kind, metric.suffix);
             }
             let mut names: Vec<_> = t.metrics.iter().map(|m| m.suffix).collect();
             names.sort_unstable();

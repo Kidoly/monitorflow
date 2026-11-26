@@ -264,7 +264,7 @@ check plugin turned on for the site in `params.plugin`. The answer to a bad row 
 wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\n\
 A server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the \
 server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP), `http`, \
-`postgresql`, `mysql` and `redis` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe \
+`postgresql`, `mysql`, `redis` and `jmx` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe \
 check of a server with an agent names its `host`; a device's checks default to its address. A website check \
 names its `url` and takes no address. Its `instance` \
 defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep \
@@ -281,11 +281,12 @@ up to 10 channels, `oidN` (a numeric OID) with optional `nameN`, `keyN` (the met
 `critical`); or a `table` OID with a `name_column`, each `oidN` then a column of it. Credentials and \
 `lookupN_map` are refused: they are added when the check is sent to its probe. \
 `/api/v1/devices/{id}/snmp-checks` reads and writes the same rows with their thresholds.\n\n\
-The ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `redis` and \
-`docker`; `GET /api/v1/check-templates` lists their parameters, metrics and default alerts. The first three run \
-on the agent (against `127.0.0.1` by default, within its `sensors.port_targets`) or from a probe, and take a \
-`password` kept sealed like a website check's: an update without it keeps it only while `host` and `port` stay \
-the same. `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the \
+The ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `redis`, \
+`jmx` (a Java virtual machine through Jolokia) and `docker`; `GET /api/v1/check-templates` lists their \
+parameters, metrics and default alerts. The first four run on the agent (against `127.0.0.1` by default, \
+within its `sensors.port_targets`) or from a probe, and take a `password` kept sealed like a website check's: \
+an update without it keeps it only while `host` and `port` stay the same. A `jmx` password is sent over HTTPS \
+only (`tls` `verify`), or to the loopback. `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the \
 template's alerts, named after the check, where none exists on that metric.\n\n\
 Audited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the \
 parameters but never their values. Connected agents get the change within seconds."

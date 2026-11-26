@@ -590,10 +590,10 @@ fn map_host(
         .extend(builtins.into_iter().chain(pending).map(|p| p.check));
     out.checks.extend(silent);
     for (kind, template) in apps {
-        let code = if kind == AppKind::Docker {
-            "app_docker_template"
-        } else {
-            "app_template"
+        let code = match kind {
+            AppKind::Docker => "app_docker_template",
+            AppKind::Jmx => "app_jmx_template",
+            _ => "app_template",
         };
         out.checks.push(Check {
             host: key.clone(),
@@ -610,9 +610,14 @@ fn map_host(
 /// Redis and Docker templates read by the agent, by their names since
 /// Zabbix 5.0 ("PostgreSQL by Zabbix agent 2", "Template DB MySQL").
 /// Those through ODBC query from the Zabbix server with a driver: not
-/// these.
+/// these. Its JMX templates, read through its Java gateway ("Generic Java
+/// JMX", "Apache Tomcat by JMX", "Apache Kafka by JMX"), become the Java
+/// check, which reads Jolokia instead.
 fn app_template(name: &str) -> Option<AppKind> {
     let name = name.to_ascii_lowercase();
+    if name.contains("jmx") {
+        return Some(AppKind::Jmx);
+    }
     let agent = name.contains("zabbix agent")
         || name.starts_with("template db ")
         || name.starts_with("template app ");
@@ -656,6 +661,7 @@ fn app_item(key: &str, apps: &[(AppKind, String)]) -> bool {
             AppKind::Postgresql => "pgsql",
             AppKind::Mysql => "mysql",
             AppKind::Redis => "redis",
+            AppKind::Jmx => "jmx",
             AppKind::Docker => "docker",
         }
     })
@@ -689,7 +695,9 @@ fn app_of(kind: AppKind, macros: &Macros) -> App {
             "{$MYSQL.USER}",
         ),
         AppKind::Redis => (first(&["{$REDIS.CONN.URI}"]), "", "", ""),
-        AppKind::Docker => return app,
+        // The host's JMX interface is the Java gateway's RMI port, not
+        // Jolokia's: the check keeps Jolokia's own, 8778.
+        AppKind::Jmx | AppKind::Docker => return app,
     };
     // A URI with an address; a socket or a named session says none.
     if let Some(uri) = uri.filter(|u| u.contains("://") && !u.starts_with("unix")) {

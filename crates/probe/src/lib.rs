@@ -97,6 +97,7 @@ pub const PROBE_RUNS: &[&str] = &[
     monitorflow_apps::POSTGRESQL,
     monitorflow_apps::MYSQL,
     monitorflow_apps::REDIS,
+    monitorflow_apps::JMX,
 ];
 
 /// One check of a probe.

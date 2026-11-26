@@ -2,7 +2,7 @@
 //! alerts a check gets when it is added with them.
 //!
 //! The checks themselves are ordinary rows of `sensor_configs` of kinds
-//! `postgresql`, `mysql`, `redis` and `docker`, made with the routes of
+//! `postgresql`, `mysql`, `redis`, `jmx` and `docker`, made with the routes of
 //! [`super::sensors`]; a template only says what such a check measures and
 //! which thresholds come with it.
 
@@ -164,7 +164,8 @@ mod tests {
     #[test]
     fn views_name_full_metrics() {
         let views: Vec<_> = templates::TEMPLATES.iter().map(view).collect();
-        assert_eq!(views.len(), 4);
+        assert_eq!(views.len(), 5);
+        assert_eq!(views[3].kind, "jmx");
         let pg = &views[0];
         assert_eq!(pg.kind, "postgresql");
         assert!(pg
@@ -188,6 +189,8 @@ mod tests {
                 assert!((0..=86_400).contains(&a.duration_s));
             }
         }
-        assert_eq!(views[3].runs, "agent");
+        assert_eq!(views[4].kind, "docker");
+        assert_eq!(views[4].runs, "agent");
+        assert_eq!(views[3].runs, "agent_or_probe");
     }
 }

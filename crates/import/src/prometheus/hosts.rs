@@ -5,8 +5,8 @@
 //! check on the host that runs it, when that host is known: MonitorFlow
 //! does not collect other tools' metrics, but it can say when the
 //! exporter's port stops answering. The exporters of PostgreSQL, MySQL
-//! and Redis, and cAdvisor, become the ready-made check of what they
-//! read instead (ADR-0183).
+//! and Redis, cAdvisor and the JMX exporter, become the ready-made check
+//! of what they read instead (ADR-0183).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -497,6 +497,10 @@ impl Fleet {
                     || address == "::1";
                 let note = if kind == AppKind::Docker {
                     Note::plain("app_cadvisor")
+                } else if kind == AppKind::Jmx {
+                    // Jolokia beside the exporter, at its own port.
+                    app.address = Some(address).filter(|a| !a.is_empty() && !loopback);
+                    Note::plain("app_jmx_exporter")
                 } else {
                     // The database on the exporter's machine, at its
                     // default port.
@@ -534,11 +538,15 @@ impl Fleet {
 
 /// The ready-made check an exporter stands for, and its name: by the
 /// default port of postgres_exporter, mysqld_exporter and
-/// redis_exporter; cAdvisor by its job's name, as 8080 is any web
-/// server's port.
+/// redis_exporter; cAdvisor and the JMX exporter by their job's name, as
+/// they have no port of their own.
 fn app_exporter(target: &Target) -> Option<(AppKind, &'static str)> {
-    if target.job.to_ascii_lowercase().contains("cadvisor") {
+    let job = target.job.to_ascii_lowercase();
+    if job.contains("cadvisor") {
         return Some((AppKind::Docker, "cAdvisor"));
+    }
+    if job.contains("jmx") {
+        return Some((AppKind::Jmx, "jmx_exporter"));
     }
     match port_of(&target.address)? {
         9187 => Some((AppKind::Postgresql, "postgres_exporter")),
@@ -715,6 +723,7 @@ mod tests {
             ("redis", "10.0.0.7:9121"),
             ("cadvisor", "10.0.0.7:8080"),
             ("web", "10.0.0.7:8080"),
+            ("kafka-jmx", "10.0.0.7:7071"),
         ] {
             collected.targets.push(target(job, address, &[]));
         }
@@ -724,6 +733,8 @@ mod tests {
         pg.address = Some("10.0.0.7".into());
         let mut redis = App::new(AppKind::Redis);
         redis.address = Some("10.0.0.7".into());
+        let mut jmx = App::new(AppKind::Jmx);
+        jmx.address = Some("10.0.0.7".into());
         assert_eq!(
             watches,
             [
@@ -734,12 +745,17 @@ mod tests {
                     address: Some("10.0.0.7".into()),
                     port: 8080
                 },
+                &Watch::app(jmx),
             ]
         );
         assert!(fleet.inventory.checks.iter().all(|c| c.host == "app-01"));
         assert_eq!(
             fleet.inventory.checks[2].fidelity,
             Fidelity::Approximated(Note::plain("app_cadvisor"))
+        );
+        assert_eq!(
+            fleet.inventory.checks[4].fidelity,
+            Fidelity::Approximated(Note::plain("app_jmx_exporter"))
         );
     }
 }

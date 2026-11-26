@@ -347,6 +347,18 @@ pub const NOTES: &[(&str, &str)] = &[
         "Docker is read by the agent of the server that runs it, and this host becomes a device.",
     ),
     (
+        "app_jolokia",
+        "PRTG read values through Jolokia: MonitorFlow's Java check reads the JVM's memory, garbage collection and threads, and Tomcat's or Kafka's where they run, through the same agent, with their alerts. Enter the password on the check if Jolokia asks for one.",
+    ),
+    (
+        "app_jmx_template",
+        "The template {template} becomes MonitorFlow's Java check, which reads the JVM through the Jolokia agent instead of Zabbix's Java gateway: add Jolokia to the JVM, on its port 8778, as the guide shows.",
+    ),
+    (
+        "app_jmx_exporter",
+        "MonitorFlow reads the JVM through the Jolokia agent instead of the JMX exporter, on the exporter's machine and Jolokia's port 8778: add Jolokia to the JVM, as the guide shows. The exporter's other metrics are not moved.",
+    ),
+    (
         "app_other_database",
         "MonitorFlow has ready-made checks for PostgreSQL, MySQL, MariaDB and Redis, not for this database yet.",
     ),

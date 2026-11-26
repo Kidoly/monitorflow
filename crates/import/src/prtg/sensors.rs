@@ -47,6 +47,10 @@ pub enum Family {
     /// A database MonitorFlow has no ready-made check for: Microsoft SQL,
     /// Oracle, ADO.
     OtherDatabase,
+    /// A sensor reading values over HTTP (REST Custom, HTTP Data
+    /// Advanced, HTTP XML/REST Value): the Java check when its URL is
+    /// Jolokia's, nothing otherwise.
+    HttpData,
     /// NetFlow, jFlow, sFlow or IPFIX received from the device.
     Flow,
     Other,
@@ -77,6 +81,22 @@ pub fn family(sensor_type: &str) -> Family {
     }
     if has("docker") {
         return Family::App(AppKind::Docker);
+    }
+    // PRTG has no JMX sensor of its own; a custom one may be named so.
+    if has("jmx") || has("jolokia") {
+        return Family::App(AppKind::Jmx);
+    }
+    // `restcustom`, `httpdataadvanced`, `httpxmlrestvalue`, and the names
+    // PRTG shows: "REST Custom", "HTTP Data Advanced", "HTTP XML/REST
+    // Value".
+    if t.starts_with("restcustom")
+        || t.starts_with("rest custom")
+        || has("httpdata")
+        || has("http data")
+        || has("xmlrest")
+        || has("xml/rest")
+    {
+        return Family::HttpData;
     }
     // `mssqlv2`, `oraclev2`, `adosqlv2`, "Microsoft SQL v2", "Oracle
     // Tablespace".
@@ -156,6 +176,7 @@ pub fn wanted(sensor_type: &str) -> (&'static [&'static str], bool) {
         Family::SnmpCustom => (super::snmp::settings(), true),
         Family::Vmware => (&[], true),
         Family::App(AppKind::Docker) => (DOCKER_SETTINGS, true),
+        Family::App(AppKind::Jmx) | Family::HttpData => (JOLOKIA_SETTINGS, true),
         Family::App(_) => (&["port", "database"], true),
         Family::Ping | Family::Traffic | Family::Flow | Family::OtherDatabase | Family::Other => {
             (&[], false)
@@ -295,7 +316,13 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
         Family::Disk => disk(sensor),
         Family::Service => service(sensor),
         Family::Port => port(sensor, host),
-        Family::Web => web(sensor, host),
+        Family::Web => match jolokia(sensor, host) {
+            Some(mapped) => mapped,
+            None => web(sensor, host),
+        },
+        Family::HttpData => jolokia(sensor, host).unwrap_or_else(|| {
+            Mapped::Not(Note::new("prtg_sensor_type", args! {"type" => sensor_type}))
+        }),
         Family::Certificate => certificate(sensor, host),
         Family::EventLog => event_log(sensor),
         // A server's own `net` check, a device's SNMP interfaces (ADR-0149).
@@ -316,6 +343,9 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
                 lost: lost(sensor, &[]),
             }
         }
+        Family::App(AppKind::Jmx) => {
+            jolokia(sensor, host).unwrap_or_else(|| Mapped::Not(Note::plain("prtg_no_setting")))
+        }
         Family::App(kind) => app(sensor, kind, host),
         Family::OtherDatabase => Mapped::Not(Note::plain("app_other_database")),
         // Flows are not a check: the device's Flows tab turns their
@@ -324,6 +354,69 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
         Family::Flow => Mapped::Not(Note::plain("flow_sensor")),
         Family::Other => Mapped::Not(Note::new("prtg_sensor_type", args! {"type" => sensor_type})),
     }
+}
+
+/// The settings of a sensor that may read Jolokia: its URL, and the user
+/// name of the authentication, never its password.
+const JOLOKIA_SETTINGS: &[&str] = &["httpurl", "url", "requesturl", "httpusername", "port"];
+
+/// An HTTP sensor whose URL is Jolokia's (`http://jvm:8778/jolokia/read/…`),
+/// or a sensor named after JMX: the Java check of that JVM (ADR-0183),
+/// which reads its memory, collections and threads rather than PRTG's one
+/// value. `None` for any other URL.
+fn jolokia(sensor: &Object, host: Option<&str>) -> Option<Mapped> {
+    let setting = |name: &str| {
+        sensor
+            .setting(name)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    };
+    let url = ["httpurl", "url", "requesturl"]
+        .iter()
+        .find_map(|name| setting(name));
+    let named = matches!(
+        family(sensor.sensor_type.as_deref().unwrap_or("")),
+        Family::App(AppKind::Jmx)
+    );
+    let mut app = App::new(AppKind::Jmx);
+    app.address = host.map(str::to_owned);
+    match url {
+        Some(url) if url.to_ascii_lowercase().contains("/jolokia") => {
+            let lower = url.to_ascii_lowercase();
+            let (scheme, rest) = lower.split_once("://").unwrap_or(("http", lower.as_str()));
+            let path_at = rest.find('/').unwrap_or(rest.len());
+            let path = &rest[path_at..];
+            let end = path.find("/jolokia").map_or(0, |i| i + "/jolokia".len());
+            // The path as written, up to and with `/jolokia/`.
+            let offset = url.len() - rest.len() + path_at;
+            app.path = Some(format!("{}/", &url[offset..offset + end]));
+            if url.contains("://") {
+                let address = crate::text::host_of(url);
+                if !address.is_empty() {
+                    app.address = Some(address);
+                }
+                app.port = crate::text::port_of(url);
+            }
+            app.https = scheme == "https";
+        }
+        _ if named => {
+            app.port = setting("port")
+                .and_then(|p| p.parse::<u16>().ok())
+                .filter(|p| *p > 0);
+        }
+        _ => return None,
+    }
+    if app.path.as_deref() == Some("/jolokia/") {
+        app.path = None;
+    }
+    app.user = setting("httpusername").map(str::to_owned);
+    Some(Mapped::Watch {
+        watch: Watch::app(app),
+        alert: None,
+        fidelity: approximated("app_jolokia", args! {}),
+        limits: Vec::new(),
+        lost: lost(sensor, &[]),
+    })
 }
 
 /// The settings naming the container of a Docker Container Status
@@ -1281,5 +1374,87 @@ mod tests {
             map(&sensor("mssqlv2"), Some("192.0.2.43")),
             Mapped::Not(Note::plain("app_other_database"))
         );
+    }
+
+    /// PRTG has no JMX sensor: HTTP sensors reading Jolokia become the
+    /// Java check of that JVM (ADR-0183); other URLs keep their mapping.
+    #[test]
+    fn jolokia_sensors_become_the_java_check() {
+        for t in [
+            "restcustom",
+            "REST Custom",
+            "httpdataadvanced",
+            "HTTP Data Advanced",
+            "httpxmlrestvalue",
+        ] {
+            assert_eq!(family(t), Family::HttpData, "{t}");
+        }
+        assert_eq!(family("Jolokia JMX"), Family::App(AppKind::Jmx));
+        let sensor = |t: &str, url: Option<&str>| {
+            let mut s = Object::new(1, Kind::Sensor, "Heap", Some(0));
+            s.sensor_type = Some(t.into());
+            if let Some(url) = url {
+                s.settings.insert("httpurl".into(), url.into());
+            }
+            s
+        };
+        let watch = |mapped: Mapped| match mapped {
+            Mapped::Watch {
+                watch, fidelity, ..
+            } => {
+                assert_eq!(fidelity, approximated("app_jolokia", args! {}));
+                watch
+            }
+            other => panic!("{other:?}"),
+        };
+
+        let mut rest = sensor(
+            "restcustom",
+            Some("https://jvm.example.com:8443/app/Jolokia/read/java.lang:type=Memory"),
+        );
+        rest.settings
+            .insert("httpusername".into(), "watcher".into());
+        let mut expected = App::new(AppKind::Jmx);
+        expected.address = Some("jvm.example.com".into());
+        expected.port = Some(8443);
+        expected.path = Some("/app/Jolokia/".into());
+        expected.user = Some("watcher".into());
+        expected.https = true;
+        assert_eq!(watch(map(&rest, Some("192.0.2.50"))), Watch::app(expected));
+
+        // A path alone is the device's, at Jolokia's defaults.
+        let relative = sensor(
+            "httpadvanced",
+            Some("/jolokia/read/java.lang:type=Threading"),
+        );
+        let mut expected = App::new(AppKind::Jmx);
+        expected.address = Some("192.0.2.51".into());
+        assert_eq!(
+            watch(map(&relative, Some("192.0.2.51"))),
+            Watch::app(expected)
+        );
+
+        // Any other URL: a website check, or nothing for a REST sensor.
+        assert!(matches!(
+            map(&sensor("http", Some("https://shop.example.com/")), None),
+            Mapped::Watch {
+                watch: Watch::Web(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            map(
+                &sensor("restcustom", Some("https://api.example.com/v1")),
+                None
+            ),
+            Mapped::Not(_)
+        ));
+        assert!(matches!(
+            map(&sensor("Jolokia JMX", None), None),
+            Mapped::Watch {
+                watch: Watch::App(_),
+                ..
+            }
+        ));
     }
 }

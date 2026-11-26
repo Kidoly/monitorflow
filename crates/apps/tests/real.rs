@@ -1,10 +1,12 @@
 //! Checks against real servers, run when their addresses are given
 //! (ADR-0183); skipped otherwise, as CI has none. `scripts/apps-test.sh`
 //! starts PostgreSQL, MySQL, MariaDB and Redis in containers with the
-//! read-only accounts the guides describe, and runs these.
+//! read-only accounts the guides describe, Tomcat and Kafka with the
+//! Jolokia agent, and runs these.
 //!
-//! `MF_APPS_TEST_POSTGRESQL`, `MF_APPS_TEST_MYSQL`, `MF_APPS_TEST_MARIADB`
-//! and `MF_APPS_TEST_REDIS` are `host:port`; the account is `monitorflow`
+//! `MF_APPS_TEST_POSTGRESQL`, `MF_APPS_TEST_MYSQL`, `MF_APPS_TEST_MARIADB`,
+//! `MF_APPS_TEST_REDIS`, `MF_APPS_TEST_TOMCAT` and `MF_APPS_TEST_KAFKA`
+//! (their Jolokia agents) are `host:port`; the account is `monitorflow`
 //! with the password in `MF_APPS_TEST_PASSWORD`. `MF_APPS_TEST_DOCKER=1`
 //! reads the local engine.
 
@@ -139,6 +141,57 @@ async fn redis() {
         ],
     )
     .await;
+}
+
+#[tokio::test]
+async fn jmx_tomcat() {
+    check(
+        "jmx",
+        "MF_APPS_TEST_TOMCAT",
+        &[
+            "heap_used_bytes",
+            "heap_usage_ratio",
+            "non_heap_used_bytes",
+            "gc_collections",
+            "gc_time_ratio",
+            "threads",
+            "threads_deadlocked",
+            "file_descriptors_ratio",
+            "uptime_seconds",
+            "tomcat_threads_ratio",
+            "tomcat_requests_per_second",
+            "tomcat_errors",
+        ],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn jmx_kafka() {
+    check(
+        "jmx",
+        "MF_APPS_TEST_KAFKA",
+        &[
+            "heap_used_bytes",
+            "gc_collections",
+            "threads",
+            "kafka_under_replicated",
+            "kafka_under_min_isr",
+            "kafka_partitions",
+            "kafka_active_controller",
+            "kafka_offline_partitions",
+            "kafka_messages_in_per_second",
+            "kafka_handler_idle_ratio",
+        ],
+    )
+    .await;
+    // Tomcat's MBeans are not there, and nothing says otherwise.
+    if let Some((host, port)) = target("MF_APPS_TEST_KAFKA") {
+        let password = std::env::var("MF_APPS_TEST_PASSWORD").unwrap_or_default();
+        let samples = collect("jmx", &params(&host, &port, &password)).await;
+        assert!(find(&samples, "tomcat_threads_ratio").is_none());
+        assert!(find(&samples, "kafka_partitions").unwrap().value >= 2.0);
+    }
 }
 
 #[tokio::test]

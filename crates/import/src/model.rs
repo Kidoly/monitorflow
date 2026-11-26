@@ -273,6 +273,8 @@ pub enum AppKind {
     /// MySQL and MariaDB.
     Mysql,
     Redis,
+    /// A Java virtual machine, read through its Jolokia agent.
+    Jmx,
     /// The containers of the host's Docker or Podman engine, read by its
     /// agent.
     Docker,
@@ -285,6 +287,7 @@ impl AppKind {
             Self::Postgresql => "postgresql",
             Self::Mysql => "mysql",
             Self::Redis => "redis",
+            Self::Jmx => "jmx",
             Self::Docker => "docker",
         }
     }
@@ -310,6 +313,12 @@ pub struct App {
     /// Docker: a regular expression the container names must match.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub containers: Option<String>,
+    /// JMX: the path Jolokia answers on, `/jolokia/` when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// JMX: Jolokia over HTTPS, its certificate verified.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub https: bool,
 }
 
 impl App {
@@ -322,6 +331,8 @@ impl App {
             database: None,
             user: None,
             containers: None,
+            path: None,
+            https: false,
         }
     }
 }
