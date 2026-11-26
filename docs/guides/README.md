@@ -37,7 +37,7 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor MySQL and MariaDB](monitor-mysql-mariadb.md): Watch MySQL and MariaDB connections, slow queries, the InnoDB buffer pool and replication, and get alerted when the database stops answering, with MonitorFlow's ready-made check.
 - [How to monitor Redis](monitor-redis.md): Watch Redis memory, evictions, clients, snapshots and replication, and get alerted when it stops answering, with MonitorFlow's ready-made Redis check.
 - [How to monitor MongoDB](monitor-mongodb.md): Get alerted when MongoDB stops or stops accepting connections on a Linux server, with the mongod service and port 27017 checks of MonitorFlow.
-- [How to monitor SQL Server](monitor-sql-server.md): Get alerted when a SQL Server instance stops or stops accepting connections on Windows, with the MSSQLSERVER service and port 1433 checks.
+- [How to monitor SQL Server](monitor-sql-server.md): Watch SQL Server's connections, batch requests, page life expectancy, blocking, database and log sizes and Always On replicas, and get alerted when it stops answering, with MonitorFlow's ready-made check.
 
 ## Web and virtualisation
 

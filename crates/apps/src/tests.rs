@@ -58,6 +58,16 @@ fn parameters_are_checked() {
     );
     assert!(error(MYSQL, &[("host", "a b")], Place::Check).contains("neither an IP address"));
     assert!(error(REDIS, &[("tls", "verify")], Place::Check).contains("not checked yet"));
+    assert!(build(MSSQL, &params(&all[..6]), Place::Relay).is_err());
+    assert!(build(
+        MSSQL,
+        &params(&[all[0], all[1], all[2], all[3], all[5]]),
+        Place::Relay
+    )
+    .is_ok());
+    assert!(
+        error(MSSQL, &[("host", "db\\SQLEXPRESS")], Place::Check).contains("neither an IP address")
+    );
     assert!(error(REDIS, &[("password", "a\nb")], Place::Check).contains("line breaks"));
     assert!(
         error(DOCKER, &[("engine", "/tmp/sock")], Place::Check).contains("`docker` or `podman`")
@@ -262,4 +272,132 @@ fn docker_containers_become_samples() {
     assert!(!exited("no").watched());
     assert!(!exited("on-failure").watched());
     assert!(exited("always").watched());
+}
+
+#[test]
+fn sql_server_readings_become_samples() {
+    use mssql::{Readings, Replica, ReplicaDatabase};
+    let counter = |object: &str, name: &str, instance: &str, value: f64| {
+        (
+            (object.to_owned(), name.to_owned(), instance.to_owned()),
+            value,
+        )
+    };
+    let mut readings = Readings {
+        version: "16.0.4325.4".into(),
+        edition: "Standard Edition (64-bit)".into(),
+        max_connections: Some(100.0),
+        counters: [
+            counter("General Statistics", "User Connections", "", 25.0),
+            counter("General Statistics", "Processes blocked", "", 2.0),
+            counter("SQL Statistics", "Batch Requests/sec", "", 1000.0),
+            counter("Buffer Manager", "Page life expectancy", "", 1200.0),
+            counter("Buffer Manager", "Buffer cache hit ratio", "", 99.0),
+            counter("Buffer Manager", "Buffer cache hit ratio base", "", 100.0),
+            counter("Locks", "Number of Deadlocks/sec", "_Total", 4.0),
+            counter("Databases", "Data File(s) Size (KB)", "shop", 2048.0),
+            counter("Databases", "Log File(s) Size (KB)", "shop", 1000.0),
+            counter("Databases", "Log File(s) Used Size (KB)", "shop", 250.0),
+            counter("Databases", "Data File(s) Size (KB)", "_Total", 9999.0),
+            counter(
+                "Databases",
+                "Data File(s) Size (KB)",
+                "mssqlsystemresource",
+                40.0,
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        longest_blocked_ms: Some(4500.0),
+        longest_query_ms: Some(0.0),
+        replicas: vec![Replica {
+            group: "sales".into(),
+            server: "SQL2".into(),
+            role: 2,
+            connected: false,
+            health: 1,
+        }],
+        replica_databases: vec![ReplicaDatabase {
+            group: "sales".into(),
+            server: "SQL2".into(),
+            database: "shop".into(),
+            log_send_queue_kb: Some(10.0),
+            redo_queue_kb: None,
+            lag_seconds: Some(42.0),
+        }],
+    };
+    let rates = Rates::default();
+    let mut round = rates.round();
+    let first = mssql::samples(&readings, 0.02, &mut round);
+    rates.finish(round);
+    let up = first.iter().find(|s| s.sensor == "up").unwrap();
+    assert_eq!(up.labels["version"], "16.0.4325.4");
+    assert_eq!(value(&first, "connections_ratio"), Some(0.25));
+    assert_eq!(value(&first, "page_life_expectancy_seconds"), Some(1200.0));
+    assert_eq!(value(&first, "buffer_cache_hit_ratio"), Some(0.99));
+    assert_eq!(value(&first, "processes_blocked"), Some(2.0));
+    assert_eq!(value(&first, "longest_blocked_seconds"), Some(4.5));
+    // Counters since start need a second collection.
+    assert_eq!(value(&first, "batch_requests_per_second"), None);
+    assert_eq!(value(&first, "deadlocks"), None);
+    // Databases of SQL Server's own are left out.
+    let sizes: Vec<_> = first
+        .iter()
+        .filter(|s| s.sensor == "database_size_bytes")
+        .map(|s| (s.instance.as_str(), s.value))
+        .collect();
+    assert_eq!(sizes, [("shop", 2048.0 * 1024.0)]);
+    assert_eq!(value(&first, "log_used_ratio"), Some(0.25));
+    let replica = first
+        .iter()
+        .find(|s| s.sensor == "ag_replica_connected")
+        .unwrap();
+    assert_eq!(
+        (replica.instance.as_str(), replica.value),
+        ("sales/SQL2", 0.0)
+    );
+    assert_eq!(replica.labels["role"], "secondary");
+    assert_eq!(value(&first, "ag_replica_healthy"), Some(0.0));
+    let lag = first
+        .iter()
+        .find(|s| s.sensor == "ag_secondary_lag_seconds")
+        .unwrap();
+    assert_eq!(
+        (lag.instance.as_str(), lag.value),
+        ("sales/SQL2/shop", 42.0)
+    );
+    assert_eq!(value(&first, "ag_log_send_queue_bytes"), Some(10240.0));
+    assert_eq!(value(&first, "ag_redo_queue_bytes"), None);
+
+    readings.counters.insert(
+        (
+            "Locks".into(),
+            "Number of Deadlocks/sec".into(),
+            "_Total".into(),
+        ),
+        5.0,
+    );
+    let mut round = rates.round();
+    let second = mssql::samples(&readings, 0.02, &mut round);
+    assert_eq!(value(&second, "deadlocks"), Some(1.0));
+    assert!(value(&second, "batch_requests_per_second").is_some());
+}
+
+#[test]
+fn sql_server_errors_say_why() {
+    use mssql::{failure, TdsError};
+    let server = |number| TdsError::Server {
+        number,
+        message: "no".into(),
+    };
+    assert_eq!(failure(&server(18456)).reason, Reason::Login);
+    assert_eq!(failure(&server(300)).reason, Reason::Permission);
+    assert_eq!(failure(&server(208)).reason, Reason::Protocol);
+    assert_eq!(
+        failure(&TdsError::Tls("handshake".into())).reason,
+        Reason::Tls
+    );
+    let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+    assert_eq!(failure(&TdsError::Io(refused)).reason, Reason::Connect);
+    assert!(failure(&server(18456)).error.contains("error 18456"));
 }

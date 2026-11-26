@@ -77,7 +77,8 @@ pub struct EntryRequest {
     /// (`127.0.0.1` from the agent; the device's address from a probe),
     /// `port`, `user` and `password` (kept sealed as above), and `tls`
     /// (`prefer`, `verify` or `off`): `postgresql` also `database` and
-    /// `slow_after`, `mysql` (MySQL and MariaDB) and `redis` nothing more.
+    /// `slow_after`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server)
+    /// and `redis` nothing more.
     /// `docker`, run by the agent only, takes `engine` (`docker` or
     /// `podman`), `containers` (a regular expression on names) and
     /// `stats`. `GET /api/check-templates` lists what each measures.
@@ -896,7 +897,7 @@ pub fn probe_kind(kind: &str) -> bool {
 }
 
 const PROBE_KINDS_TEXT: &str =
-    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql` and `redis`";
+    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql`, `mssql` and `redis`";
 
 async fn create(
     state: &ApiState,

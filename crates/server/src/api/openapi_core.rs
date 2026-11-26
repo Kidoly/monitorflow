@@ -264,7 +264,7 @@ check plugin turned on for the site in `params.plugin`. The answer to a bad row 
 wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\n\
 A server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the \
 server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP), `http`, \
-`postgresql`, `mysql` and `redis` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe \
+`postgresql`, `mysql`, `mssql` and `redis` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe \
 check of a server with an agent names its `host`; a device's checks default to its address. A website check \
 names its `url` and takes no address. Its `instance` \
 defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep \
@@ -281,8 +281,9 @@ up to 10 channels, `oidN` (a numeric OID) with optional `nameN`, `keyN` (the met
 `critical`); or a `table` OID with a `name_column`, each `oidN` then a column of it. Credentials and \
 `lookupN_map` are refused: they are added when the check is sent to its probe. \
 `/api/v1/devices/{id}/snmp-checks` reads and writes the same rows with their thresholds.\n\n\
-The ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `redis` and \
-`docker`; `GET /api/v1/check-templates` lists their parameters, metrics and default alerts. The first three run \
+The ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `mssql` (SQL \
+Server), `redis` and `docker`; `GET /api/v1/check-templates` lists their parameters, metrics and default alerts. \
+All but `docker` run \
 on the agent (against `127.0.0.1` by default, within its `sensors.port_targets`) or from a probe, and take a \
 `password` kept sealed like a website check's: an update without it keeps it only while `host` and `port` stay \
 the same. `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the \
@@ -350,6 +351,9 @@ that its site or the built-in checks give; with `enabled: false`, removes that s
         ("postgresql" = (summary = "Watch PostgreSQL on this server, with its default alerts (ADR-0183)",
             value = json!({"kind": "postgresql", "interval_ms": 60000, "default_alerts": true,
                            "params": {"user": "monitorflow", "password": "a read-only password"}}))),
+        ("mssql" = (summary = "Watch SQL Server on this Windows server, with its default alerts (ADR-0183)",
+            value = json!({"kind": "mssql", "interval_ms": 60000, "default_alerts": true,
+                           "params": {"port": "1433", "user": "monitorflow", "password": "a password"}}))),
         ("redis_from_relay" = (summary = "Watch Redis from the site's relay",
             value = json!({"kind": "redis", "interval_ms": 60000, "default_alerts": true,
                            "probe": "5b7f3c2e-1a4d-4e8f-9b6a-0c2d4e6f8a10",

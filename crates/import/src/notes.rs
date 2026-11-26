@@ -347,8 +347,12 @@ pub const NOTES: &[(&str, &str)] = &[
         "Docker is read by the agent of the server that runs it, and this host becomes a device.",
     ),
     (
+        "app_mssql_wmi",
+        "PRTG read SQL Server's counters over WMI; MonitorFlow's check signs in to SQL Server instead: create the login with VIEW SERVER STATE the guide describes, and enter its password on the check.",
+    ),
+    (
         "app_other_database",
-        "MonitorFlow has ready-made checks for PostgreSQL, MySQL, MariaDB and Redis, not for this database yet.",
+        "MonitorFlow has ready-made checks for PostgreSQL, MySQL, MariaDB, SQL Server and Redis, not for this database yet.",
     ),
     (
         "virtual_partial",

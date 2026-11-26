@@ -37,7 +37,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller MySQL et MariaDB](surveiller-mysql-mariadb.md) : Suivez les connexions, requêtes lentes, le buffer pool InnoDB et la réplication de MySQL et MariaDB, et soyez alerté quand la base ne répond plus, avec le contrôle prêt à l'emploi de MonitorFlow.
 - [Comment surveiller Redis](surveiller-redis.md) : Suivez la mémoire, les évictions, les clients, les sauvegardes et la réplication de Redis, et soyez alerté quand il ne répond plus, avec le contrôle Redis prêt à l'emploi de MonitorFlow.
 - [Comment surveiller MongoDB](surveiller-mongodb.md) : Soyez alerté quand MongoDB s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec les vérifications du service mongod et du port 27017.
-- [Comment surveiller SQL Server](surveiller-sql-server.md) : Soyez alerté quand une instance SQL Server s'arrête ou refuse les connexions sous Windows, avec les vérifications du service MSSQLSERVER et du port 1433.
+- [Comment surveiller SQL Server](surveiller-sql-server.md) : Suivez les connexions, lots de requêtes, la durée de vie des pages, les blocages, la taille des bases et des journaux et les réplicas Always On de SQL Server, et soyez alerté quand il ne répond plus, avec le contrôle prêt à l'emploi de MonitorFlow.
 
 ## Web et virtualisation
 

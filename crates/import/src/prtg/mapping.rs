@@ -76,6 +76,8 @@ fn network_device(tree: &Indexed, device: &Object) -> bool {
             | Family::HyperV
             | Family::App(crate::model::AppKind::Docker) => false,
             Family::Cpu | Family::Memory | Family::Disk | Family::Traffic => t.starts_with("snmp"),
+            // SQL Server over WMI is a Windows machine the agent goes on.
+            Family::App(crate::model::AppKind::Mssql) => !t.starts_with("wmi"),
             Family::Other | Family::OtherDatabase => {
                 !(t.starts_with("wmi") || t.starts_with("ssh") || t.starts_with("exe"))
             }
@@ -1211,17 +1213,22 @@ mod tests {
         let mut tree = Tree::default();
         tree.objects
             .push(Object::new(1, Kind::Probe, "probe", None));
-        for (id, name) in [(20, "db"), (21, "docker")] {
+        for (id, name) in [(20, "db"), (21, "docker"), (22, "sql"), (23, "sql-wmi")] {
             let mut device = Object::new(id, Kind::Device, name, Some(1));
             device.host = Some(format!("192.0.2.{id}"));
             tree.objects.push(device);
         }
         tree.objects.push(sensor(30, 20, "mysqlv2"));
         tree.objects.push(sensor(31, 21, "dockercontainerstatus"));
+        tree.objects.push(sensor(32, 22, "mssqlv2"));
+        // SQL Server over WMI: a Windows machine, which gets the agent.
+        tree.objects.push(sensor(33, 23, "wmisqlserver2019"));
         let inv = inventory(&tree, now());
         assert!(inv.host("device:20").unwrap().agentless);
         assert!(!inv.host("device:21").unwrap().agentless);
-        assert_eq!(inv.checks.len(), 2, "{:#?}", inv.checks);
+        assert!(inv.host("device:22").unwrap().agentless);
+        assert!(!inv.host("device:23").unwrap().agentless);
+        assert_eq!(inv.checks.len(), 4, "{:#?}", inv.checks);
         assert!(inv.checks.iter().all(|c| matches!(c.watch, Watch::App(_))));
     }
 }

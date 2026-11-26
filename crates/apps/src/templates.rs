@@ -2,7 +2,7 @@
 //! the template the server applies when a check is added with its
 //! default alerts, and lists in its API.
 
-use crate::{DOCKER, MYSQL, POSTGRESQL, REDIS};
+use crate::{DOCKER, MSSQL, MYSQL, POSTGRESQL, REDIS};
 
 /// One metric of a kind, by its suffix: the check's name, `_`, then this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -353,6 +353,165 @@ pub const MYSQL_TEMPLATE: Template = Template {
     ],
 };
 
+pub const MSSQL_TEMPLATE: Template = Template {
+    kind: MSSQL,
+    title: "SQL Server",
+    runs: "agent_or_probe",
+    default_port: Some(1433),
+    params: &[
+        HOST,
+        p("port", Some("1433"), "Port; a named instance needs its fixed port"),
+        p(
+            "user",
+            Some("monitorflow"),
+            "A SQL Server login with `VIEW SERVER STATE` only",
+        ),
+        PASSWORD,
+        p(
+            "tls",
+            Some("prefer"),
+            "`prefer` (encrypted, certificate not verified), `verify` (certificate and name verified) or `off` (the password then goes in clear)",
+        ),
+    ],
+    metrics: &[
+        UP,
+        RESPONSE,
+        m(
+            "connections",
+            "count",
+            None,
+            "User connections, the check's own included",
+        ),
+        m(
+            "connections_max",
+            "count",
+            None,
+            "`user connections`, 32767 when unlimited",
+        ),
+        m(
+            "connections_ratio",
+            "ratio",
+            None,
+            "Connections against `user connections`",
+        ),
+        m(
+            "batch_requests_per_second",
+            "per_second",
+            None,
+            "Batches of statements received per second",
+        ),
+        m(
+            "page_life_expectancy_seconds",
+            "seconds",
+            None,
+            "How long a page stays in the buffer pool",
+        ),
+        m(
+            "buffer_cache_hit_ratio",
+            "ratio",
+            None,
+            "Pages found in the buffer pool without reading the disk",
+        ),
+        m(
+            "processes_blocked",
+            "count",
+            None,
+            "Requests waiting for another one's lock",
+        ),
+        m(
+            "longest_blocked_seconds",
+            "seconds",
+            None,
+            "Longest wait of a blocked request, 0 when none is",
+        ),
+        m(
+            "longest_query_seconds",
+            "seconds",
+            None,
+            "Age of the longest running request",
+        ),
+        m(
+            "lock_waits_per_second",
+            "per_second",
+            None,
+            "Lock requests that had to wait, per second",
+        ),
+        m(
+            "deadlocks",
+            "count",
+            None,
+            "Deadlocks since the last collection",
+        ),
+        m(
+            "database_size_bytes",
+            "bytes",
+            Some("database"),
+            "Data files of each database",
+        ),
+        m(
+            "log_size_bytes",
+            "bytes",
+            Some("database"),
+            "Transaction log of each database",
+        ),
+        m(
+            "log_used_ratio",
+            "ratio",
+            Some("database"),
+            "Share of each database's log in use",
+        ),
+        m(
+            "ag_replica_connected",
+            "",
+            Some("replica"),
+            "Always On: 1 while the replica is connected; label `role`",
+        ),
+        m(
+            "ag_replica_healthy",
+            "",
+            Some("replica"),
+            "Always On: 1 while the replica's synchronization is healthy",
+        ),
+        m(
+            "ag_log_send_queue_bytes",
+            "bytes",
+            Some("database"),
+            "Always On: log a secondary has not received yet",
+        ),
+        m(
+            "ag_redo_queue_bytes",
+            "bytes",
+            Some("database"),
+            "Always On: log a secondary has not replayed yet",
+        ),
+        m(
+            "ag_secondary_lag_seconds",
+            "seconds",
+            Some("database"),
+            "Always On: how far a secondary is behind, from SQL Server 2016",
+        ),
+    ],
+    alerts: &[
+        a("up", "<", None, Some(1.0), 2),
+        a("connections_ratio", ">", Some(0.8), Some(0.95), 5),
+        a("page_life_expectancy_seconds", "<", Some(300.0), None, 15),
+        a("buffer_cache_hit_ratio", "<", Some(0.95), None, 30),
+        a("processes_blocked", ">", Some(0.0), None, 5),
+        a("deadlocks", ">", Some(0.0), None, 0),
+        a("log_used_ratio", ">", Some(0.8), Some(0.95), 5),
+        a("ag_replica_connected", "<", None, Some(1.0), 2),
+        a("ag_replica_healthy", "<", None, Some(1.0), 5),
+        a("ag_log_send_queue_bytes", ">", Some(GIB), None, 10),
+        a(
+            "ag_secondary_lag_seconds",
+            ">",
+            Some(300.0),
+            Some(1800.0),
+            5,
+        ),
+    ],
+};
+
 pub const REDIS_TEMPLATE: Template = Template {
     kind: REDIS,
     title: "Redis",
@@ -555,9 +714,10 @@ pub const DOCKER_TEMPLATE: Template = Template {
 };
 
 /// Every template, in the order they are offered.
-pub const TEMPLATES: [Template; 4] = [
+pub const TEMPLATES: [Template; 5] = [
     POSTGRESQL_TEMPLATE,
     MYSQL_TEMPLATE,
+    MSSQL_TEMPLATE,
     REDIS_TEMPLATE,
     DOCKER_TEMPLATE,
 ];
@@ -597,5 +757,6 @@ mod tests {
         }
         assert_eq!(metric_name("postgresql", "up"), "monitorflow_postgresql_up");
         assert!(of("redis").is_some() && of("cpu").is_none());
+        assert_eq!(of("mssql").map(|t| t.default_port), Some(Some(1433)));
     }
 }

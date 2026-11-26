@@ -610,12 +610,16 @@ fn map_host(
 /// Redis and Docker templates read by the agent, by their names since
 /// Zabbix 5.0 ("PostgreSQL by Zabbix agent 2", "Template DB MySQL").
 /// Those through ODBC query from the Zabbix server with a driver: not
-/// these.
+/// these, but for SQL Server, whose "MSSQL by ODBC" reads the counters
+/// the check reads, and which the check reaches as the server did.
 fn app_template(name: &str) -> Option<AppKind> {
     let name = name.to_ascii_lowercase();
     let agent = name.contains("zabbix agent")
         || name.starts_with("template db ")
         || name.starts_with("template app ");
+    if name.contains("mssql") || name.contains("sql server") {
+        return (agent || name.contains("odbc")).then_some(AppKind::Mssql);
+    }
     if !agent || name.contains("odbc") {
         return None;
     }
@@ -655,6 +659,7 @@ fn app_item(key: &str, apps: &[(AppKind, String)]) -> bool {
         root == match kind {
             AppKind::Postgresql => "pgsql",
             AppKind::Mysql => "mysql",
+            AppKind::Mssql => "mssql",
             AppKind::Redis => "redis",
             AppKind::Docker => "docker",
         }
@@ -687,6 +692,14 @@ fn app_of(kind: AppKind, macros: &Macros) -> App {
             "{$MYSQL.HOST}",
             "{$MYSQL.PORT}",
             "{$MYSQL.USER}",
+        ),
+        // `sqlserver://localhost:1433` of agent 2; the ODBC template
+        // connects to the host's interface, at `{$MSSQL.PORT}`.
+        AppKind::Mssql => (
+            first(&["{$MSSQL.URI}"]),
+            "",
+            "{$MSSQL.PORT}",
+            "{$MSSQL.USER}",
         ),
         AppKind::Redis => (first(&["{$REDIS.CONN.URI}"]), "", "", ""),
         AppKind::Docker => return app,

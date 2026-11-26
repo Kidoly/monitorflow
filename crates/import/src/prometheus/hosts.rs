@@ -5,8 +5,8 @@
 //! check on the host that runs it, when that host is known: MonitorFlow
 //! does not collect other tools' metrics, but it can say when the
 //! exporter's port stops answering. The exporters of PostgreSQL, MySQL
-//! and Redis, and cAdvisor, become the ready-made check of what they
-//! read instead (ADR-0183).
+//! and Redis, the SQL Server exporters, and cAdvisor, become the
+//! ready-made check of what they read instead (ADR-0183).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -534,11 +534,16 @@ impl Fleet {
 
 /// The ready-made check an exporter stands for, and its name: by the
 /// default port of postgres_exporter, mysqld_exporter and
-/// redis_exporter; cAdvisor by its job's name, as 8080 is any web
-/// server's port.
+/// redis_exporter; cAdvisor and SQL Server's exporters by their job's
+/// name, as their ports (8080, 4000, 9399) are any web server's or any
+/// database's.
 fn app_exporter(target: &Target) -> Option<(AppKind, &'static str)> {
-    if target.job.to_ascii_lowercase().contains("cadvisor") {
+    let job = target.job.to_ascii_lowercase();
+    if job.contains("cadvisor") {
         return Some((AppKind::Docker, "cAdvisor"));
+    }
+    if job.contains("mssql") || job.contains("sqlserver") || job.contains("sql_server") {
+        return Some((AppKind::Mssql, "the SQL Server exporter"));
     }
     match port_of(&target.address)? {
         9187 => Some((AppKind::Postgresql, "postgres_exporter")),
@@ -715,6 +720,7 @@ mod tests {
             ("redis", "10.0.0.7:9121"),
             ("cadvisor", "10.0.0.7:8080"),
             ("web", "10.0.0.7:8080"),
+            ("mssql", "10.0.0.7:4000"),
         ] {
             collected.targets.push(target(job, address, &[]));
         }
@@ -724,6 +730,8 @@ mod tests {
         pg.address = Some("10.0.0.7".into());
         let mut redis = App::new(AppKind::Redis);
         redis.address = Some("10.0.0.7".into());
+        let mut mssql = App::new(AppKind::Mssql);
+        mssql.address = Some("10.0.0.7".into());
         assert_eq!(
             watches,
             [
@@ -734,6 +742,7 @@ mod tests {
                     address: Some("10.0.0.7".into()),
                     port: 8080
                 },
+                &Watch::app(mssql),
             ]
         );
         assert!(fleet.inventory.checks.iter().all(|c| c.host == "app-01"));

@@ -44,8 +44,7 @@ pub enum Family {
     /// A database, Redis or Docker sensor: a ready-made application
     /// check (ADR-0183).
     App(AppKind),
-    /// A database MonitorFlow has no ready-made check for: Microsoft SQL,
-    /// Oracle, ADO.
+    /// A database MonitorFlow has no ready-made check for: Oracle, ADO.
     OtherDatabase,
     /// NetFlow, jFlow, sFlow or IPFIX received from the device.
     Flow,
@@ -78,8 +77,12 @@ pub fn family(sensor_type: &str) -> Family {
     if has("docker") {
         return Family::App(AppKind::Docker);
     }
-    // `mssqlv2`, `oraclev2`, `adosqlv2`, "Microsoft SQL v2", "Oracle
-    // Tablespace".
+    // `mssqlv2`, "Microsoft SQL v2", and the WMI sensors "WMI Microsoft
+    // SQL Server 2019" and their siblings.
+    if has("mssql") || has("microsoft sql") || has("sqlserver") || has("sql server") {
+        return Family::App(AppKind::Mssql);
+    }
+    // `oraclev2`, `adosqlv2`, "Oracle Tablespace".
     if has("sql") || has("oracle") {
         return Family::OtherDatabase;
     }
@@ -358,8 +361,16 @@ fn app(sensor: &Object, kind: AppKind, host: Option<&str>) -> Mapped {
             if kind == AppKind::Postgresql {
                 app.database = setting("database").map(str::to_owned);
             }
+            let wmi = sensor
+                .sensor_type
+                .as_deref()
+                .is_some_and(|t| t.to_ascii_lowercase().starts_with("wmi"));
             if kind == AppKind::Redis {
                 approximated("app_password", args! {})
+            } else if kind == AppKind::Mssql && wmi {
+                // Performance counters over WMI, as the check reads them,
+                // without a SQL Server login.
+                approximated("app_mssql_wmi", args! {})
             } else {
                 approximated("app_query", args! {})
             }
@@ -1221,7 +1232,15 @@ mod tests {
         ] {
             assert_eq!(family(t), Family::App(kind), "{t}");
         }
-        for t in ["mssqlv2", "oraclev2", "Microsoft SQL v2", "adosqlv2"] {
+        for t in [
+            "mssqlv2",
+            "Microsoft SQL v2",
+            "wmisqlserver2019",
+            "WMI Microsoft SQL Server 2016",
+        ] {
+            assert_eq!(family(t), Family::App(AppKind::Mssql), "{t}");
+        }
+        for t in ["oraclev2", "adosqlv2", "Oracle Tablespace"] {
             assert_eq!(family(t), Family::OtherDatabase, "{t}");
         }
         let sensor = |t: &str| {
@@ -1277,8 +1296,27 @@ mod tests {
         };
         assert_eq!(fidelity, approximated("app_docker_all", args! {}));
 
+        let mut mssql = sensor("mssqlv2");
+        mssql.settings.insert("port".into(), "1434".into());
+        let Mapped::Watch {
+            watch, fidelity, ..
+        } = map(&mssql, Some("192.0.2.43"))
+        else {
+            panic!()
+        };
+        let mut expected = App::new(AppKind::Mssql);
+        expected.address = Some("192.0.2.43".into());
+        expected.port = Some(1434);
+        assert_eq!(watch, Watch::app(expected));
+        assert_eq!(fidelity, approximated("app_query", args! {}));
+        let Mapped::Watch { fidelity, .. } = map(&sensor("wmisqlserver2019"), Some("192.0.2.43"))
+        else {
+            panic!()
+        };
+        assert_eq!(fidelity, approximated("app_mssql_wmi", args! {}));
+
         assert_eq!(
-            map(&sensor("mssqlv2"), Some("192.0.2.43")),
+            map(&sensor("oraclev2"), Some("192.0.2.44")),
             Mapped::Not(Note::plain("app_other_database"))
         );
     }

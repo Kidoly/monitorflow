@@ -1768,12 +1768,16 @@ dependencies = [
  "async-trait",
  "monitorflow-sensors",
  "regex",
+ "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "sqlx",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "tracing",
+ "webpki-roots",
 ]
 
 [[package]]

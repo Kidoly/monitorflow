@@ -779,7 +779,7 @@ db_tests! {
         assert_eq!(status, StatusCode::OK);
         let kinds: Vec<&str> = body["templates"].as_array().unwrap().iter()
             .map(|t| t["kind"].as_str().unwrap()).collect();
-        assert_eq!(kinds, ["postgresql", "mysql", "redis", "docker"]);
+        assert_eq!(kinds, ["postgresql", "mysql", "mssql", "redis", "docker"]);
 
         // Bad parameters are refused as the agent would.
         let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
@@ -847,9 +847,27 @@ db_tests! {
             .fetch_one(&pool).await.unwrap();
         assert_eq!(redis_alerts, 0);
 
+        // SQL Server from the central server, with its alerts.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "mssql", "interval_ms": 60_000, "probe": "central", "default_alerts": true,
+            "params": {"host": "10.0.0.13", "password": "mssql-pw"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["secret_set"], true);
+        assert!(!body.to_string().contains("mssql-pw"), "{body}");
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let mssql = sets["central"].checks.iter().find(|c| c.kind == "mssql").unwrap();
+        assert_eq!(mssql.config.params["password"], "mssql-pw");
+        let ple: (Option<f64>, i32) = sqlx::query_as(
+            "SELECT warning, duration_s FROM thresholds WHERE server_id = $1
+             AND metric = 'monitorflow_mssql_page_life_expectancy_seconds'")
+            .bind(f.paris_server).fetch_one(&pool).await.unwrap();
+        assert_eq!(ple, (Some(300.0), 900));
+
         for (_, _, details) in audit(&pool).await {
             let text = details.to_string();
             assert!(!text.contains("pg-s3cret") && !text.contains("r3dis-pw"), "{text}");
+            assert!(!text.contains("mssql-pw"), "{text}");
         }
     }
 }

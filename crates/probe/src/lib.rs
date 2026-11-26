@@ -96,6 +96,7 @@ pub const PROBE_RUNS: &[&str] = &[
     monitorflow_vmware::KIND,
     monitorflow_apps::POSTGRESQL,
     monitorflow_apps::MYSQL,
+    monitorflow_apps::MSSQL,
     monitorflow_apps::REDIS,
 ];
 

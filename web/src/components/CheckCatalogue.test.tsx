@@ -45,7 +45,7 @@ describe("CheckCatalogue", () => {
     expect(databases).toHaveAttribute("aria-pressed", "true");
     // The common checks give way to the matches.
     expect(screen.queryByRole("region", { name: "Common checks" })).not.toBeInTheDocument();
-    expect(within(list()).getAllByRole("listitem")).toHaveLength(13);
+    expect(within(list()).getAllByRole("listitem")).toHaveLength(14);
     await user.type(screen.getByLabelText("Find a check"), "redis");
     expect(screen.getByText("3 matching")).toBeInTheDocument();
     const port = within(screen.getByRole("group", { name: "How it works" })).getByRole("button", { name: /^Port/ });
