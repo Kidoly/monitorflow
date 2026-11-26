@@ -5,6 +5,7 @@ import {
   type Command,
   type InstallTarget,
   WINDOWS_ALLOW_COMMANDS,
+  WINDOWS_ALLOW_DESKTOP,
   WINDOWS_ALLOW_FROM_WEB,
   WINDOWS_ALLOW_TERMINAL,
   allowCommandsCommand,
@@ -170,6 +171,18 @@ describe("install commands", () => {
     );
     expect(WINDOWS_ALLOW_TERMINAL).toContain("remote-access terminal on");
     expect(WINDOWS_ALLOW_TERMINAL).toContain("Restart-Service MonitorFlowAgent");
+  });
+
+  it("allows a remote desktop only when asked, apart from terminals (ADR-0190)", () => {
+    const desktop = text(windowsInstallCommand(target(), "github", ORIGIN, "", false, false, false, false, true));
+    expect(desktop).toContain(`ENROLLMENT_TOKEN=${SECRET} REMOTE_DESKTOP=1`);
+    expect(desktop).not.toContain("REMOTE_TERMINAL");
+    expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", false, false, true))).not.toContain(
+      "REMOTE_DESKTOP",
+    );
+    expect(WINDOWS_ALLOW_DESKTOP).toBe(
+      `& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" remote-access desktop on\nRestart-Service MonitorFlowAgent`,
+    );
   });
 
   it("lets the web interface install software on Windows when asked (ADR-0188)", () => {

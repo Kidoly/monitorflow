@@ -8,7 +8,7 @@ import { type RemoteSession, type ServerDetail, api, describeError } from "@/lib
 import { WINDOWS_ALLOW_TERMINAL, allowTerminalCommand } from "@/lib/install";
 import { administersSite, useMe } from "@/lib/me";
 import { isOpen, terminalAcceptance } from "@/lib/remote";
-import { usePolledData } from "@/lib/usePolledData";
+import { type Polled, usePolledData } from "@/lib/usePolledData";
 import { Button } from "@/components/ui/Button";
 import { type Column, DataTable } from "@/components/ui/DataTable";
 import { Banner, EmptyState, ErrorState, SkeletonLines } from "@/components/ui/PageState";
@@ -82,26 +82,6 @@ export function ServerTerminalTab({ server }: { server: ServerDetail }) {
     }
   }
 
-  const columns: Column<RemoteSession>[] = [
-    { key: "by", header: t("remote.sessions.by"), cell: (s) => s.requested_by },
-    { key: "started", header: t("remote.sessions.started"), cell: (s) => <RelativeTime value={s.created_at} now={new Date()} /> },
-    {
-      key: "length",
-      header: t("remote.sessions.length"),
-      cell: (s) => (isOpen(s) && s.opened_at ? t("remote.sessions.openNow") : sessionLength(s.duration_seconds)),
-    },
-    {
-      key: "end",
-      header: t("remote.sessions.end"),
-      cell: (s) => s.close_reason ?? t("remote.sessions.stillOpen"),
-    },
-    {
-      key: "recorded",
-      header: t("remote.sessions.recorded"),
-      cell: (s) => (s.recorded ? t("remote.sessions.yes") : t("remote.sessions.no")),
-    },
-  ];
-
   return (
     <div className={styles.tab}>
       {access.can_open && accepts !== "accepted" && !server.revoked_at && (
@@ -144,42 +124,92 @@ export function ServerTerminalTab({ server }: { server: ServerDetail }) {
         </div>
       )}
       {replay && <RecordingView sessionId={replay} onClose={() => setReplay(null)} />}
-      {access.can_review &&
-        (sessions.data ? (
-          sessions.data.length === 0 ? (
-            <EmptyState title={t("remote.sessions.none")}>{t("remote.sessions.noneNote")}</EmptyState>
-          ) : (
-            <DataTable
-              label={t("remote.sessions.label")}
-              columns={columns}
-              rows={sessions.data}
-              rowKey={(s) => s.id}
-              rowActions={(s) => (
-                <>
-                  {admin && s.recorded && s.opened_at && (
-                    <Button size="small" onClick={() => setReplay(s.id)}>
-                      {t("remote.sessions.replay")}
-                    </Button>
-                  )}
-                  {isOpen(s) && (admin || s.requested_by === me?.username) && (
-                    <Button size="small" onClick={() => void closeSession(s.id)}>
-                      {t("remote.sessions.close")}
-                    </Button>
-                  )}
-                </>
-              )}
-            />
-          )
-        ) : sessions.error ? (
-          <ErrorState
-            what={t("remote.sessions.what")}
-            error={describeError(sessions.error)}
-            onRetry={sessions.refresh}
-          />
-        ) : (
-          <SkeletonLines />
-        ))}
+      {access.can_review && (
+        <RemoteSessionsTable
+          kind="terminal"
+          sessions={sessions}
+          admin={admin}
+          username={me?.username}
+          onClose={closeSession}
+          onReplay={setReplay}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * The server's past sessions of one kind, newest first, with Close for open ones (who opened it, or an
+ * administrator) and, for recorded terminals, Replay for administrators.
+ */
+export function RemoteSessionsTable({
+  kind,
+  sessions,
+  admin,
+  username,
+  onClose,
+  onReplay,
+}: {
+  kind: RemoteSession["kind"];
+  sessions: Polled<RemoteSession[]>;
+  admin: boolean;
+  username: string | undefined;
+  onClose: (id: string) => Promise<void>;
+  onReplay?: (id: string) => void;
+}) {
+  const columns: Column<RemoteSession>[] = [
+    { key: "by", header: t("remote.sessions.by"), cell: (s) => s.requested_by },
+    { key: "started", header: t("remote.sessions.started"), cell: (s) => <RelativeTime value={s.created_at} now={new Date()} /> },
+    {
+      key: "length",
+      header: t("remote.sessions.length"),
+      cell: (s) => (isOpen(s) && s.opened_at ? t("remote.sessions.openNow") : sessionLength(s.duration_seconds)),
+    },
+    {
+      key: "end",
+      header: t("remote.sessions.end"),
+      cell: (s) => s.close_reason ?? t("remote.sessions.stillOpen"),
+    },
+    // Desktops are never recorded: no column to say so on each line.
+    ...(kind === "terminal"
+      ? [
+          {
+            key: "recorded",
+            header: t("remote.sessions.recorded"),
+            cell: (s: RemoteSession) => (s.recorded ? t("remote.sessions.yes") : t("remote.sessions.no")),
+          },
+        ]
+      : []),
+  ];
+  if (sessions.error && !sessions.data) {
+    return <ErrorState what={t("remote.sessions.what")} error={describeError(sessions.error)} onRetry={sessions.refresh} />;
+  }
+  if (!sessions.data) return <SkeletonLines />;
+  const rows = sessions.data.filter((s) => s.kind === kind);
+  if (rows.length === 0) {
+    return <EmptyState title={t("remote.sessions.none")}>{t("remote.sessions.noneNote")}</EmptyState>;
+  }
+  return (
+    <DataTable
+      label={kind === "terminal" ? t("remote.sessions.label") : t("remote.desktop.sessions")}
+      columns={columns}
+      rows={rows}
+      rowKey={(s) => s.id}
+      rowActions={(s) => (
+        <>
+          {onReplay && admin && s.recorded && s.opened_at && (
+            <Button size="small" onClick={() => onReplay(s.id)}>
+              {t("remote.sessions.replay")}
+            </Button>
+          )}
+          {isOpen(s) && (admin || s.requested_by === username) && (
+            <Button size="small" onClick={() => void onClose(s.id)}>
+              {t("remote.sessions.close")}
+            </Button>
+          )}
+        </>
+      )}
+    />
   );
 }
 

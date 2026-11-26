@@ -1087,8 +1087,22 @@ fn agent_remote_terminals_are_off_unless_the_file_allows_them() {
         let text = format!("{AGENT_MIN}\n[remote]\nterminal_user = {bad:?}\n");
         assert!(parse::<AgentConfig>(&text).is_err(), "{bad}");
     }
-    let text = format!("{AGENT_MIN}\n[remote]\ndesktop = true\n");
+    let text = format!("{AGENT_MIN}\n[remote]\nscreen = true\n");
     assert!(parse::<AgentConfig>(&text).is_err());
+}
+
+#[test]
+fn agent_remote_desktops_have_their_own_consent_off_by_default() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert!(!agent.remote.desktop);
+    let text = format!("{AGENT_MIN}\n[remote]\nterminal = true\n");
+    assert!(!parse::<AgentConfig>(&text).unwrap().remote.desktop);
+    let text = format!("{AGENT_MIN}\n[remote]\ndesktop = true\n");
+    let agent: AgentConfig = parse(&text).unwrap();
+    assert!(agent.remote.desktop && !agent.remote.terminal);
+    let vars = [("MONITORFLOW_REMOTE_DESKTOP", "true")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert!(!agent.remote.desktop);
 }
 
 #[test]

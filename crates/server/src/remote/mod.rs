@@ -1,4 +1,4 @@
-//! Remote terminals (ADR-0190): the central server's half.
+//! Remote terminals and desktops (ADR-0190): the central server's half.
 //!
 //! A person's browser opens a WebSocket to whichever instance its request
 //! reaches, and the agent's stream is held by whichever instance it
@@ -14,6 +14,7 @@
 //! while it lives; any instance closes a session whose instance stopped,
 //! and one whose browser never came ([`RemoteHub::tidy`]).
 
+pub mod desktop;
 mod session;
 
 use std::collections::HashMap;

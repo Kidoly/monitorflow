@@ -139,6 +139,12 @@ upstream_url = "https://relay.example.com:7443"
 # account's login shell. Never root unless named here. The installer's
 # MF_REMOTE_TERMINAL_USER and `remote-access terminal-user` set it.
 # terminal_user = "ops"
+# Windows: let them open this host's desktop too, through its own Remote
+# Desktop service on 127.0.0.1:3389 and nothing else (ADR-0190). A consent
+# of its own: the MSI's REMOTE_DESKTOP=1 and `monitorflow-agent.exe
+# remote-access desktop on|off` set it. Remote Desktop must be turned on in
+# Windows; no port opens.
+# desktop = false
 
 [plugins]
 # Run the check plugins the central server gives this machine (ADR-0103):

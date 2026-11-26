@@ -1,7 +1,9 @@
 //! `monitorflow-agent remote-access terminal on|off` (ADR-0190): allows
 //! or refuses remote terminals on this host, `[remote] terminal` in the
 //! configuration file. The Linux installer's `MF_REMOTE_TERMINAL` and the
-//! MSI's `REMOTE_TERMINAL` run it.
+//! MSI's `REMOTE_TERMINAL` run it. `remote-access desktop on|off` does the
+//! same for remote desktops on Windows, `[remote] desktop`, which the
+//! MSI's `REMOTE_DESKTOP` runs.
 //!
 //! The file belongs to root (Linux) or to administrators (Windows), so
 //! only they can run it: the agent's user cannot, and neither can the
@@ -54,6 +56,11 @@ fn edit_key(
 /// Sets `remote.terminal` to `on` in the configuration file at `path`.
 pub fn set(path: &Path, on: bool) -> Result<(Outcome, AgentConfig), RemoteAccessError> {
     write_key(path, "terminal", Some(toml_edit::value(on)))
+}
+
+/// Sets `remote.desktop` to `on` in the configuration file at `path`.
+pub fn set_desktop(path: &Path, on: bool) -> Result<(Outcome, AgentConfig), RemoteAccessError> {
+    write_key(path, "desktop", Some(toml_edit::value(on)))
 }
 
 /// Sets `remote.terminal_user` to `user` in the configuration file at
@@ -117,6 +124,25 @@ mod tests {
                 .remote
                 .terminal
         );
+    }
+
+    #[test]
+    fn allows_desktops_apart_from_terminals() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.toml");
+        std::fs::write(&path, WRITTEN).unwrap();
+        let (outcome, config) = set_desktop(&path, true).unwrap();
+        assert_eq!(outcome, Outcome::Changed);
+        assert!(config.remote.desktop && !config.remote.terminal);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with(WRITTEN), "{text}");
+        assert!(text.contains("[remote]\ndesktop = true"), "{text}");
+        assert_eq!(set_desktop(&path, true).unwrap().0, Outcome::Unchanged);
+        let (_, config) = set(&path, true).unwrap();
+        assert!(config.remote.desktop && config.remote.terminal);
+        assert_eq!(set_desktop(&path, false).unwrap().0, Outcome::Changed);
+        let config = load(&std::fs::read_to_string(&path).unwrap());
+        assert!(!config.remote.desktop && config.remote.terminal);
     }
 
     #[test]

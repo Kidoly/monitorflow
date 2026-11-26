@@ -77,6 +77,10 @@ tower-http = { version = "0.7", features = ["fs"] }
 mime_guess = "2"
 percent-encoding = "2"
 x509-parser = "0.18"
+# Remote desktops (ADR-0190): the RDCleanPath handshake of IronRDP's web
+# client, and the WebSocket's two halves apart.
+ironrdp-rdcleanpath = "0.3.1"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 rcgen = "0.14"
 ring = "0.17"
 time = { version = "0.3", features = ["std"] }

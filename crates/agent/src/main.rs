@@ -212,6 +212,15 @@ enum RemoteAccessWhat {
     /// checks each signed command; `none` goes back to the agent's user.
     /// Never root unless named here.
     TerminalUser { account: String },
+    /// Windows: `on` lets people of the roles the central server allows
+    /// open a remote desktop here, through the host's own RDP service on
+    /// 127.0.0.1:3389; `off` refuses it. A consent of its own, off by
+    /// default (ADR-0190).
+    #[cfg(windows)]
+    Desktop {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
 }
 
 #[cfg(unix)]
@@ -416,6 +425,12 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
             what: RemoteAccessWhat::TerminalUser { account },
         }) => {
             return set_terminal_user(&cli.config, account).await;
+        }
+        #[cfg(windows)]
+        Some(Command::RemoteAccess {
+            what: RemoteAccessWhat::Desktop { state },
+        }) => {
+            return set_remote_desktop(&cli.config, state == OnOff::On).await;
         }
         #[cfg(windows)]
         Some(Command::Scripts { state }) => {
@@ -651,6 +666,29 @@ async fn set_remote_terminal(path: &Path, on: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `remote-access desktop on|off`: sets `remote.desktop`, Windows only.
+#[cfg(windows)]
+async fn set_remote_desktop(path: &Path, on: bool) -> anyhow::Result<()> {
+    use monitorflow_agent::remote_access::{self, Outcome};
+
+    let file = path.to_owned();
+    let (outcome, _) =
+        tokio::task::spawn_blocking(move || remote_access::set_desktop(&file, on)).await??;
+    let what = if on {
+        "remote desktops are allowed"
+    } else {
+        "remote desktops are refused"
+    };
+    match outcome {
+        Outcome::Unchanged => println!("{what} already ({})", path.display()),
+        Outcome::Changed => println!(
+            "{what} in {}; restart the agent to apply it: Restart-Service MonitorFlowAgent",
+            path.display()
+        ),
+    }
+    Ok(())
+}
+
 /// `remote-access terminal-user <account>|none`: sets `remote.terminal_user`.
 async fn set_terminal_user(path: &Path, account: String) -> anyhow::Result<()> {
     use monitorflow_agent::remote_access::{self, Outcome};
@@ -767,16 +805,37 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
             config.commands.scripts,
         )),
     );
-    // Remote terminals (ADR-0190), only where the host allowed them.
-    let (remote, remote_end) = monitorflow_agent::remote::link(
-        config.remote.terminal,
+    // Remote terminals and desktops (ADR-0190), only where the host
+    // allowed each.
+    use monitorflow_agent::remote::{self, Allowed, RemoteSessionHandler, Spawners};
+    let (remote, remote_end) = remote::link(
+        Allowed {
+            terminal: config.remote.terminal,
+            desktop: config.remote.desktop && cfg!(windows),
+        },
         Box::new(updates.clone()),
-        monitorflow_agent::remote::platform_spawner(config.remote.terminal_user.clone()),
-        monitorflow_agent::remote::platform_announce(),
+        Spawners {
+            terminal: remote::platform_spawner(config.remote.terminal_user.clone()),
+            desktop: remote::desktop::spawner(),
+        },
+        remote::platform_announce(),
+    );
+    #[cfg(windows)]
+    handlers.register(
+        monitorflow_common::command::REMOTE_DESKTOP,
+        Arc::new(RemoteSessionHandler::desktop(remote.clone())),
+    );
+    #[cfg(not(windows))]
+    handlers.register(
+        monitorflow_common::command::REMOTE_DESKTOP,
+        Arc::new(monitorflow_agent::commands::unsupported::Unsupported::new(
+            "remote desktops",
+            "Linux",
+        )),
     );
     handlers.register(
         monitorflow_common::command::REMOTE_SESSION,
-        Arc::new(monitorflow_agent::remote::RemoteSessionHandler::new(remote)),
+        Arc::new(RemoteSessionHandler::new(remote)),
     );
     let reporting = handlers.clone();
     let (commands_stream, commands_end) = commands::link();

@@ -57,7 +57,9 @@ export function pinPage(html: string, name = "page"): string {
   let at = head + HEAD.length;
   if (html.startsWith(CHARSET, at)) at += CHARSET.length;
   if (/<script\b/i.test(html.slice(0, at))) throw new Error(`${name}: a script precedes <head>`);
-  const sources = ["'self'", ...pageHashes(html, name)].join(" ");
+  // WebAssembly compiles only for the remote desktop's client (ADR-0190);
+  // it allows no JavaScript eval.
+  const sources = ["'self'", "'wasm-unsafe-eval'", ...pageHashes(html, name)].join(" ");
   const meta = `<meta ${MARKER} content="script-src ${sources}"/>`;
   return html.slice(0, at) + meta + html.slice(at);
 }

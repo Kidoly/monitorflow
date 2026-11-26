@@ -305,17 +305,17 @@ export interface RemoteTerminalAccess {
   can_open: boolean;
   /** They may see the server's past sessions. */
   can_review: boolean;
-  /** New sessions are recorded. */
+  /** New terminals are recorded; desktops never are. */
   recorded: boolean;
   idle_timeout_minutes: number;
 }
 
-/** A remote terminal session (ADR-0190). */
+/** A remote terminal or desktop session (ADR-0190). */
 export interface RemoteSession {
   id: string;
   server_id: string;
   hostname: string;
-  kind: "terminal";
+  kind: "terminal" | "desktop";
   /** The username of who opened it. */
   requested_by: string;
   created_at: string;
@@ -6368,12 +6368,16 @@ export const api = {
   switchAllAiCommands: (on: boolean) =>
     request<SiteSourcesChange>("/api/remediation/ai-commands", { method: "POST", body: { on } }),
 
-  /** Starts a remote terminal; the WebSocket at `socket` takes it on (ADR-0190). */
-  startRemoteSession: (serverId: string) =>
+  /** Starts a remote terminal or desktop; the WebSocket at `socket` takes it on (ADR-0190). */
+  startRemoteSession: (serverId: string, kind: RemoteSession["kind"] = "terminal") =>
     request<RemoteSessionStart>(`/api/servers/${encodeURIComponent(serverId)}/remote-sessions`, {
       method: "POST",
-      body: { kind: "terminal" },
+      body: { kind },
     }),
+
+  /** One remote session, as the server's list has it. */
+  remoteSession: (sessionId: string, signal?: AbortSignal) =>
+    request<RemoteSession>(`/api/remote-sessions/${encodeURIComponent(sessionId)}`, { signal }),
 
   /** The server's last remote sessions, newest first. */
   remoteSessions: (serverId: string, signal?: AbortSignal) =>
