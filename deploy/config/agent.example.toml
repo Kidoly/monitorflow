@@ -122,9 +122,12 @@ upstream_url = "https://relay.example.com:7443"
 # sets it.
 # scripts = false
 # Let the central server install and remove software from its catalogue
-# (ADR-0188). Windows only for now: `monitorflow-agent.exe software on`
-# or the MSI property SOFTWARE_FROM_WEB=1 sets it. The update service,
-# which installs as LocalSystem, reads it here too.
+# (ADR-0188): winget on Windows, apt or dnf on Linux. `monitorflow-agent
+# software on` sets it (as root on Linux, as an administrator on Windows),
+# and so do the installer's MF_SOFTWARE_FROM_WEB=1 and the MSI property
+# SOFTWARE_FROM_WEB=1. The Linux root helper and the Windows update
+# service read it here too. The web interface can only turn it off, with
+# the file software-off in data_dir, which `software on|off` removes.
 # software = false
 
 [remote]

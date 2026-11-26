@@ -128,41 +128,72 @@ pub fn valid_source(name: &str) -> bool {
         && !name.eq_ignore_ascii_case(STORE_SOURCE)
 }
 
+/// The manager that installs software from the catalogue on a host of
+/// `os_family`, as `Hello.os_family` says it: winget on Windows, apt on
+/// the Debian family, dnf on the RHEL family. None elsewhere.
+pub fn manager_for(os_family: &str) -> Option<PackageManager> {
+    match os_family {
+        "windows" => Some(PackageManager::Winget),
+        "debian" => Some(PackageManager::Apt),
+        "rhel" => Some(PackageManager::Dnf),
+        _ => None,
+    }
+}
+
+/// Whether `manager` installs software from the catalogue.
+pub fn is_software_manager(manager: PackageManager) -> bool {
+    matches!(
+        manager,
+        PackageManager::Winget | PackageManager::Apt | PackageManager::Dnf
+    )
+}
+
 /// Why a `SoftwareChange` is refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SoftwareError {
     #[error("the action must be install or remove")]
     UnknownAction,
-    #[error("software is installed with winget only for now")]
+    #[error("software is installed with winget, apt or dnf")]
     UnsupportedManager,
     #[error("software deployment is not available on {0} servers yet")]
     WrongPlatform(String),
+    #[error("{0} packages are not for {1} servers")]
+    WrongManager(&'static str, String),
     #[error("no software to {0}")]
     Empty(&'static str),
     #[error("at most {MAX_PACKAGES} packages at once")]
     TooMany,
-    #[error("invalid winget package ID: {0}")]
-    InvalidId(String),
+    #[error("invalid {0} package: {1}")]
+    InvalidId(&'static str, String),
     #[error("`{0}` is listed twice")]
     Duplicate(String),
     #[error("invalid winget source for `{0}`")]
     InvalidSource(String),
+    #[error("`{0}` takes no source: apt and dnf install from the server's own sources")]
+    UnexpectedSource(String),
 }
 
-/// Checks `change`: a known action, winget, valid and distinct IDs, a
-/// valid source for every install. With `os_family`, it must be a
-/// platform that runs it: Windows.
+/// Checks `change`: a known action, winget, apt or dnf, valid and
+/// distinct IDs in its grammar, a valid source for every winget install
+/// and none for apt and dnf. With `os_family`, it must be the manager of
+/// that platform ([`manager_for`]).
 pub fn check_change(change: &SoftwareChange, os_family: Option<&str>) -> Result<(), SoftwareError> {
     let action = Action::try_from(change.action)
         .ok()
         .and_then(action_key)
         .ok_or(SoftwareError::UnknownAction)?;
-    if change.manager != i32::from(PackageManager::Winget) {
-        return Err(SoftwareError::UnsupportedManager);
-    }
+    let manager = PackageManager::try_from(change.manager)
+        .ok()
+        .filter(|m| is_software_manager(*m))
+        .ok_or(SoftwareError::UnsupportedManager)?;
+    let name = third_party::key(manager).ok_or(SoftwareError::UnsupportedManager)?;
     if let Some(family) = os_family {
-        if !third_party::managers_for(family).contains(&PackageManager::Winget) {
-            return Err(SoftwareError::WrongPlatform(family.to_owned()));
+        match manager_for(family) {
+            None => return Err(SoftwareError::WrongPlatform(family.to_owned())),
+            Some(own) if own != manager => {
+                return Err(SoftwareError::WrongManager(name, family.to_owned()))
+            }
+            Some(_) => {}
         }
     }
     if change.packages.is_empty() {
@@ -171,15 +202,30 @@ pub fn check_change(change: &SoftwareChange, os_family: Option<&str>) -> Result<
     if change.packages.len() > MAX_PACKAGES {
         return Err(SoftwareError::TooMany);
     }
+    let winget = manager == PackageManager::Winget;
     let mut seen = HashSet::new();
     for package in &change.packages {
-        if !valid_id(PackageManager::Winget, &package.id) {
+        if !valid_id(manager, &package.id) {
             return Err(SoftwareError::InvalidId(
+                name,
                 package.id.escape_debug().to_string(),
             ));
         }
-        if !seen.insert(package.id.to_ascii_lowercase()) {
+        // winget IDs compare without case; package names of the
+        // distributions are case-sensitive.
+        let key = if winget {
+            package.id.to_ascii_lowercase()
+        } else {
+            package.id.clone()
+        };
+        if !seen.insert(key) {
             return Err(SoftwareError::Duplicate(package.id.clone()));
+        }
+        if !winget {
+            if !package.source.is_empty() {
+                return Err(SoftwareError::UnexpectedSource(package.id.clone()));
+            }
+            continue;
         }
         let install = change.action == i32::from(Action::Install);
         if (install || !package.source.is_empty()) && !valid_source(&package.source) {
@@ -325,7 +371,11 @@ mod tests {
         assert_eq!(check_change(&install, Some("windows")), Ok(()));
         assert_eq!(
             check_change(&install, Some("debian")),
-            Err(SoftwareError::WrongPlatform("debian".into()))
+            Err(SoftwareError::WrongManager("winget", "debian".into()))
+        );
+        assert_eq!(
+            check_change(&install, Some("linux")),
+            Err(SoftwareError::WrongPlatform("linux".into()))
         );
         assert_eq!(
             check_change(&change(Action::Remove, &[("7zip.7zip", "")]), None),
@@ -362,7 +412,7 @@ mod tests {
         );
         assert_eq!(
             check_change(&change(Action::Install, &[("--force", "winget")]), None),
-            Err(SoftwareError::InvalidId("--force".into()))
+            Err(SoftwareError::InvalidId("winget", "--force".into()))
         );
         let flatpak = SoftwareChange {
             manager: PackageManager::Flatpak.into(),
@@ -380,5 +430,66 @@ mod tests {
             check_change(&change(Action::Install, &ids), None),
             Err(SoftwareError::TooMany)
         );
+    }
+
+    fn linux(manager: PackageManager, action: Action, names: &[&str]) -> SoftwareChange {
+        SoftwareChange {
+            manager: manager.into(),
+            ..change(action, &names.iter().map(|n| (*n, "")).collect::<Vec<_>>())
+        }
+    }
+
+    #[test]
+    fn linux_changes_name_packages_of_the_distribution() {
+        let apt = linux(
+            PackageManager::Apt,
+            Action::Install,
+            &["nginx", "libstdc++6:amd64"],
+        );
+        assert_eq!(check_change(&apt, Some("debian")), Ok(()));
+        assert_eq!(
+            check_change(&apt, Some("rhel")),
+            Err(SoftwareError::WrongManager("apt", "rhel".into()))
+        );
+        assert_eq!(
+            check_change(&apt, Some("windows")),
+            Err(SoftwareError::WrongManager("apt", "windows".into()))
+        );
+        let dnf = linux(PackageManager::Dnf, Action::Remove, &["httpd"]);
+        assert_eq!(check_change(&dnf, Some("rhel")), Ok(()));
+        // Never an option, a path, a glob, a group or a removal marker.
+        for bad in ["-y", "/tmp/x.deb", "ngin*", "@core", "nginx-", "a b", ""] {
+            assert_eq!(
+                check_change(&linux(PackageManager::Apt, Action::Install, &[bad]), None),
+                Err(SoftwareError::InvalidId(
+                    "apt",
+                    bad.escape_debug().to_string()
+                )),
+                "{bad}"
+            );
+        }
+        let mut sourced = apt.clone();
+        sourced.packages[0].source = "winget".into();
+        assert_eq!(
+            check_change(&sourced, None),
+            Err(SoftwareError::UnexpectedSource("nginx".into()))
+        );
+        // Case matters for the distributions' names.
+        let cased = linux(PackageManager::Dnf, Action::Install, &["Foo", "foo"]);
+        assert_eq!(check_change(&cased, None), Ok(()));
+        let twice = linux(PackageManager::Dnf, Action::Install, &["foo", "foo"]);
+        assert_eq!(
+            check_change(&twice, None),
+            Err(SoftwareError::Duplicate("foo".into()))
+        );
+    }
+
+    #[test]
+    fn each_platform_has_its_manager() {
+        assert_eq!(manager_for("windows"), Some(PackageManager::Winget));
+        assert_eq!(manager_for("debian"), Some(PackageManager::Apt));
+        assert_eq!(manager_for("rhel"), Some(PackageManager::Dnf));
+        assert_eq!(manager_for("linux"), None);
+        assert!(!is_software_manager(PackageManager::Snap));
     }
 }

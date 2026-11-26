@@ -16,11 +16,11 @@ use prost::Message;
 
 use super::{
     describe, describe_change, to_packages, Installed, Reply, Request, Scan, Status, Step,
-    SOFTWARE_NOT_ALLOWED,
 };
 use crate::commands::{Handler, Output};
 use crate::packages::winget::{self, Apps};
 use crate::packages::{PackageError, PackageManager, Reports, ThirdParty};
+use crate::software::SoftwareSwitch;
 
 /// Sends one request to the update service and returns its reply.
 #[async_trait::async_trait]
@@ -295,15 +295,20 @@ impl Handler for WindowsApplyHandler {
 pub struct SoftwareHandler {
     service: Arc<dyn UpdateService>,
     reports: Reports,
-    allowed: bool,
+    /// The host's consent and the web interface's "off" (ADR-0188).
+    switch: Arc<SoftwareSwitch>,
 }
 
 impl SoftwareHandler {
-    pub fn new(service: Arc<dyn UpdateService>, reports: Reports, allowed: bool) -> Self {
+    pub fn new(
+        service: Arc<dyn UpdateService>,
+        reports: Reports,
+        switch: Arc<SoftwareSwitch>,
+    ) -> Self {
         Self {
             service,
             reports,
-            allowed,
+            switch,
         }
     }
 }
@@ -311,11 +316,7 @@ impl SoftwareHandler {
 #[async_trait::async_trait]
 impl Handler for SoftwareHandler {
     fn acceptance(&self) -> CommandAcceptance {
-        if self.allowed {
-            CommandAcceptance::Accepted
-        } else {
-            CommandAcceptance::Disabled
-        }
+        self.switch.acceptance()
     }
 
     async fn run(&self, _payload: &[u8]) -> Output {
@@ -323,8 +324,8 @@ impl Handler for SoftwareHandler {
     }
 
     async fn run_command(&self, command: &Command) -> Output {
-        if !self.allowed {
-            return Output::rejected(SOFTWARE_NOT_ALLOWED);
+        if let Some(refusal) = self.switch.refusal() {
+            return Output::rejected(refusal);
         }
         let Ok(change) = SoftwareChange::decode(command.payload.as_slice()) else {
             return Output::rejected("invalid SoftwareChange payload");
@@ -870,7 +871,11 @@ mod tests {
     ) -> (Output, Vec<Request>, CommandAcceptance) {
         let fake = Arc::new(fake);
         let (reports, _) = Reports::new(Arc::new(WindowsUpdates::new(fake.clone())));
-        let handler = SoftwareHandler::new(fake.clone(), reports, allowed);
+        let handler = SoftwareHandler::new(
+            fake.clone(),
+            reports,
+            Arc::new(SoftwareSwitch::fixed(allowed)),
+        );
         let command = Command {
             command_id: "s-1".into(),
             kind: monitorflow_common::command::SOFTWARE.into(),
@@ -887,7 +892,7 @@ mod tests {
         let (output, calls, acceptance) =
             run_software(Fake::default(), false, change(Action::Install, true)).await;
         assert!(output.rejected);
-        assert_eq!(output.error.as_deref(), Some(SOFTWARE_NOT_ALLOWED));
+        assert_eq!(output.error.as_deref(), Some(crate::software::NOT_ALLOWED));
         assert!(calls.is_empty());
         assert_eq!(acceptance, CommandAcceptance::Disabled);
 

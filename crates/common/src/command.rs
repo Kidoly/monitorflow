@@ -32,6 +32,8 @@ pub const DELETE_SNAPSHOT: &str = "delete_snapshot";
 pub const MAJOR_UPGRADE: &str = "major_upgrade";
 /// Kind of [`crate::proto::v1::SoftwareChange`] commands (ADR-0188).
 pub const SOFTWARE: &str = "software";
+/// Kind of [`crate::proto::v1::SoftwareOff`] commands (ADR-0188).
+pub const SOFTWARE_OFF: &str = "software_off";
 
 /// Package names in an `ApplyUpdates` reach a command line on the agent:
 /// letters, digits and `.+_:-`, at most 128 bytes, not starting with `-` so
