@@ -743,7 +743,8 @@ async fn vmware_hosts_become_a_vcenter_device() {
 
 /// Database, Redis and Docker templates (ADR-0183): one ready-made check
 /// per template on its host, where its macros say it connects, in place
-/// of the template's items and triggers; an ODBC template stays missing.
+/// of the template's items and triggers; an ODBC template stays missing,
+/// but SQL Server's.
 #[tokio::test]
 async fn application_templates_become_their_checks() {
     use monitorflow_import::model::{App, AppKind};
@@ -779,6 +780,18 @@ async fn application_templates_become_their_checks() {
         .find(|c| c.host == "app-01" && c.watch == Watch::app(App::new(AppKind::Docker)))
         .unwrap();
     assert_eq!(note(&docker.fidelity), Some("app_docker_template"));
+
+    // SQL Server's ODBC template reads what the check reads.
+    let mut mssql = App::new(AppKind::Mssql);
+    mssql.port = Some(1434);
+    mssql.user = Some("zbx_monitor".into());
+    let sql = inventory
+        .checks
+        .iter()
+        .find(|c| c.host == "sql-01" && c.watch == Watch::app(mssql.clone()))
+        .unwrap_or_else(|| panic!("{:#?}", inventory.checks));
+    assert_eq!(sql.origin.name, "MSSQL by ODBC");
+    assert_eq!(note(&sql.fidelity), Some("app_template"));
 
     // Neither the templates, their items and triggers, nor a host's own
     // item of the same plugin are listed as not movable.

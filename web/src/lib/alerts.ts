@@ -508,6 +508,18 @@ function appTypes(device: boolean): CheckType[] {
     },
     {
       ...common,
+      kind: "mssql",
+      get label() {
+        return t("checks.type.mssql");
+      },
+      get fields(): CheckField[] {
+        const fields = connectionFields(1433, "monitorflow", device);
+        fields[2] = { ...fields[2]!, hint: t("checks.field.mssqlUserHint") };
+        return [...fields, tlsField()];
+      },
+    },
+    {
+      ...common,
       kind: "redis",
       get label() {
         return t("checks.type.redis");
@@ -886,8 +898,17 @@ function ownTitle(sensor: EffectiveSensor): string {
       return t("cloud.check.azure");
     case "postgresql":
     case "mysql":
+    case "mssql":
     case "redis": {
-      const app = t(sensor.kind === "postgresql" ? "checks.type.postgresql" : sensor.kind === "mysql" ? "checks.type.mysql" : "checks.type.redis");
+      const app = t(
+        sensor.kind === "postgresql"
+          ? "checks.type.postgresql"
+          : sensor.kind === "mysql"
+            ? "checks.type.mysql"
+            : sensor.kind === "mssql"
+              ? "checks.type.mssql"
+              : "checks.type.redis",
+      );
       const host = remoteHost(params);
       return host ? t("checks.title.appOn", { app, host }) : app;
     }

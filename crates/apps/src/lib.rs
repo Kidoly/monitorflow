@@ -1,8 +1,8 @@
 //! Ready-made application checks (ADR-0183): PostgreSQL, MySQL and
-//! MariaDB, Redis and Docker, as kinds of check with their metrics and
+//! MariaDB, SQL Server, Redis and Docker, as kinds of check with their metrics and
 //! default alerts ([`templates`]) instead of scripts.
 //!
-//! `postgresql`, `mysql` and `redis` connect over the network, so the
+//! `postgresql`, `mysql`, `mssql` and `redis` connect over the network, so the
 //! server's agent runs them against `127.0.0.1` (within its
 //! `sensors.port_targets`, ADR-0111) and a probe, the central server or a
 //! relay (ADR-0148), against the server's or device's address. `docker`
@@ -16,12 +16,14 @@
 //! sample, a label or a log line.
 
 pub mod docker;
+pub mod mssql;
 pub mod mysql;
 mod params;
 pub mod postgresql;
 mod rates;
 pub mod redis;
 mod resp;
+mod tds;
 pub mod templates;
 mod unix_http;
 
@@ -39,14 +41,16 @@ pub use params::Params;
 pub const POSTGRESQL: &str = "postgresql";
 /// MySQL from 5.7 and MariaDB from 10.3.
 pub const MYSQL: &str = "mysql";
+/// SQL Server from 2012, and Azure SQL Managed Instance.
+pub const MSSQL: &str = "mssql";
 /// Redis from 5, and servers that speak its protocol (Valkey, KeyDB).
 pub const REDIS: &str = "redis";
 /// The containers of the local Docker or Podman engine.
 pub const DOCKER: &str = "docker";
 /// Every kind of this crate.
-pub const KINDS: [&str; 4] = [POSTGRESQL, MYSQL, REDIS, DOCKER];
+pub const KINDS: [&str; 5] = [POSTGRESQL, MYSQL, MSSQL, REDIS, DOCKER];
 /// The kinds a probe runs as well as an agent: those over the network.
-pub const NETWORK_KINDS: [&str; 3] = [POSTGRESQL, MYSQL, REDIS];
+pub const NETWORK_KINDS: [&str; 4] = [POSTGRESQL, MYSQL, MSSQL, REDIS];
 /// The parameter holding the password: sealed by the server, never stored
 /// with the check's other parameters nor returned.
 pub const SECRET_PARAM: &str = "password";
@@ -94,6 +98,7 @@ pub fn build(
     let sensor: Arc<dyn Sensor> = match kind {
         POSTGRESQL => Arc::new(postgresql::Postgresql::from_params(&mut p, place)?),
         MYSQL => Arc::new(mysql::Mysql::from_params(&mut p, place)?),
+        MSSQL => Arc::new(mssql::Mssql::from_params(&mut p, place)?),
         REDIS => Arc::new(redis::Redis::from_params(&mut p, place)?),
         _ => Arc::new(docker::Docker::from_params(&mut p, place)?),
     };
@@ -334,6 +339,24 @@ async fn within<T>(
             "no answer before the check's timeout",
         )),
     }
+}
+
+/// The roots the machine trusts, for `tls` `verify` where the client is
+/// this crate's: the system's, or Mozilla's when the system has none (a
+/// minimal container). Loaded once per process.
+fn roots() -> Arc<rustls::RootCertStore> {
+    static ROOTS: std::sync::OnceLock<Arc<rustls::RootCertStore>> = std::sync::OnceLock::new();
+    ROOTS
+        .get_or_init(|| {
+            let mut store = rustls::RootCertStore::empty();
+            let native = rustls_native_certs::load_native_certs();
+            let (added, _) = store.add_parsable_certificates(native.certs);
+            if added == 0 {
+                store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            }
+            Arc::new(store)
+        })
+        .clone()
 }
 
 /// A sample of `metric` at `value`, finite values only.

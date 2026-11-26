@@ -1,10 +1,10 @@
 //! Checks against real servers, run when their addresses are given
 //! (ADR-0183); skipped otherwise, as CI has none. `scripts/apps-test.sh`
-//! starts PostgreSQL, MySQL, MariaDB and Redis in containers with the
-//! read-only accounts the guides describe, and runs these.
+//! starts PostgreSQL, MySQL, MariaDB, SQL Server and Redis in containers
+//! with the read-only accounts the guides describe, and runs these.
 //!
-//! `MF_APPS_TEST_POSTGRESQL`, `MF_APPS_TEST_MYSQL`, `MF_APPS_TEST_MARIADB`
-//! and `MF_APPS_TEST_REDIS` are `host:port`; the account is `monitorflow`
+//! `MF_APPS_TEST_POSTGRESQL`, `MF_APPS_TEST_MYSQL`, `MF_APPS_TEST_MARIADB`,
+//! `MF_APPS_TEST_MSSQL` and `MF_APPS_TEST_REDIS` are `host:port`; the account is `monitorflow`
 //! with the password in `MF_APPS_TEST_PASSWORD`. `MF_APPS_TEST_DOCKER=1`
 //! reads the local engine.
 
@@ -158,4 +158,59 @@ async fn docker() {
     assert!(!running.instance.is_empty());
     assert!(find(&samples, "container_memory_bytes").is_some());
     assert!(find(&samples, "container_cpu_ratio").is_some());
+}
+
+/// SQL Server, encrypted by default with the certificate it made itself,
+/// then without encryption; its Always On metrics come from the one
+/// replica availability group `scripts/apps-test.sh` creates; a login
+/// without `VIEW SERVER STATE` is a `permission` failure.
+#[tokio::test]
+async fn mssql() {
+    let wanted = [
+        "connections",
+        "connections_ratio",
+        "batch_requests_per_second",
+        "page_life_expectancy_seconds",
+        "buffer_cache_hit_ratio",
+        "processes_blocked",
+        "longest_blocked_seconds",
+        "lock_waits_per_second",
+        "deadlocks",
+        "database_size_bytes",
+        "log_size_bytes",
+        "log_used_ratio",
+        "ag_replica_connected",
+        "ag_replica_healthy",
+    ];
+    check("mssql", "MF_APPS_TEST_MSSQL", &wanted).await;
+    let Some((host, port)) = target("MF_APPS_TEST_MSSQL") else {
+        return;
+    };
+    let password = std::env::var("MF_APPS_TEST_PASSWORD").unwrap_or_default();
+    let mut plain = params(&host, &port, &password);
+    plain.insert("tls".into(), "off".into());
+    let samples = collect("mssql", &plain).await;
+    assert_eq!(find(&samples, "up").unwrap().value, 1.0, "{samples:#?}");
+    let shop = samples
+        .iter()
+        .find(|s| s.sensor == "database_size_bytes" && s.instance == "shop")
+        .expect("the shop database");
+    assert!(shop.value > 0.0);
+    let replica = find(&samples, "ag_replica_healthy").unwrap();
+    assert!(replica.instance.starts_with("mf_ag/"), "{replica:?}");
+    assert_eq!(replica.labels["role"], "primary");
+    // Verified encryption refuses the certificate SQL Server made itself.
+    let mut verify = params(&host, &port, &password);
+    verify.insert("tls".into(), "verify".into());
+    let up = collect("mssql", &verify).await;
+    assert_eq!(find(&up, "up").unwrap().labels["reason"], "tls", "{up:?}");
+
+    let mut bare = params(&host, &port, &password);
+    bare.insert("user".into(), "mf_bare".into());
+    let up = collect("mssql", &bare).await;
+    assert_eq!(
+        find(&up, "up").unwrap().labels["reason"],
+        "permission",
+        "{up:?}"
+    );
 }

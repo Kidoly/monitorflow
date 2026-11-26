@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Ready-made application checks: PostgreSQL, MySQL and MariaDB, Redis, Docker (ADR-0183)"
+description = "Ready-made application checks: PostgreSQL, MySQL and MariaDB, SQL Server, Redis, Docker (ADR-0183)"
 
 # Sensors of `monitorflow-sensors` kept apart, as they speak the
 # applications' own protocols: database clients and HTTP over the Docker
@@ -18,6 +18,11 @@ serde.workspace = true
 serde_json.workspace = true
 # PostgreSQL and MySQL clients, over rustls like the rest of the workspace.
 sqlx = { workspace = true, features = ["mysql"] }
+# SQL Server's TDS encryption, on ring like the rest of the workspace.
+rustls = { workspace = true, features = ["tls12"] }
+rustls-native-certs.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

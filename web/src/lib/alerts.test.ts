@@ -158,12 +158,19 @@ describe("adding a check", () => {
     expect(threshold).toBeNull();
     expect(more).toEqual([]);
     expect(CHECK_TYPES.find((t) => t.kind === "docker")).toMatchObject({ os: "linux", anyRunner: false, probe: false });
-    expect(DEVICE_CHECK_TYPES.filter((t) => t.template).map((t) => t.kind)).toEqual(["postgresql", "mysql", "redis"]);
+    expect(DEVICE_CHECK_TYPES.filter((t) => t.template).map((t) => t.kind)).toEqual(["postgresql", "mysql", "mssql", "redis"]);
+    const mssql = CHECK_TYPES.find((t) => t.kind === "mssql")!;
+    const mssqlValues = Object.fromEntries(mssql.fields.map((f) => [f.key, f.initial ?? ""]));
+    expect(checkRequests(mssql, { ...mssqlValues, password: "pw" }, 60_000).sensor).toMatchObject({
+      kind: "mssql",
+      default_alerts: true,
+      params: { host: "127.0.0.1", port: "1433", user: "monitorflow", password: "pw", tls: "prefer" },
+    });
   });
 
   it("offers what the server's system runs, everything for a site", () => {
-    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script", "http", "postgresql", "mysql", "redis", "docker"]);
-    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script", "http", "postgresql", "mysql", "redis"]);
+    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script", "http", "postgresql", "mysql", "mssql", "redis", "docker"]);
+    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script", "http", "postgresql", "mysql", "mssql", "redis"]);
     expect(checkTypesFor(null)).toHaveLength(CHECK_TYPES.length);
     const path = (os: string | null) => checkTypesFor(os).find((t) => t.kind === "log")!.fields[0]!;
     expect(path("windows").placeholder).toBe("C:\\Logs\\app.log");

@@ -80,3 +80,19 @@ zabbix_export:
           value: 192.0.2.60
         - macro: '{$MYSQL.PORT}'
           value: '3307'
+    - host: sql-01
+      name: sql-01
+      templates:
+        - name: 'MSSQL by ODBC'
+      groups:
+        - name: Databases
+      interfaces:
+        - ip: 192.0.2.53
+          interface_ref: if1
+      macros:
+        - macro: '{$MSSQL.PORT}'
+          value: '1434'
+        - macro: '{$MSSQL.USER}'
+          value: zbx_monitor
+        - macro: '{$MSSQL.PASSWORD}'
+          type: SECRET_TEXT

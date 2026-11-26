@@ -272,6 +272,8 @@ pub enum AppKind {
     Postgresql,
     /// MySQL and MariaDB.
     Mysql,
+    /// SQL Server.
+    Mssql,
     Redis,
     /// The containers of the host's Docker or Podman engine, read by its
     /// agent.
@@ -284,6 +286,7 @@ impl AppKind {
         match self {
             Self::Postgresql => "postgresql",
             Self::Mysql => "mysql",
+            Self::Mssql => "mssql",
             Self::Redis => "redis",
             Self::Docker => "docker",
         }

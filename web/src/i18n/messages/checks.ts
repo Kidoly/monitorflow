@@ -306,6 +306,7 @@ export const en = {
   "entry.website-api.description": "An API endpoint answers with the status code expected, with headers or a token if it needs them.",
   "type.postgresql": "PostgreSQL",
   "type.mysql": "MySQL or MariaDB",
+  "type.mssql": "SQL Server",
   "type.redis": "Redis",
   "type.docker": "Docker containers",
   "title.appOn": "{app} on {host}",
@@ -325,6 +326,8 @@ export const en = {
   "field.engine": "Engine",
   "entry.postgresql.description": "Connections, long queries and transactions, locks, deadlocks, cache hit ratio, database sizes and replication lag, with their alerts.",
   "entry.mysql.description": "Connections, queries, slow queries, InnoDB hit ratio, lock waits, schema sizes and replication, with their alerts.",
+  "entry.mssql.description": "Connections, batch requests, page life expectancy, blocked processes, deadlocks, database and log sizes and Always On replicas, with their alerts.",
+  "field.mssqlUserHint": "A SQL Server login with VIEW SERVER STATE only: the guide shows how to create it.",
   "entry.redis.description": "Clients, memory against maxmemory, evictions, hit ratio, snapshots and replication, with their alerts.",
   "entry.docker.description": "Each container that should run: whether it runs, its restarts, its health check, its processor and memory.",
 } as const satisfies Catalog;
@@ -634,6 +637,7 @@ export const fr: Translation<typeof en> = {
   "entry.website-api.description": "Un point d’accès d’API répond avec le code de statut attendu, avec des en-têtes ou un jeton s’il en a besoin.",
   "type.postgresql": "PostgreSQL",
   "type.mysql": "MySQL ou MariaDB",
+  "type.mssql": "SQL Server",
   "type.redis": "Redis",
   "type.docker": "Conteneurs Docker",
   "title.appOn": "{app} sur {host}",
@@ -653,6 +657,8 @@ export const fr: Translation<typeof en> = {
   "field.engine": "Moteur",
   "entry.postgresql.description": "Connexions, requêtes et transactions longues, verrous, interblocages, taux de cache, taille des bases et retard de réplication, avec leurs alertes.",
   "entry.mysql.description": "Connexions, requêtes, requêtes lentes, taux de cache InnoDB, attentes de verrous, taille des schémas et réplication, avec leurs alertes.",
+  "entry.mssql.description": "Connexions, lots de requêtes, durée de vie des pages, processus bloqués, interblocages, taille des bases et des journaux et réplicas Always On, avec leurs alertes.",
+  "field.mssqlUserHint": "Une connexion SQL Server avec VIEW SERVER STATE seulement : le guide montre comment la créer.",
   "entry.redis.description": "Clients, mémoire par rapport à maxmemory, évictions, taux de succès, sauvegardes et réplication, avec leurs alertes.",
   "entry.docker.description": "Chaque conteneur censé tourner : s’il tourne, ses redémarrages, son contrôle de santé, son processeur et sa mémoire.",
 };
