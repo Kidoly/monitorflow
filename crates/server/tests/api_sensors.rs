@@ -779,7 +779,7 @@ db_tests! {
         assert_eq!(status, StatusCode::OK);
         let kinds: Vec<&str> = body["templates"].as_array().unwrap().iter()
             .map(|t| t["kind"].as_str().unwrap()).collect();
-        assert_eq!(kinds, ["postgresql", "mysql", "mssql", "redis", "docker"]);
+        assert_eq!(kinds, ["postgresql", "mysql", "mssql", "redis", "jmx", "docker"]);
 
         // Bad parameters are refused as the agent would.
         let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
@@ -868,6 +868,58 @@ db_tests! {
             let text = details.to_string();
             assert!(!text.contains("pg-s3cret") && !text.contains("r3dis-pw"), "{text}");
             assert!(!text.contains("mssql-pw"), "{text}");
+        }
+    }
+
+    #[sqlx::test]
+    async fn jmx_checks_send_their_password_over_https_only(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let f = fleet(&pool).await;
+        let operator = session(&pool, "op", Role::Operator, Some(f.paris)).await;
+        let uri = format!("/api/servers/{}/sensor_configs", f.paris_server);
+
+        // From a probe over plain HTTP, the password would cross the
+        // network in clear.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "jmx", "interval_ms": 60_000, "probe": "central",
+            "params": {"host": "10.0.0.20", "user": "monitorflow", "password": "jmx-s3cret"}
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("HTTPS"), "{body}");
+
+        // Over HTTPS from the central server, sealed and sent to it alone.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "jmx", "interval_ms": 60_000, "probe": "central", "default_alerts": true,
+            "params": {"host": "10.0.0.20", "tls": "verify", "groups": "kafka",
+                "user": "monitorflow", "password": "jmx-s3cret"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["secret_set"], true);
+        assert!(!body.to_string().contains("jmx-s3cret"), "{body}");
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let jmx = sets["central"].checks.iter().find(|c| c.kind == "jmx").unwrap();
+        assert_eq!(jmx.config.params["password"], "jmx-s3cret");
+        let metrics: Vec<String> = sqlx::query_scalar(
+            "SELECT metric FROM thresholds WHERE server_id = $1 ORDER BY metric")
+            .bind(f.paris_server).fetch_all(&pool).await.unwrap();
+        for metric in ["monitorflow_jmx_up", "monitorflow_jmx_heap_usage_ratio",
+            "monitorflow_jmx_gc_time_ratio", "monitorflow_jmx_kafka_under_min_isr"] {
+            assert!(metrics.contains(&metric.to_owned()), "{metrics:?}");
+        }
+
+        // On the agent, to the loopback over HTTP.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "jmx", "name": "tomcat", "interval_ms": 60_000,
+            "params": {"port": 8778, "groups": "tomcat", "user": "monitorflow", "password": "jmx-s3cret"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "jmx", "name": "jvm2", "interval_ms": 60_000, "params": {"groups": "jetty"}
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        for (_, _, details) in audit(&pool).await {
+            assert!(!details.to_string().contains("jmx-s3cret"), "{details}");
         }
     }
 }

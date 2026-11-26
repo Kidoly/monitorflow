@@ -1768,6 +1768,7 @@ dependencies = [
  "async-trait",
  "monitorflow-sensors",
  "regex",
+ "reqwest",
  "rustls",
  "rustls-native-certs",
  "serde",

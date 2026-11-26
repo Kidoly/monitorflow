@@ -1,4 +1,4 @@
-import { t } from "@/i18n";
+import { type PlainKey, t } from "@/i18n";
 
 import {
   type Comparison,
@@ -528,6 +528,51 @@ function appTypes(device: boolean): CheckType[] {
         return connectionFields(6379, null, device);
       },
     },
+    {
+      ...common,
+      kind: "jmx",
+      get label() {
+        return t("checks.type.jmx");
+      },
+      get fields(): CheckField[] {
+        const hints: Record<string, string> = {
+          port: t("checks.field.jolokiaPortHint"),
+          user: t("checks.field.jolokiaUserHint"),
+          password: t("checks.field.jolokiaPasswordHint"),
+        };
+        return [
+          ...connectionFields(8778, null, device).map((f) => ({ ...f, hint: hints[f.key] ?? f.hint })),
+          {
+            key: "groups",
+            label: t("checks.field.jmxGroups"),
+            placeholder: "",
+            initial: "tomcat,kafka",
+            optional: true,
+            input: "select",
+            options: [
+              { value: "tomcat,kafka", label: t("checks.field.jmxGroupsBoth") },
+              { value: "tomcat", label: "Tomcat" },
+              { value: "kafka", label: "Kafka" },
+              { value: "none", label: t("checks.field.jmxGroupsNone") },
+            ],
+          },
+          { key: "path", label: t("checks.field.jolokiaPath"), placeholder: "/jolokia/", initial: "/jolokia/", optional: true, advanced: true },
+          {
+            key: "tls",
+            label: t("checks.field.tls"),
+            placeholder: "",
+            initial: "off",
+            optional: true,
+            advanced: true,
+            input: "select",
+            options: [
+              { value: "off", label: t("checks.field.tlsHttp") },
+              { value: "verify", label: t("checks.field.tlsVerify") },
+            ],
+          },
+        ];
+      },
+    },
   ];
   if (device) return types;
   return [
@@ -562,6 +607,15 @@ function appTypes(device: boolean): CheckType[] {
     },
   ];
 }
+
+/** The names of the application checks that connect to an address. */
+const APP_TITLES: Record<"postgresql" | "mysql" | "mssql" | "redis" | "jmx", PlainKey> = {
+  postgresql: "checks.type.postgresql",
+  mysql: "checks.type.mysql",
+  mssql: "checks.type.mssql",
+  redis: "checks.type.redis",
+  jmx: "checks.type.jmx",
+};
 
 /** What a device can be checked with, from the central server or a relay (ADR-0148). */
 /**
@@ -899,16 +953,9 @@ function ownTitle(sensor: EffectiveSensor): string {
     case "postgresql":
     case "mysql":
     case "mssql":
-    case "redis": {
-      const app = t(
-        sensor.kind === "postgresql"
-          ? "checks.type.postgresql"
-          : sensor.kind === "mysql"
-            ? "checks.type.mysql"
-            : sensor.kind === "mssql"
-              ? "checks.type.mssql"
-              : "checks.type.redis",
-      );
+    case "redis":
+    case "jmx": {
+      const app = t(APP_TITLES[sensor.kind]);
       const host = remoteHost(params);
       return host ? t("checks.title.appOn", { app, host }) : app;
     }

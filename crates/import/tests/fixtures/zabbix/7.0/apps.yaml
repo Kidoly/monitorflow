@@ -1,4 +1,4 @@
-# Database, Redis and Docker templates (ADR-0183), written by hand in the
+# Database, Redis, JMX and Docker templates (ADR-0183), written by hand in the
 # shape of a Zabbix 7.0 export (defaults left out, as Zabbix leaves them
 # out). The Redis template is exported with one item and one trigger; the
 # others are linked but not exported, so only their names and the
@@ -96,3 +96,22 @@ zabbix_export:
           value: zbx_monitor
         - macro: '{$MSSQL.PASSWORD}'
           type: SECRET_TEXT
+    - host: jvm-01
+      name: jvm-01
+      templates:
+        - name: 'Apache Tomcat by JMX'
+        - name: 'Generic Java JMX'
+      groups:
+        - name: Databases
+      interfaces:
+        - ip: 192.0.2.53
+          interface_ref: if1
+        - type: JMX
+          ip: 192.0.2.53
+          port: '12345'
+          interface_ref: if2
+      items:
+        - name: 'Own heap item'
+          type: JMX
+          key: 'jmx["java.lang:type=Memory","HeapMemoryUsage.used"]'
+          interface_ref: if2

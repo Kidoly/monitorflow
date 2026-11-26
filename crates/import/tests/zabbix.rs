@@ -793,6 +793,18 @@ async fn application_templates_become_their_checks() {
     assert_eq!(sql.origin.name, "MSSQL by ODBC");
     assert_eq!(note(&sql.fidelity), Some("app_template"));
 
+    // JMX templates: one Java check, at Jolokia's port, not the Java
+    // gateway's.
+    let jvm: Vec<_> = inventory
+        .checks
+        .iter()
+        .filter(|c| c.host == "jvm-01")
+        .collect();
+    assert_eq!(jvm.len(), 1, "{jvm:#?}");
+    assert_eq!(jvm[0].watch, Watch::app(App::new(AppKind::Jmx)));
+    assert_eq!(note(&jvm[0].fidelity), Some("app_jmx_template"));
+    assert_eq!(jvm[0].origin.name, "Apache Tomcat by JMX");
+
     // Neither the templates, their items and triggers, nor a host's own
     // item of the same plugin are listed as not movable.
     let listed: Vec<(&str, &str)> = inventory

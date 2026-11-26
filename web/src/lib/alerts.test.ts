@@ -158,7 +158,7 @@ describe("adding a check", () => {
     expect(threshold).toBeNull();
     expect(more).toEqual([]);
     expect(CHECK_TYPES.find((t) => t.kind === "docker")).toMatchObject({ os: "linux", anyRunner: false, probe: false });
-    expect(DEVICE_CHECK_TYPES.filter((t) => t.template).map((t) => t.kind)).toEqual(["postgresql", "mysql", "mssql", "redis"]);
+    expect(DEVICE_CHECK_TYPES.filter((t) => t.template).map((t) => t.kind)).toEqual(["postgresql", "mysql", "mssql", "redis", "jmx"]);
     const mssql = CHECK_TYPES.find((t) => t.kind === "mssql")!;
     const mssqlValues = Object.fromEntries(mssql.fields.map((f) => [f.key, f.initial ?? ""]));
     expect(checkRequests(mssql, { ...mssqlValues, password: "pw" }, 60_000).sensor).toMatchObject({
@@ -168,9 +168,28 @@ describe("adding a check", () => {
     });
   });
 
+  it("reads a JVM through Jolokia, with its template's alerts", () => {
+    const jmx = CHECK_TYPES.find((t) => t.kind === "jmx")!;
+    expect(jmx).toMatchObject({ template: true, anyRunner: true, os: null });
+    const values = Object.fromEntries(jmx.fields.map((f) => [f.key, f.initial ?? ""]));
+    const { sensor, threshold } = checkRequests(jmx, values, 60_000);
+    expect(sensor).toMatchObject({
+      kind: "jmx",
+      name: "jmx",
+      default_alerts: true,
+      params: { host: "127.0.0.1", port: "8778", groups: "tomcat,kafka", path: "/jolokia/", tls: "off" },
+    });
+    expect(sensor.params).not.toHaveProperty("password");
+    expect(threshold).toBeNull();
+    expect(jmx.fields.find((f) => f.key === "tls")!.options!.map((o) => o.value)).toEqual(["off", "verify"]);
+    // A device's address comes from the device.
+    const device = DEVICE_CHECK_TYPES.find((t) => t.kind === "jmx")!;
+    expect(device.fields[0]!.initial).toBeUndefined();
+  });
+
   it("offers what the server's system runs, everything for a site", () => {
-    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script", "http", "postgresql", "mysql", "mssql", "redis", "docker"]);
-    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script", "http", "postgresql", "mysql", "mssql", "redis"]);
+    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script", "http", "postgresql", "mysql", "mssql", "redis", "jmx", "docker"]);
+    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script", "http", "postgresql", "mysql", "mssql", "redis", "jmx"]);
     expect(checkTypesFor(null)).toHaveLength(CHECK_TYPES.length);
     const path = (os: string | null) => checkTypesFor(os).find((t) => t.kind === "log")!.fields[0]!;
     expect(path("windows").placeholder).toBe("C:\\Logs\\app.log");

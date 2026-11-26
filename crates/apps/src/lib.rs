@@ -1,8 +1,9 @@
 //! Ready-made application checks (ADR-0183): PostgreSQL, MySQL and
-//! MariaDB, SQL Server, Redis and Docker, as kinds of check with their metrics and
-//! default alerts ([`templates`]) instead of scripts.
+//! MariaDB, SQL Server, Redis, Java virtual machines through Jolokia, and
+//! Docker, as kinds of check with their metrics and default alerts
+//! ([`templates`]) instead of scripts.
 //!
-//! `postgresql`, `mysql`, `mssql` and `redis` connect over the network, so the
+//! `postgresql`, `mysql`, `mssql`, `redis` and `jmx` connect over the network, so the
 //! server's agent runs them against `127.0.0.1` (within its
 //! `sensors.port_targets`, ADR-0111) and a probe, the central server or a
 //! relay (ADR-0148), against the server's or device's address. `docker`
@@ -17,6 +18,7 @@
 
 pub mod docker;
 pub mod mssql;
+pub mod jmx;
 pub mod mysql;
 mod params;
 pub mod postgresql;
@@ -45,12 +47,14 @@ pub const MYSQL: &str = "mysql";
 pub const MSSQL: &str = "mssql";
 /// Redis from 5, and servers that speak its protocol (Valkey, KeyDB).
 pub const REDIS: &str = "redis";
+/// A Java virtual machine, read through Jolokia's HTTP bridge to JMX.
+pub const JMX: &str = "jmx";
 /// The containers of the local Docker or Podman engine.
 pub const DOCKER: &str = "docker";
 /// Every kind of this crate.
-pub const KINDS: [&str; 5] = [POSTGRESQL, MYSQL, MSSQL, REDIS, DOCKER];
+pub const KINDS: [&str; 6] = [POSTGRESQL, MYSQL, MSSQL, REDIS, JMX, DOCKER];
 /// The kinds a probe runs as well as an agent: those over the network.
-pub const NETWORK_KINDS: [&str; 4] = [POSTGRESQL, MYSQL, MSSQL, REDIS];
+pub const NETWORK_KINDS: [&str; 5] = [POSTGRESQL, MYSQL, MSSQL, REDIS, JMX];
 /// The parameter holding the password: sealed by the server, never stored
 /// with the check's other parameters nor returned.
 pub const SECRET_PARAM: &str = "password";
@@ -100,6 +104,7 @@ pub fn build(
         MYSQL => Arc::new(mysql::Mysql::from_params(&mut p, place)?),
         MSSQL => Arc::new(mssql::Mssql::from_params(&mut p, place)?),
         REDIS => Arc::new(redis::Redis::from_params(&mut p, place)?),
+        JMX => Arc::new(jmx::Jmx::from_params(&mut p, place)?),
         _ => Arc::new(docker::Docker::from_params(&mut p, place)?),
     };
     p.finish()?;

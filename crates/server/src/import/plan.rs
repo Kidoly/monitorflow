@@ -837,6 +837,12 @@ impl Planner<'_> {
                     if let Some(user) = &app.user {
                         params.insert("user".into(), json!(user));
                     }
+                    if let Some(path) = &app.path {
+                        params.insert("path".into(), json!(path));
+                    }
+                    if app.https {
+                        params.insert("tls".into(), json!("verify"));
+                    }
                     // The password is never exported: the person enters it.
                     if list == List::Exact {
                         list = List::Approximated;
