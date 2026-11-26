@@ -808,7 +808,7 @@ async fn main() -> anyhow::Result<()> {
             cluster::lead(cluster.leadership(), stopped.clone(), |until| {
                 probes
                     .clone()
-                    .run_central(Arc::new(monitorflow_webcheck::CentralProbeKinds), until)
+                    .run_central(Arc::new(monitorflow_server::cloud::CentralKinds), until)
             })
             .await;
             Ok(())

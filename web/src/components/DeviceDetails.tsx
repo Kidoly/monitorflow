@@ -3,7 +3,15 @@
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 
 import { t } from "@/i18n";
-import { ApiError, type ServerDetail, type SnmpCredentials, type VmwareCredentials, api, describeError } from "@/lib/api";
+import {
+  ApiError,
+  type CloudCredentials,
+  type ServerDetail,
+  type SnmpCredentials,
+  type VmwareCredentials,
+  api,
+  describeError,
+} from "@/lib/api";
 import { modifiesSite, multiCustomer, useMe } from "@/lib/me";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { FactsBox } from "@/components/ui/FactsBox";
@@ -11,6 +19,7 @@ import { formatExact } from "@/components/ui/time";
 
 import styles from "./AdminPages.module.css";
 import { validAddress } from "./AddDevice";
+import { EditCloud, cloudSummary } from "./CloudCredentials";
 import { EditSnmp, snmpSummary } from "./SnmpCredentials";
 import { EditVmware, vmwareSummary } from "./VmwareCredentials";
 
@@ -23,6 +32,9 @@ export function DeviceFacts({ server, onChanged }: { server: ServerDetail; onCha
   // The same for vCenter credentials (ADR-0156).
   const [vmware, setVmware] = useState<VmwareCredentials | null | undefined>(undefined);
   const [editingVmware, setEditingVmware] = useState(false);
+  // And for a cloud account (ADR-0183).
+  const [cloud, setCloud] = useState<CloudCredentials | null | undefined>(undefined);
+  const [editingCloud, setEditingCloud] = useState(false);
   const canEdit = !server.revoked_at && modifiesSite(me, server.customer_id, server.site_id);
   const load = useCallback(
     (signal?: AbortSignal) =>
@@ -38,12 +50,34 @@ export function DeviceFacts({ server, onChanged }: { server: ServerDetail; onCha
       }),
     [server.id],
   );
+  const loadCloud = useCallback(
+    (signal?: AbortSignal) =>
+      api.deviceCloud(server.id, signal).then(setCloud, (e: unknown) => {
+        if (e instanceof ApiError && e.status === 404) setCloud(null);
+      }),
+    [server.id],
+  );
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
     void loadVmware(controller.signal);
+    void loadCloud(controller.signal);
     return () => controller.abort();
-  }, [load, loadVmware]);
+  }, [load, loadVmware, loadCloud]);
+  if (editingCloud && cloud !== undefined) {
+    return (
+      <EditCloud
+        server={server}
+        stored={cloud}
+        onClose={() => setEditingCloud(false)}
+        onSaved={() => {
+          setEditingCloud(false);
+          void loadCloud();
+          onChanged?.();
+        }}
+      />
+    );
+  }
   if (editingVmware && vmware !== undefined) {
     return (
       <EditVmware
@@ -107,6 +141,24 @@ export function DeviceFacts({ server, onChanged }: { server: ServerDetail; onCha
                     {canEdit && (
                       <Button variant="ghost" size="small" onClick={() => setEditingVmware(true)}>
                         {vmware ? t("virtualization.vmware.change") : t("virtualization.vmware.set")}
+                      </Button>
+                    )}
+                  </>
+                ),
+              },
+            ]),
+        // Shown once set: a cloud account is added as one.
+        ...(!cloud
+          ? []
+          : [
+              {
+                label: t("cloud.fact"),
+                value: (
+                  <>
+                    {cloudSummary(cloud)}{" "}
+                    {canEdit && (
+                      <Button variant="ghost" size="small" onClick={() => setEditingCloud(true)}>
+                        {t("cloud.change")}
                       </Button>
                     )}
                   </>

@@ -22,6 +22,7 @@ use super::auth::CurrentUser;
 use super::sensors::{body, default_probe, parse_id, RunBy};
 use super::servers::{self, ServerView};
 use super::{ApiError, ApiState};
+use crate::cloud;
 use crate::enroll::{identity, install_key};
 use crate::snmp;
 use crate::vmware;
@@ -41,8 +42,11 @@ pub struct DeviceRequest {
     /// What people call it, like `Core switch`: 1 to 128 characters
     /// without control characters. Its ID is made from it.
     pub name: String,
-    /// Where its checks reach it: an IP address or a DNS name.
-    pub address: String,
+    /// Where its checks reach it: an IP address or a DNS name. Required
+    /// unless it is a cloud account, whose address is then its provider's
+    /// API.
+    #[serde(default)]
+    pub address: Option<String>,
     /// Where its ping runs from: `central`, or the ID of a relay of the
     /// site. Absent: the relay of the site when there is one, else the
     /// central server.
@@ -50,9 +54,10 @@ pub struct DeviceRequest {
     pub probe: Option<String>,
     /// Whether to add a ping every minute, with the thresholds that come
     /// with it: critical when it gets no answer for 2 minutes, a warning
-    /// above 20% packet loss for 5 minutes. `true` by default.
-    #[serde(default = "yes")]
-    pub ping: bool,
+    /// above 20% packet loss for 5 minutes. `true` by default, `false`
+    /// for a cloud account.
+    #[serde(default)]
+    pub ping: Option<bool>,
     /// How to reach it over SNMP (ADR-0149); needed with `template`.
     /// Stored sealed, never returned.
     #[serde(default)]
@@ -71,10 +76,15 @@ pub struct DeviceRequest {
     /// `POST /api/devices/vmware/test`. Stored sealed, never returned.
     #[serde(default)]
     pub vmware: Option<vmware::CredentialsRequest>,
-}
-
-fn yes() -> bool {
-    true
+    /// For a cloud account (ADR-0183): an AWS account or an Azure
+    /// subscription, read with read-only credentials. The device then
+    /// gets its `aws` or `azure` check every 5 minutes on the central
+    /// server, which lists its virtual machines, with the alerts that
+    /// come with it. Test them first with `POST /api/devices/cloud/test`.
+    /// The secret is stored sealed, never returned. Not with `snmp`,
+    /// `template` or `vmware`, and only from the central server.
+    #[serde(default)]
+    pub cloud: Option<cloud::CredentialsRequest>,
 }
 
 /// Body of `PUT /api/devices/{id}`: what changes, the rest stays.
@@ -226,7 +236,33 @@ pub async fn create(
         .await?;
     let site = authorize(&user, exists, true)?;
     let name = check_name(&request.name)?;
-    let address = check_address(&request.address)?;
+    let account = request
+        .cloud
+        .as_ref()
+        .map(|c| cloud::check(c, None).map_err(ApiError::Invalid))
+        .transpose()?;
+    if account.is_some() {
+        if request.snmp.is_some() || request.template.is_some() || request.vmware.is_some() {
+            return Err(ApiError::Invalid(
+                "a cloud account takes no `snmp`, `template` or `vmware`".into(),
+            ));
+        }
+        if request
+            .probe
+            .as_deref()
+            .is_some_and(|p| p != monitorflow_probe::CENTRAL)
+        {
+            return Err(ApiError::Invalid(
+                "a cloud account is read by the central server: `probe` must be `central`".into(),
+            ));
+        }
+    }
+    let address = match (request.address.as_deref(), &account) {
+        (Some(address), _) if !address.trim().is_empty() => check_address(address)?,
+        (_, Some(account)) => account.address(),
+        _ => return Err(ApiError::Invalid("`address` is required".into())),
+    };
+    let ping = request.ping.unwrap_or(account.is_none());
     let template = match request.template.as_deref() {
         None => None,
         Some(key) => Some(snmp::template(key).ok_or_else(|| {
@@ -255,7 +291,7 @@ pub async fn create(
         request.probe.as_deref(),
     )
     .await?;
-    let by = if request.ping {
+    let by = if ping {
         add_ping(&mut tx, id, &probe).await?;
         Some(&probe)
     } else {
@@ -275,6 +311,12 @@ pub async fn create(
             .map_err(vmware_save_error)?;
         add_vmware(&mut tx, id, &probe).await?;
     }
+    if let Some(account) = &account {
+        cloud::save(&mut tx, id, account)
+            .await
+            .map_err(cloud_save_error)?;
+        cloud::add_check(&mut tx, id, &account.provider).await?;
+    }
     record(
         &mut tx,
         &user,
@@ -286,6 +328,7 @@ pub async fn create(
             "template": template.map(|t| t.key),
             "snmp": credentials.as_ref().map(snmp::audit),
             "vmware": vcenter.as_ref().map(vmware::audit),
+            "cloud": account.as_ref().map(cloud::audit),
         }),
     )
     .await?;
@@ -968,6 +1011,182 @@ pub async fn delete_vmware(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn cloud_save_error(error: cloud::SaveError) -> ApiError {
+    match error {
+        cloud::SaveError::Database(error) => ApiError::Database(error),
+        cloud::SaveError::Seal(error) => ApiError::Internal(error),
+    }
+}
+
+/// Body of `POST /api/devices/cloud/test`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CloudTestRequest {
+    /// The site the account will be in.
+    pub site_id: Uuid,
+    /// What to sign in with.
+    pub cloud: cloud::CredentialsRequest,
+}
+
+/// What a cloud account answered.
+#[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
+pub struct CloudTested {
+    /// Whether the sign-in worked and the machines could be listed.
+    pub login: bool,
+    /// Why not, when `login` is false: `connect`, `login`, `permission` or
+    /// `api`.
+    pub reason: Option<String>,
+    /// What the provider said, in its words; `null` when all worked.
+    pub error: Option<String>,
+    /// Machines the credentials see, and how many run.
+    pub vms: u64,
+    pub running: u64,
+    /// Whether metrics (CloudWatch, Azure Monitor) could be read; `null`
+    /// when there was nothing to ask.
+    pub metrics: Option<bool>,
+    /// Why metrics could not be read, or another call that failed
+    /// (status checks, network interfaces).
+    pub warning: Option<String>,
+}
+
+/// What the samples of a cloud test say.
+pub fn cloud_tested(samples: &[monitorflow_common::proto::v1::Sample]) -> CloudTested {
+    let find = |name: &str| samples.iter().find(|s| s.sensor.ends_with(name));
+    let label = |s: Option<&monitorflow_common::proto::v1::Sample>, name: &str| {
+        s.and_then(|s| s.labels.get(name))
+            .filter(|v| !v.is_empty())
+            .cloned()
+    };
+    let login = find("_login");
+    let ok = login.is_some_and(|l| l.value >= 1.0);
+    let count = |name: &str| find(name).map_or(0, |s| s.value.max(0.0) as u64);
+    let metrics = find("_metrics");
+    let partial = find("_partial");
+    CloudTested {
+        login: ok,
+        reason: label(login.filter(|_| !ok), "reason"),
+        error: label(login.filter(|_| !ok), "error"),
+        vms: count("_vms"),
+        running: count("_running"),
+        metrics: metrics.map(|m| m.value >= 1.0),
+        warning: label(metrics.filter(|m| m.value < 1.0), "error")
+            .or_else(|| label(partial, "error")),
+    }
+}
+
+/// `POST /api/devices/cloud/test`: signs in to the account once from the
+/// central server and counts its machines. Operators of the site, as it
+/// sends the secret.
+pub async fn test_cloud(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    request: Result<Json<CloudTestRequest>, JsonRejection>,
+) -> Result<Json<CloudTested>, ApiError> {
+    let request = body(request)?;
+    let exists: Option<Uuid> = sqlx::query_scalar("SELECT id FROM sites WHERE id = $1")
+        .bind(request.site_id)
+        .fetch_optional(&state.pool)
+        .await?;
+    authorize(&user, exists, true)?;
+    let credentials = cloud::check(&request.cloud, None).map_err(ApiError::Invalid)?;
+    let mut params = credentials.params();
+    params.insert("what".into(), "test".into());
+    let mut config = monitorflow_sensors::SensorConfig::new(
+        credentials.provider.clone(),
+        std::time::Duration::from_secs(60),
+    );
+    config.timeout = Some(monitorflow_probe::MAX_TEST);
+    config.params = params;
+    let check = monitorflow_probe::Check {
+        device: "test".into(),
+        kind: credentials.provider.clone(),
+        config,
+    };
+    let samples = monitorflow_probe::test_once(&cloud::CentralKinds, &check)
+        .await
+        .map_err(ApiError::Invalid)?;
+    let samples: Vec<_> = samples
+        .into_iter()
+        .map(monitorflow_probe::sample_to_proto)
+        .collect();
+    Ok(Json(cloud_tested(&samples)))
+}
+
+/// `GET /api/devices/{id}/cloud`: its credentials without the secret;
+/// 404 when it has none.
+pub async fn cloud_view(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<cloud::View>, ApiError> {
+    let id = parse_id(&id)?;
+    let mut conn = state.pool.acquire().await?;
+    device_site(&mut conn, &user, id, false).await?;
+    Ok(Json(
+        cloud::view(&mut conn, id)
+            .await?
+            .ok_or(ApiError::NotFound)?,
+    ))
+}
+
+/// `PUT /api/devices/{id}/cloud`: sets its credentials, what is left out
+/// kept, and gives the device its check on the central server if it has
+/// none.
+pub async fn set_cloud(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    request: Result<Json<cloud::CredentialsRequest>, JsonRejection>,
+) -> Result<Json<cloud::View>, ApiError> {
+    let id = parse_id(&id)?;
+    let request = body(request)?;
+    let mut tx = state.pool.begin().await?;
+    device_site(&mut tx, &user, id, true).await?;
+    sqlx::query("SELECT 1 FROM servers WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    let before = cloud::load(&mut tx, id).await?.and_then(Result::ok);
+    let credentials = cloud::check(&request, before.as_ref()).map_err(ApiError::Invalid)?;
+    cloud::save(&mut tx, id, &credentials)
+        .await
+        .map_err(cloud_save_error)?;
+    let added = cloud::add_check(&mut tx, id, &credentials.provider).await?;
+    record(
+        &mut tx,
+        &user,
+        "device.cloud_update",
+        id,
+        json!({"credentials": cloud::audit(&credentials), "check_added": added}),
+    )
+    .await?;
+    let view = cloud::view(&mut tx, id).await?.ok_or(ApiError::NotFound)?;
+    tx.commit().await?;
+    Ok(Json(view))
+}
+
+/// `DELETE /api/devices/{id}/cloud`: 204; its cloud checks stop.
+pub async fn delete_cloud(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let id = parse_id(&id)?;
+    let mut tx = state.pool.begin().await?;
+    device_site(&mut tx, &user, id, true).await?;
+    let deleted = sqlx::query("DELETE FROM cloud_credentials WHERE server_id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if deleted == 0 {
+        return Err(ApiError::NotFound);
+    }
+    record(&mut tx, &user, "device.cloud_delete", id, json!({})).await?;
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `GET /api/sites/{id}/probes`: where the site's network checks can run
 /// from.
 pub async fn probes(
@@ -1033,7 +1252,11 @@ mod tests {
         let request: DeviceRequest =
             serde_json::from_value(json!({"site_id": site, "name": "nas", "address": "nas.lan"}))
                 .unwrap();
-        assert!(request.ping && request.probe.is_none());
+        assert!(request.ping.is_none() && request.probe.is_none());
+        assert!(serde_json::from_value::<DeviceRequest>(
+            json!({"site_id": site, "name": "prod", "cloud": {"provider": "aws"}})
+        )
+        .is_ok());
         assert!(serde_json::from_value::<DeviceRequest>(
             json!({"site_id": site, "name": "nas", "address": "x", "os": "y"})
         )

@@ -9,6 +9,7 @@ pub mod availability;
 pub mod ca;
 pub mod ca_rotation;
 pub mod campaign;
+pub mod cloud;
 pub mod cluster;
 pub mod commands;
 pub mod crl;
