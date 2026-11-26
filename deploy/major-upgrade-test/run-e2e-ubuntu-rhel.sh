@@ -51,6 +51,11 @@ AGENT_BIN=$(realpath "$TARGET/debug/monitorflow-agent")
 start() {
     docker run -d --name "$1" -v "$AGENT_BIN:/agent:ro" -v /usr/lib:/hostlib:ro "$2" sleep infinity >/dev/null
     docker exec "$1" sh -ec '
+        # Diverted on Ubuntu, so that the upgrade of systemd installs its
+        # own systemctl beside the stub rather than over it.
+        if command -v dpkg-divert >/dev/null; then
+            dpkg-divert --quiet --local --rename --divert /usr/bin/systemctl.distrib --add /usr/bin/systemctl
+        fi
         printf "#!/bin/sh\necho \"\$@\" >>/tmp/systemctl.log\n" >/usr/bin/systemctl
         chmod 0755 /usr/bin/systemctl
         useradd -m monitorflow'

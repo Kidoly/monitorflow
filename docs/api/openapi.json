@@ -65146,7 +65146,7 @@
           },
           "name": {
             "type": "string",
-            "description": "`allowed`, `agent_version` and `mirror` from the central server;\n`up_to_date`, `held_packages`, `broken_packages`, `free_space`,\n`reboot_pending`, `sources` and `third_party_sources` from the agent."
+            "description": "`allowed`, `agent_version` and `mirror` from the central server;\n`up_to_date`, `held_packages`, `broken_packages`, `free_space`,\n`reboot_pending`, `sources`, `release_offered` (Ubuntu), `leapp`\n(RHEL, Rocky Linux, AlmaLinux) and `third_party_sources` from the\nagent."
           },
           "state": {
             "type": "string",
@@ -65201,7 +65201,14 @@
           },
           "phase": {
             "type": "string",
-            "description": "`starting`, `sources`, `refreshing`, `upgrading`, `full_upgrade`,\n`rebooting`, `done` or `failed`."
+            "description": "`starting`, `preupgrade` (leapp), `sources`, `refreshing`,\n`upgrading`, `full_upgrade`, `rebooting`, `done` or `failed`."
+          },
+          "report": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "leapp's report as it wrote it, inhibitors included; `null` outside\nthe RHEL family."
           },
           "sources_restored": {
             "type": "boolean",
