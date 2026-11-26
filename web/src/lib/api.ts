@@ -295,6 +295,8 @@ export interface ServerDetail extends Server {
   certificate: Certificate | null;
   /** The last time AI commands were turned on or off from the web interface; null if never (ADR-0098). */
   ai_commands_change?: AiCommandsChange | null;
+  /** The last time software installs were turned off from the web interface; null if never (ADR-0188). */
+  software_off_change?: SoftwareOffChange | null;
   /** What this person may do with remote terminals here (ADR-0190); absent from older servers. */
   remote_terminal?: RemoteTerminalAccess;
 }
@@ -360,6 +362,17 @@ export interface RemoteAccessSettings {
 export interface AiCommandsChange {
   command_id: string;
   on: boolean;
+  state: CommandState;
+  /** The username; null when the account is gone. */
+  requested_by: string | null;
+  issued_at: string;
+  finished_at: string | null;
+  error: string | null;
+}
+
+/** A `software_off` command: who asked to turn software installs off, and what came of it (ADR-0188). */
+export interface SoftwareOffChange {
+  command_id: string;
   state: CommandState;
   /** The username; null when the account is gone. */
   requested_by: string | null;
@@ -3286,8 +3299,8 @@ export interface ThirdPartySelection {
   hold?: string[];
 }
 
-/** Software managers of the catalogue (ADR-0188): winget only for now. */
-export type SoftwareManager = "winget";
+/** Software managers of the catalogue (ADR-0188): winget on Windows, apt on Debian and Ubuntu, dnf on RHEL. */
+export type SoftwareManager = "winget" | "apt" | "dnf";
 
 /** One entry of the software catalogue (ADR-0188). */
 export interface SoftwareEntry {
@@ -3296,9 +3309,12 @@ export interface SoftwareEntry {
   customer_id: string | null;
   name: string;
   manager: SoftwareManager;
-  /** The winget ID, like `7zip.7zip`. */
+  /** The winget ID, like `7zip.7zip`, or the distribution's package name, like `nginx`. */
   package_id: string;
+  /** The winget source; empty for apt and dnf. */
   source: string;
+  /** apt and dnf: the mirror it installs from; null for the servers' own sources. Absent from older servers. */
+  mirror?: string | null;
   description: string;
   created_by: string | null;
   created_at: string;
@@ -3312,7 +3328,10 @@ export interface SoftwareRequest {
   name: string;
   manager?: SoftwareManager;
   package_id: string;
+  /** winget only. */
   source?: string;
+  /** apt and dnf only: a mirror of the same family. */
+  mirror?: string | null;
   description?: string;
 }
 
@@ -3328,7 +3347,15 @@ export interface SoftwareSelection {
 /** A software campaign as saved: its entries as they were resolved, kept if later deleted. */
 export interface CampaignSoftware {
   action: SoftwareAction;
-  packages: { catalog_id: string; name: string; manager: SoftwareManager; id: string; source: string }[];
+  packages: {
+    catalog_id: string;
+    name: string;
+    manager: SoftwareManager;
+    id: string;
+    source: string;
+    /** The mirror added to the servers' sources for it. */
+    mirror?: string;
+  }[];
 }
 
 /** Published mirror snapshots a campaign installs from (ADR-0038). */
@@ -3379,6 +3406,8 @@ export interface Campaign {
   progress: CampaignProgress;
   /** How many earlier runs `GET /api/campaigns/{id}/runs` lists (ADR-0173); absent from older servers. */
   previous_runs?: number;
+  /** Runs again by itself at each window once a run completed (ADR-0188); absent from older servers. */
+  recurring?: boolean;
   created_by: string | null;
   created_at: string;
   started_at: string | null;
@@ -3550,8 +3579,10 @@ export interface CampaignRequest {
   classifications?: string[];
   /** Windows updates never installed: KB numbers or update IDs (ADR-0188). */
   hold?: string[];
-  /** A software campaign (ADR-0188): Windows servers only, no packages nor apps. */
+  /** A software campaign (ADR-0188): each server takes the entries of its manager; no packages nor apps. */
   software?: SoftwareSelection;
+  /** Run again by itself at each window (ADR-0188): needs a weekly, monthly or yearly window. */
+  recurring?: boolean;
 }
 
 /** A package of a server's latest report (ADR-0031). */
@@ -6362,6 +6393,13 @@ export const api = {
     request<CommandDetail>(`/api/servers/${encodeURIComponent(serverId)}/ai-commands`, {
       method: "POST",
       body: { on },
+    }),
+
+  /** Turns software installs off from the web interface; site administrators (ADR-0188). Never on. */
+  turnSoftwareOff: (serverId: string) =>
+    request<CommandDetail>(`/api/servers/${encodeURIComponent(serverId)}/software`, {
+      method: "POST",
+      body: { on: false },
     }),
 
   /** The same for every server of every site the user administers. */

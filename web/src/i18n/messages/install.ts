@@ -104,7 +104,7 @@ export const en = {
   "agent.remoteTerminal": "Allow a remote terminal",
   "agent.remoteTerminalNote": "(people of the roles allowed in Server settings can then open a terminal on the server from its page, as the agent's user unless MF_REMOTE_TERMINAL_USER names another account. Sessions are audited and can be recorded)",
   "agent.softwareFromWeb": "Allow installing and removing software from the web interface",
-  "agent.softwareFromWebNote": "(Windows servers: administrators can then install and remove software of the catalogue. Linux comes later)",
+  "agent.softwareFromWebNote": "(administrators can then install and remove software of the catalogue on this server, with winget on Windows, apt or dnf on Linux. The web interface can turn this off later, never on)",
   "command.unavailable": "{name}: {reason}",
   "relay.title": "Install the relay",
   "relay.central":
@@ -313,7 +313,7 @@ export const fr: Translation<typeof en> = {
   "agent.remoteTerminal": "Autoriser un terminal à distance",
   "agent.remoteTerminalNote": "(les personnes des rôles autorisés dans les réglages du serveur central peuvent alors ouvrir un terminal sur le serveur depuis sa page, avec l’utilisateur de l’agent, sauf si MF_REMOTE_TERMINAL_USER nomme un autre compte. Les sessions sont tracées dans le journal d’audit et peuvent être enregistrées)",
   "agent.softwareFromWeb": "Autoriser l’installation et la suppression de logiciels depuis l’interface web",
-  "agent.softwareFromWebNote": "(serveurs Windows : les administrateurs peuvent alors installer et supprimer les logiciels du catalogue. Linux viendra plus tard)",
+  "agent.softwareFromWebNote": "(les administrateurs peuvent alors installer et supprimer les logiciels du catalogue sur ce serveur, avec winget sous Windows, apt ou dnf sous Linux. L’interface web peut le désactiver plus tard, jamais l’activer)",
   "command.unavailable": "{name} : {reason}",
   "relay.title": "Installer le relais",
   "relay.central":

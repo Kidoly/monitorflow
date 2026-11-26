@@ -55,7 +55,7 @@ export function describeCommand(command: Command): { title: string; sub: string;
       };
     }
     case "software": {
-      // Install or remove catalogue software with winget (ADR-0188).
+      // Install or remove catalogue software with winget, apt or dnf (ADR-0188).
       const ids = Array.isArray(p.packages)
         ? p.packages.flatMap((pkg: unknown) =>
             pkg && typeof pkg === "object" && typeof (pkg as { id?: unknown }).id === "string" ? [(pkg as { id: string }).id] : [],
@@ -69,6 +69,8 @@ export function describeCommand(command: Command): { title: string; sub: string;
       const reboot = p.allow_reboot === true ? t("server.commands.allowReboot") : t("server.commands.noReboot");
       return { title, sub: `${t("server.commands.packages", { count: ids.length })}${reboot}` };
     }
+    case "software_off":
+      return { title: t("server.commands.softwareOff"), sub: t("server.commands.fromWeb") };
     case "ai_commands":
       return p.on === true
         ? { title: t("server.commands.aiOn"), sub: t("server.commands.fromWeb") }

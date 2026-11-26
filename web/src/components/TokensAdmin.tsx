@@ -634,7 +634,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   const [majorFromWeb, setMajorFromWeb] = useState(false);
   // Unticked (ADR-0190): a terminal runs whatever is typed, so each host opts in.
   const [remoteTerminal, setRemoteTerminal] = useState(false);
-  // Off by default (ADR-0188): software from the catalogue, on Windows only.
+  // Off by default (ADR-0188): software from the catalogue, with winget, apt or dnf.
   const [softwareFromWeb, setSoftwareFromWeb] = useState(false);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
@@ -643,7 +643,17 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
     {
       name: "Linux",
       note: t("install.linux.note"),
-      command: linuxInstallCommand(token, source, origin, through, aiFromWeb, scripts, majorFromWeb, remoteTerminal),
+      command: linuxInstallCommand(
+        token,
+        source,
+        origin,
+        through,
+        aiFromWeb,
+        scripts,
+        majorFromWeb,
+        remoteTerminal,
+        softwareFromWeb,
+      ),
     },
     {
       name: "Windows",
