@@ -29181,6 +29181,1080 @@
         }
       }
     },
+    "/api/v1/psa/asset-links": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List servers and their PSA assets",
+        "description": "Servers the asset sync has looked at, proposed matches first, then\nrefusals, then the most recently changed, at most 200, with counts of\nall of them by state. Global administrators only.",
+        "operationId": "list_psa_asset_links",
+        "responses": {
+          "200": {
+            "description": "The servers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaAssetLinkList"
+                },
+                "example": {
+                  "failed": 0,
+                  "linked": 40,
+                  "proposed": 1,
+                  "servers": [
+                    {
+                      "asset_id": 7001,
+                      "asset_name": "WEB-01",
+                      "deactivated": false,
+                      "error": null,
+                      "hostname": "web-01",
+                      "matched_by": "serial",
+                      "pushed_at": null,
+                      "server_id": "1b2c3d4e-5f60-4718-9a0b-1c2d3e4f5a6b",
+                      "site_name": "paris",
+                      "state": "proposed",
+                      "updated_at": "2026-11-25T10:01:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/asset-links/sync": {
+      "post": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Sync assets now",
+        "description": "Linked servers, and those the PSA refused, are pushed again at the next\npasses instead of within the hour, 20 servers a minute.",
+        "operationId": "sync_psa_assets",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaAssetSync"
+                },
+                "example": {
+                  "queued": 41
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/asset-links/{server_id}": {
+      "put": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Confirm or choose a server's asset",
+        "description": "`asset_id` set to the proposed asset confirms it; another asset of the\nserver's client chooses that one instead (checked with the PSA); `null`\ncreates a new asset at the next pass. The asset is then updated, with\nan External Link back to the server. Audited as `psa.asset.link`.",
+        "operationId": "put_psa_asset_link",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaAssetLinkRequest"
+              },
+              "example": {
+                "asset_id": 7001
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaAssetLink"
+                },
+                "example": {
+                  "asset_id": 7001,
+                  "asset_name": "WEB-01",
+                  "deactivated": false,
+                  "error": null,
+                  "hostname": "web-01",
+                  "matched_by": "serial",
+                  "pushed_at": null,
+                  "server_id": "1b2c3d4e-5f60-4718-9a0b-1c2d3e4f5a6b",
+                  "site_name": "paris",
+                  "state": "linked",
+                  "updated_at": "2026-11-25T10:02:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: the PSA has no such asset, or it belongs to another client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up, the server's site and customer have no PSA client, or the asset is another server's; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Forget a server's asset",
+        "description": "In MonitorFlow only: the asset stays in the PSA, and the next pass\nmatches the server again. Audited as `psa.asset.unlink`.",
+        "operationId": "delete_psa_asset_link",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Forgotten"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: the server has no asset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/asset-settings": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Read the asset sync's settings",
+        "description": "Whether servers are synced as PSA assets, whether a removed server's\nasset is marked inactive, and each system family's asset type and the\nfields that receive the host name, serial number, maker and model.",
+        "operationId": "get_psa_asset_settings",
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaAssetSettings"
+                },
+                "example": {
+                  "asset_inactive_on_removal": false,
+                  "asset_sync": true,
+                  "types": [
+                    {
+                      "family": "linux",
+                      "hostname_field": "inventory_number",
+                      "manufacturer_field": "13",
+                      "model_field": "14",
+                      "serial_field": "12",
+                      "type_id": 3,
+                      "type_name": "Server"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Choose how servers become assets",
+        "description": "Turns the asset sync on or off, and sets each system family's asset\ntype (`linux`, `windows`; a family without one is not synced) and\nwhere each value goes: `inventory_number` or a field id of the type,\nas text, or `null`. The sync is one way: servers of matched sites and\ncustomers become assets of their client and site; an existing asset\nfound by serial number, then host name, is proposed for confirmation,\notherwise one is created with an External Link back to the server.\nMonitorFlow never deletes assets. Audited as `psa.connection.assets`.",
+        "operationId": "put_psa_asset_settings",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaAssetSettingsRequest"
+              },
+              "example": {
+                "asset_inactive_on_removal": false,
+                "asset_sync": true,
+                "types": [
+                  {
+                    "family": "linux",
+                    "hostname_field": "inventory_number",
+                    "manufacturer_field": "13",
+                    "model_field": "14",
+                    "serial_field": "12",
+                    "type_id": 3
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaAssetSettings"
+                },
+                "example": {
+                  "asset_inactive_on_removal": false,
+                  "asset_sync": true,
+                  "types": [
+                    {
+                      "family": "linux",
+                      "hostname_field": "inventory_number",
+                      "manufacturer_field": "13",
+                      "model_field": "14",
+                      "serial_field": "12",
+                      "type_id": 3,
+                      "type_name": "Server"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: another family, two types for one family, a type or field the PSA does not have, or the sync turned on without a type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/asset-types": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List the PSA's asset types",
+        "description": "Active asset types, by name, read through the connection. Global\nadministrators only.",
+        "operationId": "list_psa_asset_types",
+        "responses": {
+          "200": {
+            "description": "The asset types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaRecordList"
+                },
+                "example": {
+                  "records": [
+                    {
+                      "id": 3,
+                      "name": "Server"
+                    },
+                    {
+                      "id": 4,
+                      "name": "Workstation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/asset-types/{id}/fields": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List an asset type's fields",
+        "description": "The fields of one asset type, by name, which can receive a server's\nhost name, serial number, maker and model; besides them,\n`inventory_number` is the asset tag. Global administrators only.",
+        "operationId": "list_psa_asset_fields",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The PSA asset type's id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Its fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaRecordList"
+                },
+                "example": {
+                  "records": [
+                    {
+                      "id": 13,
+                      "name": "Manufacturer"
+                    },
+                    {
+                      "id": 14,
+                      "name": "Model"
+                    },
+                    {
+                      "id": 12,
+                      "name": "Serial Number"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/psa/categories": {
       "get": {
         "tags": [
@@ -29583,9 +30657,19 @@
                 "example": {
                   "connection": {
                     "agent_name": "MonitorFlow",
+                    "assets": {
+                      "asset_inactive_on_removal": false,
+                      "asset_sync": true
+                    },
                     "base_url": "https://halo.example.com",
                     "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
                     "created_at": "2026-11-22T09:00:00Z",
+                    "default_client": {
+                      "default_client_id": null,
+                      "default_client_name": null,
+                      "default_site_id": null,
+                      "default_site_name": null
+                    },
                     "enabled": true,
                     "kind": "halopsa",
                     "last_error": null,
@@ -29594,12 +30678,20 @@
                     "secret_error": null,
                     "tenant": null,
                     "tickets": {
+                      "acknowledge_on_assign": true,
                       "category": "Hardware>Server",
+                      "closed_status_ids": [
+                        9
+                      ],
+                      "critical_priority_id": 1,
+                      "critical_priority_name": "Critical",
                       "min_severity": "critical",
                       "resolved_status_id": 9,
                       "resolved_status_name": "Closed",
                       "ticket_type_id": 1,
-                      "ticket_type_name": "Incident"
+                      "ticket_type_name": "Incident",
+                      "warning_priority_id": 3,
+                      "warning_priority_name": "Medium"
                     },
                     "updated_at": "2026-11-22T09:00:00Z"
                   }
@@ -29725,9 +30817,19 @@
                 },
                 "example": {
                   "agent_name": "MonitorFlow",
+                  "assets": {
+                    "asset_inactive_on_removal": false,
+                    "asset_sync": true
+                  },
                   "base_url": "https://halo.example.com",
                   "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
                   "created_at": "2026-11-22T09:00:00Z",
+                  "default_client": {
+                    "default_client_id": null,
+                    "default_client_name": null,
+                    "default_site_id": null,
+                    "default_site_name": null
+                  },
                   "enabled": true,
                   "kind": "halopsa",
                   "last_error": null,
@@ -29736,12 +30838,20 @@
                   "secret_error": null,
                   "tenant": null,
                   "tickets": {
+                    "acknowledge_on_assign": true,
                     "category": "Hardware>Server",
+                    "closed_status_ids": [
+                      9
+                    ],
+                    "critical_priority_id": 1,
+                    "critical_priority_name": "Critical",
                     "min_severity": "critical",
                     "resolved_status_id": 9,
                     "resolved_status_name": "Closed",
                     "ticket_type_id": 1,
-                    "ticket_type_name": "Incident"
+                    "ticket_type_name": "Incident",
+                    "warning_priority_id": 3,
+                    "warning_priority_name": "Medium"
                   },
                   "updated_at": "2026-11-22T09:00:00Z"
                 }
@@ -30085,6 +31195,843 @@
           },
           "500": {
             "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/customer-links": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List customers and their PSA match",
+        "description": "Every MonitorFlow customer, by name, with the PSA client it is matched\nto, or `null`s, and how many of its sites have a match of their own.\nRead from MonitorFlow only. Global administrators only.",
+        "operationId": "list_psa_customer_links",
+        "responses": {
+          "200": {
+            "description": "The customers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaCustomerLinkList"
+                },
+                "example": {
+                  "customers": [
+                    {
+                      "client_id": 10,
+                      "client_name": "Example Industries SAS",
+                      "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                      "customer_name": "Example Industries",
+                      "linked_at": "2026-11-25T10:00:00Z",
+                      "matched_sites": 1,
+                      "site_count": 2
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/customer-links/suggestions": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Suggest PSA clients for customers",
+        "description": "For each customer without a match, the PSA client whose name reads the\nsame once case, accents, punctuation and company suffixes like SAS or\nLtd are left out, when exactly one does. Reads up to 3,000 clients\nfrom the PSA. Nothing is matched until each suggestion is confirmed\nwith `PUT /api/v1/psa/customer-links/{customer_id}`.",
+        "operationId": "list_psa_suggestions",
+        "responses": {
+          "200": {
+            "description": "The suggestions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaSuggestionList"
+                },
+                "example": {
+                  "suggestions": [
+                    {
+                      "client_id": 10,
+                      "client_name": "Example Industries SAS",
+                      "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                      "customer_name": "Example Industries"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/customer-links/{customer_id}": {
+      "put": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Match a customer to a PSA client",
+        "description": "Its sites without a match of their own open tickets for this client,\nand a site's own match must name it. Checked with the PSA, which also\ngives the name kept; a PSA client matches one customer at most.\nAudited as `psa.link.update`. Safe to repeat.",
+        "operationId": "put_psa_customer_link",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "description": "The MonitorFlow customer",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaCustomerLinkRequest"
+              },
+              "example": {
+                "client_id": 10
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Matched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaCustomerLink"
+                },
+                "example": {
+                  "client_id": 10,
+                  "client_name": "Example Industries SAS",
+                  "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                  "customer_name": "Example Industries",
+                  "linked_at": "2026-11-25T10:00:00Z",
+                  "matched_sites": 1,
+                  "site_count": 2
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: the PSA has no such client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up, the client is matched to another customer, or a site of the customer is matched to another client; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Unmatch a customer",
+        "description": "Its sites without a match of their own fall back to the default\nclient. Audited as `psa.link.delete`.",
+        "operationId": "delete_psa_customer_link",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "description": "The MonitorFlow customer",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unmatched"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: the customer is not matched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/default-client": {
+      "put": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "Choose the default PSA client",
+        "description": "The PSA client, and optionally one of its sites, that incidents of\nsites matched to nothing (neither the site nor its customer) open\ntickets for; `client_id: null` opens no ticket for them, the default.\nChecked with the PSA. Audited as `psa.connection.default`.",
+        "operationId": "put_psa_default_client",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PsaDefaultClientRequest"
+              },
+              "example": {
+                "client_id": 10,
+                "psa_site_id": 100
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaConnection"
+                },
+                "example": {
+                  "agent_name": "MonitorFlow",
+                  "assets": {
+                    "asset_inactive_on_removal": false,
+                    "asset_sync": true
+                  },
+                  "base_url": "https://halo.example.com",
+                  "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
+                  "created_at": "2026-11-22T09:00:00Z",
+                  "default_client": {
+                    "default_client_id": null,
+                    "default_client_name": null,
+                    "default_site_id": null,
+                    "default_site_name": null
+                  },
+                  "enabled": true,
+                  "kind": "halopsa",
+                  "last_error": null,
+                  "last_error_at": null,
+                  "last_success_at": "2026-11-22T09:30:00Z",
+                  "secret_error": null,
+                  "tenant": null,
+                  "tickets": {
+                    "acknowledge_on_assign": true,
+                    "category": "Hardware>Server",
+                    "closed_status_ids": [
+                      9
+                    ],
+                    "critical_priority_id": 1,
+                    "critical_priority_name": "Critical",
+                    "min_severity": "critical",
+                    "resolved_status_id": 9,
+                    "resolved_status_name": "Closed",
+                    "ticket_type_id": 1,
+                    "ticket_type_name": "Incident",
+                    "warning_priority_id": 3,
+                    "warning_priority_name": "Medium"
+                  },
+                  "updated_at": "2026-11-22T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: the PSA has no such client or site, or the site belongs to another client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/psa/priorities": {
+      "get": {
+        "tags": [
+          "psa"
+        ],
+        "summary": "List the priorities of a ticket type",
+        "description": "The priorities of the ticket type's SLA, by their number within it,\nwhich is what a ticket's priority names; absent `ticket_type_id` means\nthe connection's ticket type. Global administrators only.",
+        "operationId": "list_psa_priorities",
+        "parameters": [
+          {
+            "name": "ticket_type_id",
+            "in": "query",
+            "description": "The ticket type whose SLA's priorities are listed; absent for the\nconnection's ticket type, or every priority without one.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The priorities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PsaRecordList"
+                },
+                "example": {
+                  "records": [
+                    {
+                      "id": 1,
+                      "name": "Critical"
+                    },
+                    {
+                      "id": 2,
+                      "name": "High"
+                    },
+                    {
+                      "id": 3,
+                      "name": "Medium"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: no connection is set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`psa_unavailable`: the PSA refused or did not answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -30621,7 +32568,7 @@
           "psa"
         ],
         "summary": "Choose what tickets are opened",
-        "description": "The ticket type and category of new tickets, the least severity whose\nincidents open one (`critical` by default), and the status a ticket\nmoves to when its incident is resolved (9, Closed, by default; `null`\nadds a note only). Each is checked against the PSA's lists, which also\ngive the names kept. Audited as `psa.connection.tickets`.",
+        "description": "The ticket type and category of new tickets, the least severity whose\nincidents open one (`critical` by default), the status a ticket moves\nto when its incident is resolved (9, Closed, by default; `null` adds a\nnote only), the priority of warning and critical incidents' tickets\n(from the ticket type's SLA), the statuses that mean closed, and\nwhether an agent taking a ticket acknowledges its incident. Each is\nchecked against the PSA's lists, which also give the names kept. A\nticket already closed in the PSA is never moved at resolution.\nAudited as `psa.connection.tickets`.",
         "operationId": "put_psa_ticket_settings",
         "parameters": [
           {
@@ -30643,10 +32590,16 @@
                 "$ref": "#/components/schemas/PsaTicketSettingsRequest"
               },
               "example": {
+                "acknowledge_on_assign": true,
                 "category": "Hardware>Server",
+                "closed_status_ids": [
+                  9
+                ],
+                "critical_priority_id": 1,
                 "min_severity": "critical",
                 "resolved_status_id": 9,
-                "ticket_type_id": 1
+                "ticket_type_id": 1,
+                "warning_priority_id": 3
               }
             }
           },
@@ -30662,9 +32615,19 @@
                 },
                 "example": {
                   "agent_name": "MonitorFlow",
+                  "assets": {
+                    "asset_inactive_on_removal": false,
+                    "asset_sync": true
+                  },
                   "base_url": "https://halo.example.com",
                   "client_id": "5b1d0c4e-7a2f-4e6b-9c3d-2f1e0a9b8c7d",
                   "created_at": "2026-11-22T09:00:00Z",
+                  "default_client": {
+                    "default_client_id": null,
+                    "default_client_name": null,
+                    "default_site_id": null,
+                    "default_site_name": null
+                  },
                   "enabled": true,
                   "kind": "halopsa",
                   "last_error": null,
@@ -30673,12 +32636,20 @@
                   "secret_error": null,
                   "tenant": null,
                   "tickets": {
+                    "acknowledge_on_assign": true,
                     "category": "Hardware>Server",
+                    "closed_status_ids": [
+                      9
+                    ],
+                    "critical_priority_id": 1,
+                    "critical_priority_name": "Critical",
                     "min_severity": "critical",
                     "resolved_status_id": 9,
                     "resolved_status_name": "Closed",
                     "ticket_type_id": 1,
-                    "ticket_type_name": "Incident"
+                    "ticket_type_name": "Incident",
+                    "warning_priority_id": 3,
+                    "warning_priority_name": "Medium"
                   },
                   "updated_at": "2026-11-22T09:00:00Z"
                 }
@@ -30686,7 +32657,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: a ticket type, category or status the PSA does not have, or another severity",
+            "description": "`invalid`: a ticket type, category, status or priority the PSA does not have, more than 20 closed statuses, or another severity",
             "content": {
               "application/json": {
                 "schema": {
@@ -30914,7 +32885,7 @@
           "psa"
         ],
         "summary": "List tickets opened for incidents",
-        "description": "The 50 most recently changed: created, closed when their incident\nresolved, skipped because the site has no PSA client, or refused by\nthe PSA with its words. Global administrators only.",
+        "description": "The 50 most recently changed: created, closed when their incident\nresolved, skipped because the site has no PSA client or the incident\nopened and resolved during a silence, refused by the PSA with its\nwords, held by a silence, or ended because the ticket was deleted or\nmerged in the PSA. Global administrators only.",
         "operationId": "list_psa_tickets",
         "responses": {
           "200": {
@@ -30927,11 +32898,13 @@
                 "example": {
                   "tickets": [
                     {
+                      "checked_at": "2026-11-22T10:05:00Z",
                       "closed_at": null,
                       "created_at": "2026-11-22T10:00:05Z",
                       "error": null,
                       "incident_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
                       "metric": "disk_used_percent",
+                      "psa_status_id": 2,
                       "server_name": "web-01",
                       "severity": "critical",
                       "site_name": "paris",
@@ -70202,6 +72175,304 @@
           }
         }
       },
+      "PsaAssetLink": {
+        "type": "object",
+        "description": "A server and its PSA asset.",
+        "required": [
+          "server_id",
+          "hostname",
+          "site_name",
+          "state",
+          "deactivated",
+          "updated_at"
+        ],
+        "properties": {
+          "asset_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA asset; `null` until there is one."
+          },
+          "asset_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The asset's key field when found or created."
+          },
+          "deactivated": {
+            "type": "boolean",
+            "description": "Whether the asset was marked inactive after the server's removal."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the PSA refused, in its words; `null` otherwise."
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "matched_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`serial`, `hostname`, `created` or `chosen`."
+          },
+          "pushed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last push; `null` before the first."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`proposed` (an existing asset found by serial number or host name,\nto confirm), `create` (a new asset at the next pass), `linked` or\n`failed`."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PsaAssetLinkList": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/asset-links`.",
+        "required": [
+          "servers",
+          "proposed",
+          "linked",
+          "failed"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "linked": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "proposed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Servers by state, all of them."
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PsaAssetLink"
+            },
+            "description": "Proposed matches first, then failures, then the most recent; at\nmost 200."
+          }
+        }
+      },
+      "PsaAssetLinkRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/psa/asset-links/{server_id}`.",
+        "properties": {
+          "asset_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The server's asset: the proposed one to confirm it, another asset\nof the server's client, or `null` to create a new one at the next\npass."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PsaAssetSettings": {
+        "type": "object",
+        "description": "Body of `GET` and `PUT /api/psa/asset-settings`.",
+        "required": [
+          "asset_sync",
+          "asset_inactive_on_removal",
+          "types"
+        ],
+        "properties": {
+          "asset_inactive_on_removal": {
+            "type": "boolean",
+            "description": "A removed server's asset is marked inactive."
+          },
+          "asset_sync": {
+            "type": "boolean",
+            "description": "Servers of matched sites and customers are synced as PSA assets."
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PsaAssetType"
+            },
+            "description": "The asset type of each system family; a family without one is not\nsynced."
+          }
+        }
+      },
+      "PsaAssetSettingsRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/psa/asset-settings`.",
+        "required": [
+          "asset_sync"
+        ],
+        "properties": {
+          "asset_inactive_on_removal": {
+            "type": "boolean"
+          },
+          "asset_sync": {
+            "type": "boolean"
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PsaAssetTypeRequest"
+            },
+            "description": "Replaces every family's type; at most one per family."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PsaAssetSwitches": {
+        "type": "object",
+        "description": "Whether servers are synced as assets (ADR-0191).",
+        "required": [
+          "asset_sync",
+          "asset_inactive_on_removal"
+        ],
+        "properties": {
+          "asset_inactive_on_removal": {
+            "type": "boolean",
+            "description": "A removed server's asset is marked inactive; otherwise left as it\nis."
+          },
+          "asset_sync": {
+            "type": "boolean",
+            "description": "Servers of matched sites and customers are synced as PSA assets."
+          }
+        }
+      },
+      "PsaAssetSync": {
+        "type": "object",
+        "description": "Body of `POST /api/psa/asset-links/sync`.",
+        "required": [
+          "queued"
+        ],
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Linked servers to look at again at the next passes.",
+            "minimum": 0
+          }
+        }
+      },
+      "PsaAssetType": {
+        "type": "object",
+        "description": "The PSA asset type of one system family and where each value goes.",
+        "required": [
+          "family",
+          "type_id",
+          "type_name"
+        ],
+        "properties": {
+          "family": {
+            "type": "string",
+            "description": "`linux` or `windows`."
+          },
+          "hostname_field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the host name goes: `inventory_number` (the asset tag) or a\nfield id of the type, as text; `null` for nowhere."
+          },
+          "manufacturer_field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the maker goes."
+          },
+          "model_field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the model goes."
+          },
+          "serial_field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the serial number goes."
+          },
+          "type_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The PSA asset type."
+          },
+          "type_name": {
+            "type": "string"
+          }
+        }
+      },
+      "PsaAssetTypeRequest": {
+        "type": "object",
+        "description": "One family's asset type in `PUT /api/psa/asset-settings`.",
+        "required": [
+          "family",
+          "type_id"
+        ],
+        "properties": {
+          "family": {
+            "type": "string",
+            "description": "`linux` or `windows`."
+          },
+          "hostname_field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`inventory_number` (the asset tag) or a field id of\n`GET /api/psa/asset-types/{id}/fields`, as text; absent or `null`\nfor nowhere."
+          },
+          "manufacturer_field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serial_field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "An asset type of `GET /api/psa/asset-types`."
+          }
+        },
+        "additionalProperties": false
+      },
       "PsaCategoryList": {
         "type": "object",
         "description": "Body of `GET /api/psa/categories`.",
@@ -70228,7 +72499,9 @@
           "enabled",
           "created_at",
           "updated_at",
-          "tickets"
+          "tickets",
+          "default_client",
+          "assets"
         ],
         "properties": {
           "agent_name": {
@@ -70237,6 +72510,10 @@
               "null"
             ],
             "description": "The PSA agent the application acts as, from the last success;\n`null` before the first."
+          },
+          "assets": {
+            "$ref": "#/components/schemas/PsaAssetSwitches",
+            "description": "Whether servers are synced as PSA assets."
           },
           "base_url": {
             "type": "string",
@@ -70250,6 +72527,10 @@
             "type": "string",
             "format": "date-time",
             "description": "When it was set up."
+          },
+          "default_client": {
+            "$ref": "#/components/schemas/PsaDefaultClient",
+            "description": "Where incidents of sites matched to nothing open tickets."
           },
           "enabled": {
             "type": "boolean",
@@ -70400,6 +72681,144 @@
           }
         }
       },
+      "PsaCustomerLink": {
+        "type": "object",
+        "description": "One MonitorFlow customer and the PSA client it is matched to.",
+        "required": [
+          "customer_id",
+          "customer_name",
+          "site_count",
+          "matched_sites"
+        ],
+        "properties": {
+          "client_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA client; `null` when not matched."
+          },
+          "client_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "linked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was matched; `null` when not."
+          },
+          "matched_sites": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "site_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sites of the customer, and how many have a match of their own."
+          }
+        }
+      },
+      "PsaCustomerLinkList": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/customer-links`.",
+        "required": [
+          "customers"
+        ],
+        "properties": {
+          "customers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PsaCustomerLink"
+            },
+            "description": "Every customer, by name."
+          }
+        }
+      },
+      "PsaCustomerLinkRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/psa/customer-links/{customer_id}`.",
+        "required": [
+          "client_id"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The PSA client, an `id` of `GET /api/psa/clients`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PsaDefaultClient": {
+        "type": "object",
+        "description": "Where incidents of a site matched to nothing open tickets (ADR-0191).",
+        "properties": {
+          "default_client_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA client; `null` opens no ticket for such sites."
+          },
+          "default_client_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_site_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "One of its sites; `null` lets the PSA choose."
+          },
+          "default_site_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PsaDefaultClientRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/psa/default-client`.",
+        "properties": {
+          "client_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA client; `null` opens no ticket for sites matched to\nnothing."
+          },
+          "psa_site_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "One of its sites; absent or `null` lets the PSA choose."
+          }
+        },
+        "additionalProperties": false
+      },
       "PsaRecord": {
         "type": "object",
         "description": "A client or site of Halo, as the matching shows it.",
@@ -70539,6 +72958,48 @@
         },
         "additionalProperties": false
       },
+      "PsaSuggestion": {
+        "type": "object",
+        "description": "A customer and the PSA client whose name reads the same.",
+        "required": [
+          "customer_id",
+          "customer_name",
+          "client_id",
+          "client_name"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          }
+        }
+      },
+      "PsaSuggestionList": {
+        "type": "object",
+        "description": "Body of `GET /api/psa/customer-links/suggestions`.",
+        "required": [
+          "suggestions"
+        ],
+        "properties": {
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PsaSuggestion"
+            },
+            "description": "For customers without a match, by customer name."
+          }
+        }
+      },
       "PsaTicket": {
         "type": "object",
         "description": "One incident's ticket, as the HaloPSA page lists them.",
@@ -70551,6 +73012,14 @@
           "updated_at"
         ],
         "properties": {
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was last read back from the PSA; `null` before."
+          },
           "closed_at": {
             "type": [
               "string",
@@ -70578,6 +73047,14 @@
             "type": "string",
             "description": "The incident's measure, severity, and server or relay."
           },
+          "psa_status_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The PSA status the ticket had when last read back; `null` before."
+          },
           "server_name": {
             "type": [
               "string",
@@ -70595,7 +73072,7 @@
           },
           "state": {
             "type": "string",
-            "description": "`creating`, `open`, `closed` (its incident resolved), `skipped`\n(its site has no PSA client) or `failed` (the PSA refused)."
+            "description": "`creating`, `open`, `closed` (its incident resolved), `skipped`\n(no PSA client for its site, or it opened and resolved during a\nsilence), `failed` (the PSA refused), `held` (a silence holds it)\nor `ended` (deleted or merged in the PSA)."
           },
           "ticket_id": {
             "type": [
@@ -70631,15 +73108,43 @@
         "type": "object",
         "description": "What tickets the connection opens and how it closes them (ADR-0166).",
         "required": [
-          "min_severity"
+          "min_severity",
+          "closed_status_ids",
+          "acknowledge_on_assign"
         ],
         "properties": {
+          "acknowledge_on_assign": {
+            "type": "boolean",
+            "description": "A ticket assigned to an agent, other than the application's own,\nacknowledges its incident."
+          },
           "category": {
             "type": [
               "string",
               "null"
             ],
             "description": "The category of new tickets (HaloPSA's `category_1`), which some\ninstances require; `null` for none."
+          },
+          "closed_status_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "The PSA statuses that mean closed, 9 (Closed) by default: a ticket\nmoved to one acknowledges its open incident."
+          },
+          "critical_priority_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The priority of tickets of critical incidents, which an incident\nescalated from warning also moves its ticket to; `null` for the\nPSA's default."
+          },
+          "critical_priority_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "min_severity": {
             "type": "string",
@@ -70672,6 +73177,20 @@
               "string",
               "null"
             ]
+          },
+          "warning_priority_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The priority of tickets of warning incidents, a priority number of\nthe ticket type's SLA; `null` for the PSA's default."
+          },
+          "warning_priority_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -70679,12 +73198,38 @@
         "type": "object",
         "description": "Body of `PUT /api/psa/ticket-settings`.",
         "properties": {
+          "acknowledge_on_assign": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a ticket assigned to an agent acknowledges its incident;\nabsent keeps the current choice."
+          },
           "category": {
             "type": [
               "string",
               "null"
             ],
             "description": "A category of `GET /api/psa/categories`; `null` or empty for none."
+          },
+          "closed_status_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Statuses of `GET /api/psa/statuses` that mean closed: a ticket moved\nto one acknowledges its open incident. Absent keeps the current\nones; `[]` for none. At most 20."
+          },
+          "critical_priority_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The same for critical incidents, which an escalated incident's\nticket also moves to."
           },
           "min_severity": {
             "type": [
@@ -70708,6 +73253,14 @@
             ],
             "format": "int64",
             "description": "A ticket type of `GET /api/psa/ticket-types`; `null` for the\nPSA's default."
+          },
+          "warning_priority_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A priority of `GET /api/psa/priorities` for the chosen ticket type,\nfor tickets of warning incidents; `null` for the PSA's default."
           }
         },
         "additionalProperties": false
@@ -79313,7 +81866,7 @@
     },
     {
       "name": "psa",
-      "description": "The PSA connection: MonitorFlow calls a PSA's API with credentials it keeps, HaloPSA first. One per installation, managed by global administrators (a key with every reach), since one PSA serves every customer. In HaloPSA, create an API application (Configuration, Integrations, HaloPSA API, View Applications) with the authentication method Client ID and Secret (Client Credentials), acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never answered. Each MonitorFlow site is then matched to a PSA client, and optionally one of its sites, chosen from the PSA's lists read through the connection; incidents of a site without a match open no ticket. An incident at the chosen severity then opens one ticket for its site's client, with the chosen ticket type and category, and its resolution adds a private note and moves the ticket to the chosen status. When the PSA refuses or does not answer, the answer is 502 `psa_unavailable` with its own words. Every change is in the audit log, with the key's ID. API keys need the `administration` area."
+      "description": "The PSA connection: MonitorFlow calls a PSA's API with credentials it keeps, HaloPSA first. One per installation, managed by global administrators (a key with every reach), since one PSA serves every customer. In HaloPSA, create an API application (Configuration, Integrations, HaloPSA API, View Applications) with the authentication method Client ID and Secret (Client Credentials), acting as a dedicated agent, with the permission `all`; MonitorFlow asks for a token on `{base}/auth/token` with the scope `all` and calls `{base}/api`. The Client Secret is write-only: it is sealed at rest and never answered. Each MonitorFlow site is then matched to a PSA client, and optionally one of its sites, chosen from the PSA's lists read through the connection, and each customer to a client, with suggestions by name that an administrator confirms; a site of a matched customer without a match of its own uses the customer's client, and a default client takes the rest, or no ticket is opened. An incident at the chosen severity then opens one ticket for that client, with the chosen ticket type, category and the priority mapped to its severity; a silence covering the incident holds the ticket until it ends. An escalation raises the priority, and the resolution adds a private note and moves the ticket to the chosen status. Every minute the open tickets are read back: one moved to a closed status, or assigned to an agent, acknowledges its incident, and one deleted or merged ends the link. When asset sync is on, servers of matched sites and customers become PSA assets of the chosen type per system family, matched to existing assets by serial number then host name for an administrator to confirm, or created, and updated at most once an hour. MonitorFlow keeps under HaloPSA's limit of 700 requests in 5 minutes and pauses on a 429. When the PSA refuses or does not answer, the answer is 502 `psa_unavailable` with its own words. Every change is in the audit log, with the key's ID. API keys need the `administration` area."
     },
     {
       "name": "scripts",

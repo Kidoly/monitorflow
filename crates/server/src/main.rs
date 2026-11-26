@@ -656,6 +656,8 @@ async fn main() -> anyhow::Result<()> {
     let report_pool = pool.clone();
     let deliverer = integrations::Deliverer::new(pool.clone(), config.web_base_url());
     let psa_sync = monitorflow_server::psa::sync::Syncer::new(pool.clone(), config.web_base_url());
+    let psa_pool = pool.clone();
+    let psa_web = config.web_base_url();
     // The daily look for a newer release (ADR-0061).
     let check_pool = pool.clone();
     let maintenance_pool = pool.clone();
@@ -763,12 +765,32 @@ async fn main() -> anyhow::Result<()> {
                 .await;
             Ok(())
         },
-        // Every instance opens and closes PSA tickets; claims are leased
-        // (ADR-0164).
+        // The leader opens and closes PSA tickets, reads them back and
+        // syncs assets, so one process keeps under HaloPSA's rate limit
+        // (ADR-0191); ticket claims are leased all the same (ADR-0164).
         async {
-            psa_sync
-                .run(monitorflow_server::psa::sync::POLL, until_stopped())
-                .await;
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                psa_sync
+                    .clone()
+                    .run(monitorflow_server::psa::sync::POLL, until)
+            })
+            .await;
+            Ok(())
+        },
+        async {
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                monitorflow_server::psa::poller::Poller::new(psa_pool.clone())
+                    .run(monitorflow_server::psa::poller::POLL, until)
+            })
+            .await;
+            Ok(())
+        },
+        async {
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                monitorflow_server::psa::assets::AssetSync::new(psa_pool.clone(), psa_web.clone())
+                    .run(monitorflow_server::psa::assets::POLL, until)
+            })
+            .await;
             Ok(())
         },
         async {

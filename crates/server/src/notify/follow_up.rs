@@ -542,13 +542,14 @@ pub async fn record_step(
 }
 
 /// Acknowledges the open incidents among `incidents` not acknowledged yet,
-/// as `user` (`username`), from `via`, `page` or `link`: records it, writes
+/// as `user` (`username`), from `via`, `page`, `link` or `psa` (a ticket
+/// closed or taken in the PSA, without a user, ADR-0191): records it, writes
 /// it on the timeline and stops their follow-up. Returns those it
 /// acknowledged; the others were resolved, or someone was first.
 pub async fn acknowledge(
     db: &mut PgConnection,
     incidents: &[Uuid],
-    (user, username): (Uuid, &str),
+    (user, username): (Option<Uuid>, &str),
     via: &str,
     note: Option<&str>,
     now: DateTime<Utc>,

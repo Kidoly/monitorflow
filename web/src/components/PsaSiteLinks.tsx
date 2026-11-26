@@ -68,7 +68,7 @@ export function PsaSiteLinks() {
         <h2 className={styles.sectionTitle}>{t("psa.step.sites")}</h2>
         <span className={styles.dim}>{matchedSummary(data.sites)}</span>
       </div>
-      <p className={styles.sectionNote}>{t("psa.sites.intro")}</p>
+      <p className={styles.sectionNote}>{several ? t("psa.sites.intro") : t("psa.sites.introCompany")}</p>
       {actionError && (
         <p className={styles.formError} role="alert">
           {actionError}
@@ -95,7 +95,7 @@ export function PsaSiteLinks() {
                 trigger={t("psa.sites.unmatch")}
                 triggerName={t("psa.sites.unmatchName", { site: s.site_name })}
                 title={t("psa.sites.unmatchName", { site: s.site_name })}
-                consequence={t("psa.sites.intro")}
+                consequence={several ? t("psa.sites.intro") : t("psa.sites.introCompany")}
                 confirmLabel={t("psa.sites.unmatch")}
                 onConfirm={async () => {
                   await api.unlinkPsaSite(s.site_id);
@@ -108,10 +108,14 @@ export function PsaSiteLinks() {
         )}
         rowDetail={(s) =>
           editing === s.site_id ? (
-            <MatchForm
-              site={s}
+            <ClientMatchForm
+              label={t("psa.sites.matchName", { site: s.site_name })}
+              initialClient={s.client_id === null ? null : { id: s.client_id, name: s.client_name ?? "" }}
+              initialSite={s.psa_site_id}
+              withSite
               onCancel={() => setEditing(null)}
-              onSaved={() => {
+              onSave={async (client, psaSite) => {
+                await api.linkPsaSite(s.site_id, { client_id: client.id, psa_site_id: psaSite });
                 setEditing(null);
                 setActionError(null);
                 refresh();
@@ -126,16 +130,25 @@ export function PsaSiteLinks() {
 
 type Found = { records: PsaRecord[] } | { error: string } | "searching";
 
-/** Searches HaloPSA's clients as the user types, then lists the chosen client's sites. */
-function MatchForm({ site, onCancel, onSaved }: { site: PsaSiteLink; onCancel: () => void; onSaved: () => void }) {
+interface ClientMatchProps {
+  /** Names the group for assistive technologies. */
+  label: string;
+  initialClient: PsaRecord | null;
+  initialSite?: number | null;
+  /** Also offers one of the client's sites. */
+  withSite?: boolean;
+  onSave: (client: PsaRecord, psaSite: number | null) => Promise<void>;
+  onCancel: () => void;
+}
+
+/** Searches HaloPSA's clients as the user types, then lists the chosen client's sites when asked. */
+export function ClientMatchForm({ label, initialClient, initialSite = null, withSite = false, onSave, onCancel }: ClientMatchProps) {
   const id = useId();
-  const [search, setSearch] = useState(site.client_name ?? "");
+  const [search, setSearch] = useState(initialClient?.name ?? "");
   const [found, setFound] = useState<Found>("searching");
-  const [client, setClient] = useState<PsaRecord | null>(
-    site.client_id === null ? null : { id: site.client_id, name: site.client_name ?? "" },
-  );
+  const [client, setClient] = useState<PsaRecord | null>(initialClient);
   const [sites, setSites] = useState<PsaRecord[] | null>(null);
-  const [psaSite, setPsaSite] = useState<string>(site.psa_site_id === null ? "" : String(site.psa_site_id));
+  const [psaSite, setPsaSite] = useState<string>(initialSite === null ? "" : String(initialSite));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -157,7 +170,7 @@ function MatchForm({ site, onCancel, onSaved }: { site: PsaSiteLink; onCancel: (
   }, [search]);
 
   useEffect(() => {
-    if (!client) return;
+    if (!client || !withSite) return;
     const controller = new AbortController();
     api
       .psaClientSites(client.id, controller.signal)
@@ -166,15 +179,14 @@ function MatchForm({ site, onCancel, onSaved }: { site: PsaSiteLink; onCancel: (
         if (!isAbortError(e)) setError(psaError(e));
       });
     return () => controller.abort();
-  }, [client]);
+  }, [client, withSite]);
 
   async function save() {
     if (!client) return;
     setBusy(true);
     setError(null);
     try {
-      await api.linkPsaSite(site.site_id, { client_id: client.id, psa_site_id: psaSite ? Number(psaSite) : null });
-      onSaved();
+      await onSave(client, psaSite ? Number(psaSite) : null);
     } catch (e) {
       setError(psaError(e));
     } finally {
@@ -183,7 +195,7 @@ function MatchForm({ site, onCancel, onSaved }: { site: PsaSiteLink; onCancel: (
   }
 
   return (
-    <div className={styles.stack} role="group" aria-label={t("psa.sites.matchName", { site: site.site_name })}>
+    <div className={styles.stack} role="group" aria-label={label}>
       <label className={styles.field}>
         {t("psa.sites.search")}
         <input
@@ -228,7 +240,7 @@ function MatchForm({ site, onCancel, onSaved }: { site: PsaSiteLink; onCancel: (
           {found.records.length >= CLIENT_PAGE && <span className={styles.fieldNote}>{t("psa.sites.firstOnly")}</span>}
         </fieldset>
       )}
-      {client && (
+      {client && withSite && (
         <label className={styles.field}>
           {t("psa.sites.psaSite")}
           <select

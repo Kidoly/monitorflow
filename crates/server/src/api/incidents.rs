@@ -226,8 +226,9 @@ pub struct IncidentDetail {
     pub events: Vec<EventView>,
     /// Oldest first.
     pub notification_groups: Vec<GroupView>,
-    /// `page` (the web interface or the API) or `link` (the link in a
-    /// notification): where it was acknowledged; `null` until then.
+    /// `page` (the web interface or the API), `link` (the link in a
+    /// notification) or `psa` (its ticket closed or taken in the PSA,
+    /// ADR-0191): where it was acknowledged; `null` until then.
     pub acknowledged_via: Option<String>,
     /// Who is told next if nobody acknowledges (ADR-0082); `null` when no
     /// follow-up started: a warning, or not sent yet.
@@ -510,7 +511,7 @@ pub async fn acknowledge(
     let acknowledged = follow_up::acknowledge(
         &mut tx,
         &ids,
-        (user.id, &user.username),
+        (Some(user.id), &user.username),
         "page",
         note.as_deref(),
         Utc::now(),

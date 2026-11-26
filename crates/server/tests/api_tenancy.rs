@@ -3448,6 +3448,36 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 .then(|| json!({ "min_severity": "warning" }));
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
+        // Customers, the default client and assets of the PSA connection:
+        // global administrators only, even for their own customer's
+        // (ADR-0191).
+        ("GET", "/api/psa/priorities")
+        | ("GET", "/api/psa/customer-links")
+        | ("GET", "/api/psa/customer-links/suggestions")
+        | ("PUT", "/api/psa/customer-links/{customer_id}")
+        | ("DELETE", "/api/psa/customer-links/{customer_id}")
+        | ("PUT", "/api/psa/default-client")
+        | ("GET", "/api/psa/asset-types")
+        | ("GET", "/api/psa/asset-types/{id}/fields")
+        | ("GET", "/api/psa/asset-settings")
+        | ("PUT", "/api/psa/asset-settings")
+        | ("GET", "/api/psa/asset-links")
+        | ("POST", "/api/psa/asset-links/sync")
+        | ("PUT", "/api/psa/asset-links/{server_id}")
+        | ("DELETE", "/api/psa/asset-links/{server_id}") => {
+            for (customer, server) in [(a.customer, a.server), (b.customer, b.server)] {
+                let uri = path
+                    .replace("{id}", "3")
+                    .replace("{customer_id}", &customer.to_string())
+                    .replace("{server_id}", &server.to_string());
+                let body = match path {
+                    "/api/psa/asset-settings" => Some(json!({ "asset_sync": false })),
+                    "/api/psa/asset-links/{server_id}" => Some(json!({ "asset_id": null })),
+                    _ => method.eq("PUT").then(|| json!({ "client_id": 10 })),
+                };
+                assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+            }
+        }
         ("GET", "/api/dashboard-metrics") => {
             let uri = format!("{path}?site_id={}", b.site);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);

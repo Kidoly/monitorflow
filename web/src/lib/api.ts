@@ -2176,7 +2176,7 @@ export interface IncidentDetail extends Incident {
   /** Oldest first; absent from servers before ADR-0080. */
   notification_groups?: NotificationGroup[];
   /** `page` or `link`: where it was acknowledged. */
-  acknowledged_via?: "page" | "link" | null;
+  acknowledged_via?: "page" | "link" | "psa" | null;
   /** Null when no follow-up started: a warning, or not sent yet. */
   follow_up?: FollowUp | null;
   /** While it says a parent is down: everything behind it, unreachable meanwhile (ADR-0152). */
@@ -4136,6 +4136,17 @@ export interface PsaConnection {
   created_at: string;
   updated_at: string;
   tickets: PsaTicketSettings;
+  /** Where incidents of sites matched to nothing open tickets (ADR-0191). */
+  default_client: PsaDefaultClient;
+  assets: { asset_sync: boolean; asset_inactive_on_removal: boolean };
+}
+
+/** The client of sites matched to nothing; nulls open no ticket for them. */
+export interface PsaDefaultClient {
+  default_client_id: number | null;
+  default_client_name: string | null;
+  default_site_id: number | null;
+  default_site_name: string | null;
 }
 
 /** What tickets the PSA connection opens and how it closes them (ADR-0166). */
@@ -4147,6 +4158,14 @@ export interface PsaTicketSettings {
   /** Null adds a note only. */
   resolved_status_id: number | null;
   resolved_status_name: string | null;
+  /** Priorities of the ticket type's SLA per severity; null for HaloPSA's default. */
+  warning_priority_id: number | null;
+  warning_priority_name: string | null;
+  critical_priority_id: number | null;
+  critical_priority_name: string | null;
+  /** Statuses that mean closed: a ticket moved to one acknowledges its incident. */
+  closed_status_ids: number[];
+  acknowledge_on_assign: boolean;
 }
 
 export interface PsaTicketSettingsRequest {
@@ -4154,13 +4173,85 @@ export interface PsaTicketSettingsRequest {
   category: string | null;
   min_severity: "warning" | "critical";
   resolved_status_id: number | null;
+  warning_priority_id: number | null;
+  critical_priority_id: number | null;
+  closed_status_ids: number[];
+  acknowledge_on_assign: boolean;
+}
+
+/** A MonitorFlow customer and the PSA client it is matched to. */
+export interface PsaCustomerLink {
+  customer_id: string;
+  customer_name: string;
+  client_id: number | null;
+  client_name: string | null;
+  linked_at: string | null;
+  site_count: number;
+  matched_sites: number;
+}
+
+/** A PSA client whose name reads the same as an unmatched customer's. */
+export interface PsaSuggestion {
+  customer_id: string;
+  customer_name: string;
+  client_id: number;
+  client_name: string;
+}
+
+/** Where one system family's servers go as PSA assets. */
+export interface PsaAssetType {
+  family: "linux" | "windows";
+  type_id: number;
+  type_name: string;
+  /** `inventory_number` (the asset tag), a field id as text, or null. */
+  hostname_field: string | null;
+  serial_field: string | null;
+  manufacturer_field: string | null;
+  model_field: string | null;
+}
+
+export interface PsaAssetSettings {
+  asset_sync: boolean;
+  asset_inactive_on_removal: boolean;
+  types: PsaAssetType[];
+}
+
+export interface PsaAssetSettingsRequest {
+  asset_sync: boolean;
+  asset_inactive_on_removal: boolean;
+  types: Omit<PsaAssetType, "type_name">[];
+}
+
+/** A server and its PSA asset. */
+export interface PsaAssetLink {
+  server_id: string;
+  hostname: string;
+  site_name: string;
+  state: "proposed" | "create" | "linked" | "failed";
+  asset_id: number | null;
+  asset_name: string | null;
+  matched_by: "serial" | "hostname" | "created" | "chosen" | null;
+  deactivated: boolean;
+  error: string | null;
+  pushed_at: string | null;
+  updated_at: string;
+}
+
+export interface PsaAssetLinkList {
+  servers: PsaAssetLink[];
+  proposed: number;
+  linked: number;
+  failed: number;
 }
 
 /** One incident's ticket in the PSA. */
 export interface PsaTicket {
   incident_id: string;
   ticket_id: number | null;
-  state: "creating" | "open" | "closed" | "skipped" | "failed";
+  state: "creating" | "open" | "closed" | "skipped" | "failed" | "held" | "ended";
+  /** The PSA status when last read back. */
+  psa_status_id: number | null;
+  checked_at: string | null;
   error: string | null;
   metric: string;
   severity: string;
@@ -5670,6 +5761,38 @@ export const api = {
   psaTickets: (signal?: AbortSignal) => request<{ tickets: PsaTicket[] }>("/api/psa/tickets", { signal }),
 
   /** Signs in to the PSA with the form's values, the saved ones filling the gaps; changes nothing there. */
+  /** The priorities of a ticket type's SLA. */
+  psaPriorities: (ticketType: number | null, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/priorities${ticketType === null ? "" : `?ticket_type_id=${ticketType}`}`, { signal }),
+  psaCustomerLinks: (signal?: AbortSignal) =>
+    request<{ customers: PsaCustomerLink[] }>("/api/psa/customer-links", { signal }),
+  psaSuggestions: (signal?: AbortSignal) =>
+    request<{ suggestions: PsaSuggestion[] }>("/api/psa/customer-links/suggestions", { signal }),
+  linkPsaCustomer: (customer: string, client: number) =>
+    request<PsaCustomerLink>(`/api/psa/customer-links/${encodeURIComponent(customer)}`, {
+      method: "PUT",
+      body: { client_id: client },
+    }),
+  unlinkPsaCustomer: (customer: string) =>
+    request<void>(`/api/psa/customer-links/${encodeURIComponent(customer)}`, { method: "DELETE" }),
+  savePsaDefaultClient: (body: { client_id: number | null; psa_site_id: number | null }) =>
+    request<PsaConnection>("/api/psa/default-client", { method: "PUT", body }),
+  psaAssetTypes: (signal?: AbortSignal) => request<PsaRecordList>("/api/psa/asset-types", { signal }),
+  psaAssetFields: (type: number, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/asset-types/${type}/fields`, { signal }),
+  psaAssetSettings: (signal?: AbortSignal) => request<PsaAssetSettings>("/api/psa/asset-settings", { signal }),
+  savePsaAssetSettings: (body: PsaAssetSettingsRequest) =>
+    request<PsaAssetSettings>("/api/psa/asset-settings", { method: "PUT", body }),
+  psaAssetLinks: (signal?: AbortSignal) => request<PsaAssetLinkList>("/api/psa/asset-links", { signal }),
+  /** Confirms or chooses the server's asset; null creates a new one. */
+  linkPsaAsset: (server: string, asset: number | null) =>
+    request<PsaAssetLink>(`/api/psa/asset-links/${encodeURIComponent(server)}`, {
+      method: "PUT",
+      body: { asset_id: asset },
+    }),
+  unlinkPsaAsset: (server: string) =>
+    request<void>(`/api/psa/asset-links/${encodeURIComponent(server)}`, { method: "DELETE" }),
+  syncPsaAssets: () => request<{ queued: number }>("/api/psa/asset-links/sync", { method: "POST" }),
   testPsaConnection: (body: PsaConnectionRequest) =>
     request<PsaConnectionTest>("/api/psa/connection/test", { method: "POST", body }),
 

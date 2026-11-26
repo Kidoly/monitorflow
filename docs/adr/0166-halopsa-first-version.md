@@ -1,7 +1,7 @@
 # ADR-0166: HaloPSA, what the first version does
 
 Date: 2026-11-22
-Status: proposed; narrows ADR-0164 for its first version
+Status: proposed; narrows ADR-0164 for its first version; its "later" list is done in ADR-0191
 
 ## Context
 

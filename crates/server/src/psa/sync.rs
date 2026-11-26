@@ -5,14 +5,22 @@
 //!
 //! `incident.opened` (or `incident.escalated` to the least severity that
 //! opens tickets) creates one ticket for the PSA client of the incident's
-//! site; `incident.resolved` adds a private note and moves the ticket to
-//! the connection's resolved status. Runs on every server instance: a
-//! delivery is claimed by moving `next_at` a lease ahead, as integration
-//! deliveries are. A 4xx from the PSA is a setup error, kept on the
-//! incident's ticket and the connection, not retried; anything else is
-//! retried for a day.
+//! site, else of its customer, else the connection's default client, with
+//! the priority the map gives its severity and the server's asset when it
+//! has one (ADR-0191). A silence covering the incident holds the ticket
+//! until it ends, as it holds notifications: then the ticket is opened if
+//! the incident is still open, and never if it opened and resolved during
+//! the silence. `incident.escalated` of an incident with a ticket adds a
+//! note and raises the priority to the critical one. `incident.resolved`
+//! adds a private note and moves the ticket to the connection's resolved
+//! status, unless someone closed it in the PSA already. The leader runs
+//! it: a delivery is claimed by moving `next_at` a lease ahead, as
+//! integration deliveries are. A 4xx from the PSA is a setup error, kept
+//! on the incident's ticket and the connection, not retried; anything else
+//! is retried for a day.
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -21,9 +29,11 @@ use sqlx::PgPool;
 use tokio::time::{interval, MissedTickBehavior};
 use uuid::Uuid;
 
-use super::halopsa::NewTicket;
+use super::halopsa::{Limiter, NewTicket};
 use super::{Connection, Halo, HaloError};
 use crate::integrations::deliver::retry_delay;
+use crate::notify::message::Event;
+use crate::notify::silence;
 
 /// Time between two looks for due deliveries.
 pub const POLL: Duration = Duration::from_secs(5);
@@ -43,6 +53,9 @@ struct Claimed {
     created_at: DateTime<Utc>,
     event: String,
     details: Value,
+    customer_id: Option<Uuid>,
+    site_id: Option<Uuid>,
+    event_at: DateTime<Utc>,
 }
 
 /// What became of one delivery.
@@ -51,7 +64,12 @@ enum Outcome {
     Done,
     /// Try again later: no answer, a rate limit or a server error.
     Retry(String),
+    /// A silence holds it until then; not an attempt.
+    Hold(DateTime<Utc>),
 }
+
+/// A held delivery is looked at again this long after its silence ends.
+const AFTER_SILENCE: TimeDelta = TimeDelta::seconds(5);
 
 /// The text of an incident for the PSA: built from MonitorFlow's own
 /// fields only, never the AI's text.
@@ -131,13 +149,19 @@ pub struct Syncer {
     pool: PgPool,
     /// Base URL of the web interface, for links in tickets.
     web_url: String,
+    limiter: Arc<Limiter>,
 }
 
 impl Syncer {
     pub fn new(pool: PgPool, web_url: impl Into<String>) -> Self {
+        Self::with_limiter(pool, web_url, Limiter::shared())
+    }
+
+    pub fn with_limiter(pool: PgPool, web_url: impl Into<String>, limiter: Arc<Limiter>) -> Self {
         Self {
             pool,
             web_url: web_url.into().trim_end_matches('/').to_owned(),
+            limiter,
         }
     }
 
@@ -168,7 +192,9 @@ impl Syncer {
             self.finish_all(&claimed).await?;
             return Ok(claimed.len());
         };
-        let halo = connection.credentials().map(Halo::new);
+        let halo = connection
+            .credentials()
+            .map(|c| Halo::new(c).with_limiter(self.limiter.clone()));
         for delivery in &claimed {
             let outcome = match (&halo, connection.enabled) {
                 (_, false) => Ok(Outcome::Done),
@@ -201,7 +227,8 @@ impl Syncer {
              SET next_at = now() + make_interval(secs => $2), attempts = d.attempts + 1
              FROM due, integration_events v
              WHERE d.id = due.id AND v.seq = d.event_seq
-             RETURNING d.id, d.attempts, d.created_at, v.event, v.details",
+             RETURNING d.id, d.attempts, d.created_at, v.event, v.details, v.customer_id,
+                       v.site_id, v.created_at AS event_at",
         )
         .bind(BATCH)
         .bind(LEASE.as_secs_f64())
@@ -220,6 +247,17 @@ impl Syncer {
     /// since. A retry past [`MAX_AGE`] gives up.
     async fn record(&self, delivery: &Claimed, outcome: Outcome) -> Result<(), sqlx::Error> {
         match outcome {
+            Outcome::Hold(until) => {
+                sqlx::query(
+                    "UPDATE psa_deliveries SET next_at = $3, attempts = $2 - 1, last_error = NULL
+                     WHERE id = $1 AND attempts = $2 AND state = 'pending'",
+                )
+                .bind(delivery.id)
+                .bind(delivery.attempts)
+                .bind(until + AFTER_SILENCE)
+                .execute(&self.pool)
+                .await?;
+            }
             Outcome::Done => {
                 sqlx::query(
                     "UPDATE psa_deliveries SET state = 'done', finished_at = now(), last_error = NULL
@@ -273,8 +311,7 @@ impl Syncer {
         };
         match delivery.event.as_str() {
             "incident.opened" | "incident.escalated" => {
-                self.open(connection, halo, incident, &delivery.details)
-                    .await
+                self.open(connection, halo, incident, delivery).await
             }
             "incident.resolved" => {
                 self.close(connection, halo, incident, &delivery.details)
@@ -316,13 +353,68 @@ impl Syncer {
         Ok(Outcome::Done)
     }
 
+    /// Where the incident's ticket goes: the PSA client and site of its
+    /// site, else its customer's client, else the connection's default.
+    async fn destination(
+        &self,
+        connection: &Connection,
+        details: &Value,
+    ) -> Result<Option<(i64, Option<i64>)>, sqlx::Error> {
+        if let Ok(site) = text(details, &["site", "id"]).parse::<Uuid>() {
+            let link: Option<(i64, Option<i64>)> = sqlx::query_as(
+                "SELECT client_id, halo_site_id FROM psa_site_links
+                 WHERE site_id = $1 AND connection_id = $2
+                 UNION ALL
+                 SELECT cl.client_id, NULL FROM psa_customer_links cl
+                 JOIN sites s ON s.customer_id = cl.customer_id
+                 WHERE s.id = $1 AND cl.connection_id = $2
+                 LIMIT 1",
+            )
+            .bind(site)
+            .bind(connection.id)
+            .fetch_optional(&self.pool)
+            .await?;
+            if link.is_some() {
+                return Ok(link);
+            }
+        }
+        let default = &connection.default_client;
+        Ok(default
+            .default_client_id
+            .map(|client| (client, default.default_site_id)))
+    }
+
+    /// The end of the latest active silence covering the delivery's event.
+    async fn silenced_until(
+        &self,
+        delivery: &Claimed,
+    ) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+        let now = Utc::now();
+        let mut db = self.pool.acquire().await?;
+        let silences = silence::load(&mut db, now, now).await?;
+        let event = Event {
+            id: delivery.id,
+            event: delivery.event.clone(),
+            customer_id: delivery.customer_id,
+            site_id: delivery.site_id,
+            details: delivery.details.clone(),
+            created_at: delivery.event_at,
+        };
+        Ok(silences
+            .iter()
+            .filter(|s| s.active(now) && s.concerns(&event))
+            .map(|s| s.ends_at)
+            .max())
+    }
+
     async fn open(
         &self,
         connection: &Connection,
         halo: &Halo,
         incident: Uuid,
-        details: &Value,
+        delivery: &Claimed,
     ) -> Result<Outcome, sqlx::Error> {
+        let details = &delivery.details;
         let severity = text(details, &["incident", "severity"]);
         if !reaches(severity, &connection.tickets.min_severity) {
             return Ok(Outcome::Done);
@@ -332,32 +424,70 @@ impl Syncer {
                 .bind(incident)
                 .fetch_optional(&self.pool)
                 .await?;
-        let retrying = match current.as_ref().map(|(state, _)| state.as_str()) {
-            None => false,
-            Some("creating") => true,
-            // Open, closed, failed or skipped: one ticket per incident.
+        let (retrying, held) = match current.as_ref().map(|(state, _)| state.as_str()) {
+            None => (false, false),
+            Some("creating") => (true, false),
+            Some("held") => (false, true),
+            Some("open") if delivery.event == "incident.escalated" => {
+                let ticket = current.as_ref().and_then(|(_, t)| *t);
+                return self
+                    .escalate(connection, halo, incident, ticket, severity)
+                    .await;
+            }
+            // Open, closed, failed, skipped or ended: one ticket per incident.
             Some(_) => return Ok(Outcome::Done),
         };
-        let site = text(details, &["site", "id"]).parse::<Uuid>().ok();
-        let link: Option<(i64, Option<i64>)> = match site {
-            Some(site) => {
-                sqlx::query_as(
-                    "SELECT client_id, halo_site_id FROM psa_site_links
-                     WHERE site_id = $1 AND connection_id = $2",
+        if !retrying {
+            if let Some(until) = self.silenced_until(delivery).await? {
+                sqlx::query(
+                    "INSERT INTO psa_tickets (incident_id, connection_id, state, error)
+                     VALUES ($1, $2, 'held', $3)
+                     ON CONFLICT (incident_id) DO UPDATE SET state = 'held', error = $3,
+                         updated_at = now()",
                 )
-                .bind(site)
+                .bind(incident)
                 .bind(connection.id)
-                .fetch_optional(&self.pool)
-                .await?
+                .bind(format!(
+                    "Held by a silence until {}.",
+                    until.format("%Y-%m-%d %H:%M UTC")
+                ))
+                .execute(&self.pool)
+                .await?;
+                return Ok(Outcome::Hold(until));
             }
-            None => None,
-        };
-        let Some((client, halo_site)) = link else {
+            if held {
+                let open: bool = sqlx::query_scalar(
+                    "SELECT coalesce((SELECT state = 'open' FROM incidents WHERE id = $1), false)",
+                )
+                .bind(incident)
+                .fetch_one(&self.pool)
+                .await?;
+                if !open {
+                    sqlx::query(
+                        "UPDATE psa_tickets SET state = 'skipped', updated_at = now(),
+                             error = 'The incident opened and resolved during a silence.'
+                         WHERE incident_id = $1",
+                    )
+                    .bind(incident)
+                    .execute(&self.pool)
+                    .await?;
+                    return Ok(Outcome::Done);
+                }
+                sqlx::query("DELETE FROM psa_tickets WHERE incident_id = $1 AND state = 'held'")
+                    .bind(incident)
+                    .execute(&self.pool)
+                    .await?;
+            }
+        }
+        let Some((client, halo_site)) = self.destination(connection, details).await? else {
             let site_name = text(details, &["site", "name"]);
             let reason = if site_name.is_empty() {
-                "The incident has no site, so no HaloPSA client.".to_owned()
+                "The incident has no site, so no HaloPSA client, and no default client is set."
+                    .to_owned()
             } else {
-                format!("The site {site_name} is not matched to a HaloPSA client.")
+                format!(
+                    "The site {site_name} is not matched to a HaloPSA client, and no default client is set."
+                )
             };
             sqlx::query(
                 "INSERT INTO psa_tickets (incident_id, connection_id, state, error)
@@ -388,6 +518,18 @@ impl Syncer {
             }
         }
         let text = incident_text(details, &self.web_url);
+        let asset: Option<i64> = match text_id(details, "server") {
+            Some(server) => sqlx::query_scalar(
+                "SELECT asset_id FROM psa_asset_links
+                 WHERE server_id = $1 AND connection_id = $2 AND state = 'linked'",
+            )
+            .bind(server)
+            .bind(connection.id)
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten(),
+            None => None,
+        };
         let ticket = NewTicket {
             summary: text.summary,
             details: text.details,
@@ -395,6 +537,8 @@ impl Syncer {
             site_id: halo_site,
             ticket_type_id: connection.tickets.ticket_type_id,
             category: connection.tickets.category.clone(),
+            priority_id: connection.tickets.priority(severity),
+            asset_id: asset,
         };
         match halo.create_ticket(&ticket).await {
             Ok(id) => self.opened(connection, incident, id).await,
@@ -421,6 +565,34 @@ impl Syncer {
         Ok(Outcome::Done)
     }
 
+    /// An incident with a ticket became critical: a note, and the critical
+    /// priority when the map has one.
+    async fn escalate(
+        &self,
+        connection: &Connection,
+        halo: &Halo,
+        incident: Uuid,
+        ticket: Option<i64>,
+        severity: &str,
+    ) -> Result<Outcome, sqlx::Error> {
+        let Some(ticket) = ticket.filter(|_| severity == "critical") else {
+            return Ok(Outcome::Done);
+        };
+        if let Err(error) = halo
+            .add_note(ticket, "MonitorFlow: the incident is now critical.")
+            .await
+        {
+            return self.failed(connection, incident, error).await;
+        }
+        if let Some(priority) = connection.tickets.critical_priority_id {
+            if let Err(error) = halo.set_priority(ticket, priority).await {
+                return self.failed(connection, incident, error).await;
+            }
+        }
+        super::record_success(&self.pool, connection.id, None).await?;
+        Ok(Outcome::Done)
+    }
+
     async fn close(
         &self,
         connection: &Connection,
@@ -428,16 +600,19 @@ impl Syncer {
         incident: Uuid,
         details: &Value,
     ) -> Result<Outcome, sqlx::Error> {
-        let ticket: Option<i64> = sqlx::query_scalar(
-            "SELECT ticket_id FROM psa_tickets WHERE incident_id = $1 AND state = 'open'",
+        let row: Option<(Option<i64>, Option<i64>)> = sqlx::query_as(
+            "SELECT ticket_id, psa_status_id FROM psa_tickets
+             WHERE incident_id = $1 AND state = 'open'",
         )
         .bind(incident)
         .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-        let Some(ticket) = ticket else {
+        .await?;
+        let Some((Some(ticket), status_now)) = row else {
             return Ok(Outcome::Done);
         };
+        // Never move a ticket someone closed in the PSA: that could reopen it.
+        let closed_there =
+            status_now.is_some_and(|s| connection.tickets.closed_status_ids.contains(&s));
         let resolved = text(details, &["incident", "resolved_at"]);
         let note = if resolved.is_empty() {
             "MonitorFlow: the incident is resolved.".to_owned()
@@ -447,7 +622,11 @@ impl Syncer {
         if let Err(error) = halo.add_note(ticket, &note).await {
             return self.failed(connection, incident, error).await;
         }
-        if let Some(status) = connection.tickets.resolved_status_id {
+        if let Some(status) = connection
+            .tickets
+            .resolved_status_id
+            .filter(|_| !closed_there)
+        {
             if let Err(error) = halo.set_status(ticket, status).await {
                 return self.failed(connection, incident, error).await;
             }
@@ -467,6 +646,10 @@ impl Syncer {
 
 fn incident_id(details: &Value) -> Option<Uuid> {
     text(details, &["incident", "id"]).parse().ok()
+}
+
+fn text_id(details: &Value, key: &str) -> Option<Uuid> {
+    text(details, &[key, "id"]).parse().ok()
 }
 
 #[cfg(test)]

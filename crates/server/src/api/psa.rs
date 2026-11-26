@@ -57,6 +57,10 @@ pub struct ConnectionView {
     pub updated_at: DateTime<Utc>,
     /// What tickets it opens and how it closes them.
     pub tickets: psa::TicketSettings,
+    /// Where incidents of sites matched to nothing open tickets.
+    pub default_client: psa::DefaultClient,
+    /// Whether servers are synced as PSA assets.
+    pub assets: psa::AssetSettings,
 }
 
 impl From<Connection> for ConnectionView {
@@ -75,6 +79,8 @@ impl From<Connection> for ConnectionView {
             created_at: c.created_at,
             updated_at: c.updated_at,
             tickets: c.tickets,
+            default_client: c.default_client,
+            assets: c.assets,
         }
     }
 }
@@ -130,7 +136,7 @@ pub struct TestResult {
     pub error: Option<String>,
 }
 
-fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
+pub(super) fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
     if is_global_admin(user) {
         Ok(())
     } else {
@@ -139,7 +145,7 @@ fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
 }
 
 /// `text` trimmed, `None` when empty.
-fn given(text: Option<String>) -> Option<String> {
+pub(super) fn given(text: Option<String>) -> Option<String> {
     text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
 }
 
@@ -288,9 +294,7 @@ pub async fn put_connection(
         .as_ref()
         .is_some_and(|c| c.base_url != credentials.base_url)
     {
-        sqlx::query("DELETE FROM psa_site_links")
-            .execute(&mut *tx)
-            .await?;
+        psa::forget_instance(&mut tx).await?;
     }
     let action = if current.is_some() {
         "psa.connection.update"
@@ -356,7 +360,7 @@ pub async fn test_connection(
     let outcome = Halo::new(credentials).me().await;
     if let Some(stored) = stored {
         match &outcome {
-            Ok(agent) => psa::record_success(&state.pool, stored.id, Some(&agent.name)).await?,
+            Ok(agent) => psa::record_success(&state.pool, stored.id, Some(agent)).await?,
             Err(error) => psa::record_failure(&state.pool, stored.id, &error.message).await?,
         }
     }
@@ -433,7 +437,7 @@ pub struct SiteLinkRequest {
 }
 
 /// The connection and a client for it; 409 when there is none.
-async fn connected(state: &ApiState) -> Result<(Connection, Halo), ApiError> {
+pub(super) async fn connected(state: &ApiState) -> Result<(Connection, Halo), ApiError> {
     let connection = psa::load(&state.pool)
         .await?
         .ok_or_else(|| ApiError::Conflict("Set up the HaloPSA connection first.".into()))?;
@@ -445,7 +449,7 @@ async fn connected(state: &ApiState) -> Result<(Connection, Halo), ApiError> {
 
 /// `outcome` with the PSA's failure recorded on the connection and turned
 /// into a 502.
-async fn recorded<T>(
+pub(super) async fn recorded<T>(
     state: &ApiState,
     connection: &Connection,
     outcome: Result<T, HaloError>,
@@ -533,7 +537,20 @@ pub async fn put_site_link(
     require_global_admin(&user)?;
     let site = parse_id(&site)?;
     let request = body(request)?;
-    site_link(&state.pool, site).await?;
+    let current = site_link(&state.pool, site).await?;
+    // A site of a matched customer goes to that customer's client.
+    let customer_client: Option<(i64, String)> = sqlx::query_as(
+        "SELECT client_id, client_name FROM psa_customer_links WHERE customer_id = $1",
+    )
+    .bind(current.customer_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    if let Some((client, name)) = customer_client.filter(|(c, _)| *c != request.client_id) {
+        return Err(ApiError::Invalid(format!(
+            "{} is matched to the HaloPSA client {name} ({client}): choose that client, or change the customer's match.",
+            current.customer_name
+        )));
+    }
     let (connection, halo) = connected(&state).await?;
     let client = recorded(&state, &connection, halo.client(request.client_id).await)
         .await?
@@ -670,6 +687,46 @@ pub struct TicketSettingsRequest {
     /// their ticket to; `null` adds a note only.
     #[serde(default)]
     pub resolved_status_id: Option<i64>,
+    /// A priority of `GET /api/psa/priorities` for the chosen ticket type,
+    /// for tickets of warning incidents; `null` for the PSA's default.
+    #[serde(default)]
+    pub warning_priority_id: Option<i64>,
+    /// The same for critical incidents, which an escalated incident's
+    /// ticket also moves to.
+    #[serde(default)]
+    pub critical_priority_id: Option<i64>,
+    /// Statuses of `GET /api/psa/statuses` that mean closed: a ticket moved
+    /// to one acknowledges its open incident. Absent keeps the current
+    /// ones; `[]` for none. At most 20.
+    #[serde(default)]
+    pub closed_status_ids: Option<Vec<i64>>,
+    /// Whether a ticket assigned to an agent acknowledges its incident;
+    /// absent keeps the current choice.
+    #[serde(default)]
+    pub acknowledge_on_assign: Option<bool>,
+}
+
+/// Query string of `GET /api/psa/priorities`.
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PriorityQuery {
+    /// The ticket type whose SLA's priorities are listed; absent for the
+    /// connection's ticket type, or every priority without one.
+    pub ticket_type_id: Option<i64>,
+}
+
+/// `GET /api/psa/priorities`: the priorities of a ticket type's SLA.
+pub async fn priorities(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    query: Result<Query<PriorityQuery>, QueryRejection>,
+) -> Result<Json<RecordList>, ApiError> {
+    require_global_admin(&user)?;
+    let Query(query) = query.map_err(|e| ApiError::Invalid(e.body_text()))?;
+    let (connection, halo) = connected(&state).await?;
+    let kind = query.ticket_type_id.or(connection.tickets.ticket_type_id);
+    let records = recorded(&state, &connection, halo.priorities(kind).await).await?;
+    Ok(Json(RecordList { records }))
 }
 
 /// `GET /api/psa/ticket-types`: the PSA's ticket types for tickets.
@@ -741,20 +798,71 @@ pub async fn put_ticket_settings(
             return Err(ApiError::Invalid("HaloPSA has no such category.".into()));
         }
     }
+    let closed = request
+        .closed_status_ids
+        .unwrap_or_else(|| connection.tickets.closed_status_ids.clone());
+    if closed.len() > 20 {
+        return Err(ApiError::Invalid(
+            "Choose at most 20 closed statuses.".into(),
+        ));
+    }
+    let mut closed: Vec<i64> = closed;
+    closed.sort_unstable();
+    closed.dedup();
+    let statuses = if request.resolved_status_id.is_some() || !closed.is_empty() {
+        recorded(&state, &connection, halo.statuses().await).await?
+    } else {
+        Vec::new()
+    };
     let status = match request.resolved_status_id {
         None => None,
         Some(id) => Some(
-            recorded(&state, &connection, halo.statuses().await)
-                .await?
-                .into_iter()
+            statuses
+                .iter()
                 .find(|s| s.id == id)
+                .cloned()
                 .ok_or_else(|| ApiError::Invalid("HaloPSA has no such status.".into()))?,
         ),
     };
+    if closed
+        .iter()
+        .any(|id| !statuses.iter().any(|s| s.id == *id))
+    {
+        return Err(ApiError::Invalid("HaloPSA has no such status.".into()));
+    }
+    let wanted = [request.warning_priority_id, request.critical_priority_id];
+    let priorities = if wanted.iter().any(Option::is_some) {
+        recorded(
+            &state,
+            &connection,
+            halo.priorities(ticket_type.as_ref().map(|t| t.id)).await,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    let [warning, critical] = wanted.map(|id| {
+        id.map(|id| {
+            priorities
+                .iter()
+                .find(|p| p.id == id)
+                .cloned()
+                .ok_or_else(|| {
+                    ApiError::Invalid("HaloPSA has no such priority for that ticket type.".into())
+                })
+        })
+        .transpose()
+    });
+    let (warning, critical) = (warning?, critical?);
+    let acknowledge_on_assign = request
+        .acknowledge_on_assign
+        .unwrap_or(connection.tickets.acknowledge_on_assign);
     let mut tx = state.pool.begin().await?;
     sqlx::query(
         "UPDATE psa_connections SET ticket_type_id = $2, ticket_type_name = $3, category = $4,
              min_severity = $5, resolved_status_id = $6, resolved_status_name = $7,
+             warning_priority_id = $8, warning_priority_name = $9, critical_priority_id = $10,
+             critical_priority_name = $11, closed_status_ids = $12, acknowledge_on_assign = $13,
              updated_at = now()
          WHERE id = $1",
     )
@@ -765,6 +873,12 @@ pub async fn put_ticket_settings(
     .bind(&min_severity)
     .bind(status.as_ref().map(|s| s.id))
     .bind(status.as_ref().map(|s| s.name.as_str()))
+    .bind(warning.as_ref().map(|p| p.id))
+    .bind(warning.as_ref().map(|p| p.name.as_str()))
+    .bind(critical.as_ref().map(|p| p.id))
+    .bind(critical.as_ref().map(|p| p.name.as_str()))
+    .bind(&closed)
+    .bind(acknowledge_on_assign)
     .execute(&mut *tx)
     .await?;
     record(
@@ -776,6 +890,10 @@ pub async fn put_ticket_settings(
             "category": category,
             "min_severity": min_severity,
             "resolved_status_id": status.as_ref().map(|s| s.id),
+            "warning_priority_id": warning.as_ref().map(|p| p.id),
+            "critical_priority_id": critical.as_ref().map(|p| p.id),
+            "closed_status_ids": closed,
+            "acknowledge_on_assign": acknowledge_on_assign,
         }),
     )
     .await?;
@@ -793,8 +911,14 @@ pub struct TicketView {
     /// The PSA's ticket number; `null` until created.
     pub ticket_id: Option<i64>,
     /// `creating`, `open`, `closed` (its incident resolved), `skipped`
-    /// (its site has no PSA client) or `failed` (the PSA refused).
+    /// (no PSA client for its site, or it opened and resolved during a
+    /// silence), `failed` (the PSA refused), `held` (a silence holds it)
+    /// or `ended` (deleted or merged in the PSA).
     pub state: String,
+    /// The PSA status the ticket had when last read back; `null` before.
+    pub psa_status_id: Option<i64>,
+    /// When it was last read back from the PSA; `null` before.
+    pub checked_at: Option<DateTime<Utc>>,
     /// Why it was skipped or failed, or the last failure while retrying,
     /// in the PSA's words; `null` otherwise.
     pub error: Option<String>,
@@ -824,7 +948,8 @@ pub async fn tickets(
 ) -> Result<Json<TicketList>, ApiError> {
     require_global_admin(&user)?;
     let tickets = sqlx::query_as(
-        "SELECT t.incident_id, t.ticket_id, t.state, t.error, i.metric, i.severity,
+        "SELECT t.incident_id, t.ticket_id, t.state, t.psa_status_id, t.checked_at, t.error,
+                i.metric, i.severity,
                 coalesce(sv.hostname, r.name) AS server_name, si.name AS site_name,
                 t.created_at, t.updated_at, t.closed_at
          FROM psa_tickets t
