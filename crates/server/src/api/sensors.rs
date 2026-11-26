@@ -371,6 +371,14 @@ pub fn validate_full(
         checked.insert("user".into(), "checked".into());
         checked.insert("password".into(), "checked".into());
         monitorflow_vmware::parse(&checked)?;
+    } else if crate::cloud::is_kind(&request.kind) {
+        // A cloud check takes nothing but its device's credentials
+        // (ADR-0183), which never go in a row.
+        if let Some(key) = config.params.keys().next() {
+            return Err(format!(
+                "param `{key}` is not for a check: set a device's cloud credentials with PUT /api/devices/{{id}}/cloud"
+            ));
+        }
     } else {
         let mut checked = config.params.clone();
         if let Some(address) = address {
@@ -827,6 +835,7 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
         || valid.kind == monitorflow_snmp::KIND
         || valid.kind == monitorflow_snmp::CUSTOM_KIND
         || valid.kind == monitorflow_vmware::KIND
+        || crate::cloud::is_kind(&valid.kind)
         || udp;
     if by.probe.is_none() {
         if probe_only {
@@ -842,6 +851,11 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
             "the central server and relays run {} checks, not `{}`",
             PROBE_KINDS_TEXT, valid.kind
         )));
+    }
+    if crate::cloud::is_kind(&valid.kind) && (by.probe != Some("central") || by.address.is_none()) {
+        return Err(ApiError::Invalid(
+            "cloud checks are for cloud accounts and run on the central server: add the account as a device (POST /api/devices with `cloud`)".into(),
+        ));
     }
     if valid.kind == monitorflow_vmware::KIND && by.address.is_none() {
         return Err(ApiError::Invalid(
@@ -892,11 +906,13 @@ pub(super) async fn check_lookups(
 
 /// Kinds a probe runs.
 pub fn probe_kind(kind: &str) -> bool {
-    monitorflow_probe::PROBE_RUNS.contains(&kind) || kind == monitorflow_webcheck::KIND
+    monitorflow_probe::PROBE_RUNS.contains(&kind)
+        || kind == monitorflow_webcheck::KIND
+        || crate::cloud::is_kind(kind)
 }
 
 const PROBE_KINDS_TEXT: &str =
-    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql` and `redis`";
+    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql`, `redis`, `aws` and `azure`";
 
 async fn create(
     state: &ApiState,

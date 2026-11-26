@@ -9,6 +9,7 @@ members = [
     "crates/vmware",
     "crates/webcheck",
     "crates/apps",
+    "crates/cloud",
     "crates/import",
     "crates/ai",
     "crates/agent",
@@ -45,6 +46,7 @@ monitorflow-plugin = { path = "crates/plugin" }
 monitorflow-import = { path = "crates/import" }
 monitorflow-webcheck = { path = "crates/webcheck" }
 monitorflow-apps = { path = "crates/apps" }
+monitorflow-cloud = { path = "crates/cloud" }
 
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.14", features = ["tls-ring"] }

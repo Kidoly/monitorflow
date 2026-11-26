@@ -54,6 +54,10 @@ stored sealed and never returned.\n\n\
 With `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes \
 from the same probe, and its alerts; test the connection and confirm its certificate first with \
 `POST /api/v1/devices/vmware/test`.\n\n\
+With `cloud` credentials (ADR-0183), it is an AWS account or an Azure subscription: its `address` may be left \
+out (it becomes the provider's API), it gets no ping unless asked, and its `aws` or `azure` check lists its \
+virtual machines every 5 minutes from the central server, with its alerts; test the credentials first with \
+`POST /api/v1/devices/cloud/test`. The secret is stored sealed and never returned.\n\n\
 **Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
     request_body(content = devices::DeviceRequest, examples(
         ("ping" = (summary = "A switch pinged from the site's relay",
@@ -64,6 +68,10 @@ from the same probe, and its alerts; test the connection and confirm its certifi
         ("vmware" = (summary = "A vCenter, read every 5 minutes with a Read-only account (ADR-0156)",
             value = json!({"site_id": ex::SITE, "name": "vcenter-1", "address": "vcenter.example.test",
                            "vmware": {"user": "monitor@vsphere.local", "password": "a password"}}))),
+        ("cloud" = (summary = "An AWS account, its EC2 instances read every 5 minutes (ADR-0183)",
+            value = json!({"site_id": ex::SITE, "name": "AWS production",
+                           "cloud": {"provider": "aws", "key_id": "AKIAIOSFODNN7EXAMPLE",
+                                     "secret": "a secret access key", "regions": ["eu-west-3"]}}))),
         ("snmp" = (summary = "A switch over SNMP v3, with the checks and alerts of its kind",
             value = json!({"site_id": ex::SITE, "name": "Core switch", "address": "192.0.2.10",
                            "template": "switch", "snmp": {"version": "v3", "user": "monitor",

@@ -18,6 +18,7 @@ pub const SEALED: &[Column] = &[
     Column::VmwareCredentials,
     Column::PsaConnections,
     Column::WebPushKeys,
+    Column::CloudCredentials,
 ];
 
 #[derive(Debug, thiserror::Error)]

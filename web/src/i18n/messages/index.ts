@@ -8,6 +8,7 @@ import * as autoUpdate from "./autoUpdate";
 import * as backups from "./backups";
 import * as campaigns from "./campaigns";
 import * as checks from "./checks";
+import * as cloud from "./cloud";
 import * as common from "./common";
 import * as dashboards from "./dashboards";
 import * as dependencies from "./dependencies";
@@ -64,6 +65,7 @@ export const en = {
   backups: backups.en,
   campaigns: campaigns.en,
   checks: checks.en,
+  cloud: cloud.en,
   common: common.en,
   dashboards: dashboards.en,
   dependencies: dependencies.en,
@@ -119,6 +121,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   backups: backups.fr,
   campaigns: campaigns.fr,
   checks: checks.fr,
+  cloud: cloud.fr,
   common: common.fr,
   dashboards: dashboards.fr,
   dependencies: dependencies.fr,

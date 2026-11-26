@@ -1,0 +1,30 @@
+[package]
+name = "monitorflow-cloud"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "AWS EC2 and Azure virtual machines through their APIs, read by the central server (ADR-0183)"
+
+# A sensor of `monitorflow-sensors`, kept apart so agents and relays do
+# not carry cloud API clients. Requests are signed here (SigV4 with ring,
+# OAuth client credentials for Azure) instead of pulling in the SDKs.
+
+[dependencies]
+monitorflow-sensors.workspace = true
+# Its bounded XML reader, for EC2 and CloudWatch answers.
+monitorflow-vmware.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+percent-encoding.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true, features = ["server", "http1"] }
+tokio = { workspace = true, features = ["test-util"] }

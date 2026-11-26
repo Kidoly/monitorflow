@@ -158,6 +158,7 @@ db_tests! {
                 "central_server_heartbeat",
                 "certificates",
                 "check_recommendation_dismissals",
+                "cloud_credentials",
                 "cluster_leases",
                 "commands",
                 "customers",

@@ -34,6 +34,8 @@ monitorflow-vmware.workspace = true
 monitorflow-webcheck.workspace = true
 # Ready-made application checks (ADR-0183).
 monitorflow-apps.workspace = true
+# Cloud accounts, read by the central server alone (ADR-0183).
+monitorflow-cloud.workspace = true
 monitorflow-sensors.workspace = true
 # Readers of other monitoring tools' configuration (ADR-0146).
 monitorflow-import.workspace = true
