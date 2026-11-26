@@ -81,7 +81,8 @@ impl InUse {
              JOIN campaigns c ON c.id = cs.campaign_id
              JOIN mirrors m ON m.id = cs.mirror_id
              JOIN mirror_snapshots s ON s.id = cs.snapshot_id
-             WHERE c.state NOT IN ('stopped', 'completed', 'failed')",
+             WHERE c.state NOT IN ('stopped', 'completed', 'failed')
+                OR (c.recurring AND c.state = 'completed')",
         )
         .fetch_all(&mut *conn)
         .await?;

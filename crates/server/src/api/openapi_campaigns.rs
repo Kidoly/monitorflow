@@ -41,8 +41,14 @@ agent update campaign, or `software` for a software campaign), queued behind any
 that server and checked by its agent, which runs package updates only when its administrator \
 allowed them. On Windows servers an update approves Windows Update classifications \
 (`classifications`) and holds updates (`hold`) and apps (`third_party[].hold`). A software campaign \
-(`software`) installs or removes software of the catalogue (`/software`) on Windows servers whose \
-administrator allowed it (`monitorflow-agent.exe software on`); the others are skipped with why. Campaign commands are made by \
+(`software`) installs or removes software of the catalogue (`/software`): each server gets the \
+packages of its own manager (winget on Windows, apt on Debian and Ubuntu, dnf on RHEL and its \
+derivatives), where its administrator allowed it (`monitorflow-agent software on`); the others are \
+skipped with why. Packages that install from a mirror of the central server get it added to the \
+servers' sources first and removed after (`sources` in `add` mode, pinned to the mirror's newest \
+published snapshot when the campaign is saved). A `recurring` campaign runs again by itself at the \
+first window that opens after each completed run, as \"run again\" does; a failed or stopped run \
+ends the recurrence. Campaign commands are made by \
 an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading \
 needs a role on the customer as a whole (everything or the customer); creating and acting need an \
 administrator role on it. Needs the key area \"updates\".\n\n\
@@ -114,6 +120,7 @@ fn campaign_in(state: &str) -> serde_json::Value {
         "sources": null,
         "agent_version": null,
         "software": null,
+        "recurring": false,
         "server_ids": [],
         "wave_specs": [{"size": 1}],
         "wave_count": 2,
@@ -287,7 +294,9 @@ expected JSON, no `site_id` nor `server_ids`, `unknown site <id>` or \
 `unknown server <id>` (not of the customer), `server <id> is revoked`, a bad name, `command_ttl_s` \
 outside 60 to 604800, a bad package name, batch, window, time zone, failure threshold or pinned \
 snapshot, `agent_version` not like `0.2.0`, package options with `agent_version` or `software`, an \
-unknown classification, a bad held update, or `unknown catalogue entry <id>`"),
+unknown classification, a bad held update, `unknown catalogue entry <id>`, a software campaign whose \
+`sources` replace the servers' own, a mirror of its software without a published snapshot, or \
+`recurring` without a weekly, monthly or yearly window or for a major upgrade"),
         (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
 without administering it as a whole. `api_key_scope`: the key lacks the area"),
         (status = 404, body = ErrorBody, description = "`not_found`: a customer the caller does not read"),

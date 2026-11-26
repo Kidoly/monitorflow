@@ -332,7 +332,8 @@ fn list_servers() {}
 #[utoipa::path(get, path = "/api/v1/servers/{id}", tag = "servers",
     summary = "Get a server",
     description = "One server: the fields of a listing row, plus the certificate MonitorFlow issued it last \
-and the last time its AI commands were turned on or off from the web interface, and what the key's person may \
+and the last time its AI commands were turned on or off from the web interface, the last time its software \
+installs were turned off from it (ADR-0188), and what the key's person may \
 do with remote terminals there (ADR-0190). A removed server stays readable here, with `revoked_at` set, for \
 its history.\n\n\
 **Who**: any role on the server's site. **Area**: `servers`.",
@@ -346,6 +347,7 @@ its history.\n\n\
                     "revoked": false, "revoked_at": null, "revocation_reason": null
                 },
                 "ai_commands_change": null,
+                "software_off_change": null,
                 "remote_terminal": {"can_open": true, "can_review": true, "recorded": true,
                                     "idle_timeout_minutes": 15}
             })))),

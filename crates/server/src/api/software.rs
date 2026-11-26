@@ -33,12 +33,19 @@ pub struct Entry {
     pub customer_id: Option<Uuid>,
     /// What people call it, like `7-Zip`.
     pub name: String,
-    /// `winget`, the only manager for now.
+    /// `winget` (Windows), `apt` (Debian and Ubuntu) or `dnf` (RHEL and
+    /// its derivatives).
     pub manager: String,
-    /// The manager's package ID, like `7zip.7zip`.
+    /// The manager's package ID, like `7zip.7zip`, or the distribution's
+    /// package name, like `nginx`.
     pub package_id: String,
-    /// The winget source it installs from, like `winget`.
+    /// The winget source it installs from, like `winget`; empty for apt
+    /// and dnf.
     pub source: String,
+    /// apt and dnf only: the mirror of the central server it installs
+    /// from, which a campaign adds to the servers' sources first;
+    /// `null` for the servers' own sources, or once the mirror is gone.
+    pub mirror: Option<String>,
     pub description: String,
     /// The user who added it; `null` once that user is deleted.
     pub created_by: Option<Uuid>,
@@ -65,15 +72,23 @@ pub struct EntryRequest {
     pub customer_id: Option<Uuid>,
     /// 1 to 128 characters.
     pub name: String,
-    /// `winget`, the default.
+    /// `winget`, the default, `apt` or `dnf`.
     #[serde(default = "winget")]
     pub manager: String,
-    /// A winget package ID: 2 to 8 segments joined by `.`, like
-    /// `7zip.7zip`.
+    /// For winget a package ID: 2 to 8 segments joined by `.`, like
+    /// `7zip.7zip`. For apt and dnf a package name of the distribution:
+    /// letters, digits and `.+_:-`, like `nginx`; never an option, a
+    /// path, a glob or a group.
     pub package_id: String,
-    /// The winget source, `winget` by default; never `msstore`.
-    #[serde(default = "winget")]
-    pub source: String,
+    /// winget only: the source, `winget` by default; never `msstore`.
+    /// Absent or empty for apt and dnf.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// apt and dnf only: the name of a mirror of the central server of
+    /// the same family (ADR-0142) the package installs from. Absent for
+    /// the servers' own sources.
+    #[serde(default)]
+    pub mirror: Option<String>,
     /// Up to 500 characters.
     #[serde(default)]
     pub description: String,
@@ -104,30 +119,75 @@ pub struct SoftwareRequest {
 }
 
 impl EntryRequest {
-    fn validate(&self) -> Result<(), ApiError> {
+    /// Checks the request; returns the source to store.
+    fn validate(&self) -> Result<String, ApiError> {
         let invalid = |m: &str| Err(ApiError::Invalid(m.into()));
         let name = self.name.trim();
         if name.is_empty() || name.chars().count() > 128 || name.chars().any(char::is_control) {
             return invalid("name must be 1 to 128 characters");
         }
-        if third_party::parse(&self.manager) != Some(PackageManager::Winget) {
-            return invalid("manager must be `winget`");
-        }
-        if !third_party::valid_id(PackageManager::Winget, &self.package_id) {
-            return invalid("package_id is not a winget package ID, like `7zip.7zip`");
-        }
-        if !software::valid_source(&self.source) {
-            return invalid("source must be a winget source name other than `msstore`");
-        }
+        let manager =
+            third_party::parse(&self.manager).filter(|m| software::is_software_manager(*m));
+        let Some(manager) = manager else {
+            return invalid("manager must be `winget`, `apt` or `dnf`");
+        };
         if self.description.chars().count() > 500 {
             return invalid("description is at most 500 characters");
         }
-        Ok(())
+        if manager == PackageManager::Winget {
+            if !third_party::valid_id(manager, &self.package_id) {
+                return invalid("package_id is not a winget package ID, like `7zip.7zip`");
+            }
+            let source = self.source.clone().unwrap_or_else(winget);
+            if !software::valid_source(&source) {
+                return invalid("source must be a winget source name other than `msstore`");
+            }
+            if self.mirror.is_some() {
+                return invalid("mirror is for apt and dnf packages");
+            }
+            return Ok(source);
+        }
+        if !third_party::valid_id(manager, &self.package_id) {
+            return invalid(
+                "package_id is not a package name of the distribution: letters, digits and \
+                 `.+_:-`, starting with a letter or digit, like `nginx`",
+            );
+        }
+        if self.source.as_deref().is_some_and(|s| !s.is_empty()) {
+            return invalid("source is for winget packages: apt and dnf install from the servers' sources or a mirror");
+        }
+        Ok(String::new())
     }
 }
 
-const COLUMNS: &str = "id, customer_id, name, manager, package_id, source, description, \
+const COLUMNS: &str = "id, customer_id, name, manager, package_id, source, \
+     (SELECT m.name FROM mirrors m WHERE m.id = mirror_id) AS mirror, description, \
      created_by, created_at, updated_at";
+
+/// The ID of the mirror `name` for packages of `manager`, refused unless
+/// it exists, is of that family and is not being removed.
+async fn mirror_id(
+    db: impl PgExecutor<'_>,
+    manager: &str,
+    name: Option<&str>,
+) -> Result<Option<Uuid>, ApiError> {
+    let Some(name) = name else {
+        return Ok(None);
+    };
+    let found: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM mirrors WHERE name = $1 AND family = $2 AND deleting_at IS NULL",
+    )
+    .bind(name)
+    .bind(manager)
+    .fetch_optional(db)
+    .await?;
+    found.map(Some).ok_or_else(|| {
+        ApiError::Invalid(format!(
+            "no {manager} mirror named `{}`",
+            name.escape_debug()
+        ))
+    })
+}
 
 /// Whether `user` may change entries of `customer`: its administrators,
 /// or global ones for shared entries.
@@ -206,22 +266,24 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<Entry>), ApiError> {
     let request = body(request)?;
     authorize_change(&user, request.customer_id)?;
-    request.validate()?;
+    let source = request.validate()?;
     let mut tx = state.pool.begin().await?;
+    let mirror = mirror_id(&mut *tx, &request.manager, request.mirror.as_deref()).await?;
     // SQL-safe: interpolates only the constant COLUMNS.
     let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO software_catalog
-             (customer_id, name, manager, package_id, source, description, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+             (customer_id, name, manager, package_id, source, description, created_by, mirror_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING {COLUMNS}"
     )))
     .bind(request.customer_id)
     .bind(request.name.trim())
     .bind(&request.manager)
     .bind(&request.package_id)
-    .bind(&request.source)
+    .bind(&source)
     .bind(request.description.trim())
     .bind(user.id)
+    .bind(mirror)
     .fetch_one(&mut *tx)
     .await
     .map_err(taken)?;
@@ -245,12 +307,13 @@ pub async fn update(
             "customer_id cannot change: add the entry again for the other customer".into(),
         ));
     }
-    request.validate()?;
+    let source = request.validate()?;
     let mut tx = state.pool.begin().await?;
+    let mirror = mirror_id(&mut *tx, &request.manager, request.mirror.as_deref()).await?;
     // SQL-safe: interpolates only the constant COLUMNS.
     let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE software_catalog SET name = $2, manager = $3, package_id = $4, source = $5,
-             description = $6, updated_at = now()
+             description = $6, mirror_id = $7, updated_at = now()
          WHERE id = $1
          RETURNING {COLUMNS}"
     )))
@@ -258,8 +321,9 @@ pub async fn update(
     .bind(request.name.trim())
     .bind(&request.manager)
     .bind(&request.package_id)
-    .bind(&request.source)
+    .bind(&source)
     .bind(request.description.trim())
+    .bind(mirror)
     .fetch_one(&mut *tx)
     .await
     .map_err(taken)?;
@@ -306,6 +370,7 @@ async fn record(
                 "manager": entry.manager,
                 "package_id": entry.package_id,
                 "source": entry.source,
+                "mirror": entry.mirror,
             }),
         },
     )
@@ -329,9 +394,10 @@ pub async fn resolve(
             "software.catalog_ids takes 1 to {MAX_PACKAGES} entries"
         )));
     }
-    let rows: Vec<(Uuid, String, String, String, String)> = sqlx::query_as(
-        "SELECT id, name, manager, package_id, source FROM software_catalog
-         WHERE id = ANY($1) AND (customer_id IS NULL OR customer_id = $2)",
+    let rows: Vec<(Uuid, String, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT c.id, c.name, c.manager, c.package_id, c.source, m.name
+         FROM software_catalog c LEFT JOIN mirrors m ON m.id = c.mirror_id AND m.deleting_at IS NULL
+         WHERE c.id = ANY($1) AND (c.customer_id IS NULL OR c.customer_id = $2)",
     )
     .bind(&request.catalog_ids)
     .bind(customer)
@@ -339,7 +405,7 @@ pub async fn resolve(
     .await?;
     let mut packages = Vec::new();
     for id in &request.catalog_ids {
-        let Some((catalog_id, name, manager, package_id, source)) =
+        let Some((catalog_id, name, manager, package_id, source, mirror)) =
             rows.iter().find(|r| r.0 == *id).cloned()
         else {
             return Err(ApiError::Invalid(format!("unknown catalogue entry {id}")));
@@ -358,6 +424,7 @@ pub async fn resolve(
             manager,
             id: package_id,
             source,
+            mirror,
         });
     }
     let spec = SoftwareSpec {
@@ -379,17 +446,29 @@ mod tests {
     #[test]
     fn entries_default_to_winget_and_are_checked() {
         let ok = request(json!({"name": "7-Zip", "package_id": "7zip.7zip"}));
-        assert_eq!(
-            (ok.manager.as_str(), ok.source.as_str()),
-            ("winget", "winget")
+        assert_eq!(ok.manager.as_str(), "winget");
+        assert_eq!(ok.validate().unwrap(), "winget");
+        let apt = request(
+            json!({"name": "nginx", "manager": "apt", "package_id": "nginx",
+                                 "mirror": "nginx-stable"}),
         );
-        assert!(ok.validate().is_ok());
+        assert_eq!(apt.validate().unwrap(), "");
+        let dnf = request(
+            json!({"name": "httpd", "manager": "dnf", "package_id": "httpd",
+                                 "source": ""}),
+        );
+        assert_eq!(dnf.validate().unwrap(), "");
         for bad in [
             json!({"name": "", "package_id": "7zip.7zip"}),
             json!({"name": "x", "package_id": "7zip"}),
             json!({"name": "x", "package_id": "7zip.7zip", "manager": "snap"}),
             json!({"name": "x", "package_id": "7zip.7zip", "source": "msstore"}),
             json!({"name": "x", "package_id": "7zip.7zip", "description": "d".repeat(501)}),
+            json!({"name": "x", "package_id": "7zip.7zip", "mirror": "m"}),
+            json!({"name": "x", "manager": "apt", "package_id": "-y"}),
+            json!({"name": "x", "manager": "apt", "package_id": "/tmp/x.deb"}),
+            json!({"name": "x", "manager": "dnf", "package_id": "@core"}),
+            json!({"name": "x", "manager": "apt", "package_id": "nginx", "source": "winget"}),
         ] {
             assert!(request(bad.clone()).validate().is_err(), "{bad}");
         }

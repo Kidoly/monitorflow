@@ -1134,7 +1134,9 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(queued, 1, "only B's own fixture command");
         }
-        ("POST", "/api/servers/{id}/ai-commands") | ("POST", "/api/sites/{id}/ai-commands") => {
+        ("POST", "/api/servers/{id}/ai-commands")
+        | ("POST", "/api/sites/{id}/ai-commands")
+        | ("POST", "/api/servers/{id}/software") => {
             let id = if path.starts_with("/api/sites") {
                 b.site
             } else {

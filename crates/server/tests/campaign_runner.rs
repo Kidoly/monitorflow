@@ -103,6 +103,7 @@ impl Fleet {
             agent_version: None,
             major_upgrade: None,
             software: None,
+            recurring: false,
             created_by: None,
         }
     }
@@ -244,6 +245,7 @@ db_tests! {
                 manager: "winget".into(),
                 id: "7zip.7zip".into(),
                 source: "winget".into(),
+                mirror: None,
             }],
         });
         let id = f.start(&install).await;
@@ -284,6 +286,155 @@ db_tests! {
         assert_eq!(apply(1).hold, ["KB5034441"]);
         assert_eq!(apply(2).classifications, ["Security Updates"]);
         assert_eq!(rows[3].3.as_deref(), Some(NO_APPROVALS));
+    }
+
+    #[sqlx::test]
+    async fn each_server_gets_the_software_of_its_manager(pool: PgPool) {
+        let f = Fleet::new(&pool, 4).await;
+        // web-1 is Debian, web-2 RHEL, web-3 Windows, all allowing
+        // software; web-4 is Debian with sudo rules older than the helper.
+        for (i, os, state) in [
+            (0, "debian", "accepted"),
+            (1, "rhel", "accepted"),
+            (2, "windows", "accepted"),
+            (3, "debian", "unsupported"),
+        ] {
+            sqlx::query(
+                "UPDATE servers SET os_family = $2,
+                     command_kinds = jsonb_build_object('software', $3::text) WHERE id = $1",
+            )
+            .bind(f.servers[i].0)
+            .bind(os)
+            .bind(state)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let item = |manager: &str, id: &str, source: &str| SoftwareItem {
+            catalog_id: Uuid::new_v4(),
+            name: id.into(),
+            manager: manager.into(),
+            id: id.into(),
+            source: source.into(),
+            mirror: None,
+        };
+        let mut install = f.campaign(Vec::new());
+        install.spec = UpdateSpec::default();
+        install.software = Some(SoftwareSpec {
+            action: "install".into(),
+            packages: vec![
+                item("apt", "nginx", ""),
+                item("dnf", "httpd", ""),
+                item("winget", "Git.Git", "winget"),
+            ],
+        });
+        let id = f.start(&install).await;
+        let runner = Runner::new(pool.clone());
+        runner.advance(id, Utc::now()).await.unwrap();
+        let rows: Vec<(String, Option<Vec<u8>>, Option<String>)> = sqlx::query_as(
+            "SELECT s.hostname, c.payload, t.error FROM campaign_targets t
+             JOIN servers s ON s.id = t.server_id LEFT JOIN commands c ON c.id = t.command_id
+             WHERE t.campaign_id = $1 ORDER BY s.hostname",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let change = |i: usize| SoftwareChange::decode(rows[i].1.as_deref().unwrap()).unwrap();
+        assert_eq!(change(0).manager(), PackageManager::Apt);
+        assert_eq!(change(0).packages[0].id, "nginx");
+        assert_eq!(change(1).manager(), PackageManager::Dnf);
+        assert_eq!(change(1).packages[0].id, "httpd");
+        assert_eq!(change(2).manager(), PackageManager::Winget);
+        assert!(rows[3].2.as_deref().unwrap().contains("sudo rules"), "{rows:?}");
+
+        // Only apt software: the RHEL and Windows servers are not targets.
+        let mut apt = install.clone();
+        apt.software = Some(SoftwareSpec {
+            action: "remove".into(),
+            packages: vec![item("apt", "nginx", "")],
+        });
+        let id = f.store.create(&apt, USER).await.unwrap().id;
+        let hosts: Vec<String> = sqlx::query_scalar(
+            "SELECT s.hostname FROM campaign_targets t JOIN servers s ON s.id = t.server_id
+             WHERE t.campaign_id = $1 ORDER BY s.hostname",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(hosts, ["web-1", "web-4"]);
+
+        // Mirrors are added, never put in place of the servers' sources.
+        let mut replace = apt.clone();
+        replace.sources = Some(SourcesPin {
+            mode: SourcesMode::Replace,
+            mirrors: vec![PinnedMirror {
+                name: "nginx".into(),
+                snapshot: "s1".into(),
+            }],
+        });
+        let error = f.store.create(&replace, USER).await.unwrap_err();
+        assert!(error.to_string().contains("only adds mirrors"), "{error}");
+    }
+
+    #[sqlx::test]
+    async fn a_recurring_campaign_runs_again_at_the_next_window(pool: PgPool) {
+        let f = Fleet::new(&pool, 1).await;
+        let every_day = Window::Weekly {
+            weekdays: (1..=7).collect(),
+            start: "00:00".parse().unwrap(),
+            end: "24:00".parse().unwrap(),
+            timezone: "UTC".into(),
+        };
+        let mut new = f.campaign(Vec::new());
+        new.recurring = true;
+        // A one-off window alone does not recur.
+        new.windows = vec![Window::Once {
+            starts_at: at("2026-11-02T22:00:00Z"),
+            ends_at: at("2026-11-02T23:00:00Z"),
+        }];
+        let error = f.store.create(&new, USER).await.unwrap_err();
+        assert!(error.to_string().contains("weekly, monthly or yearly"), "{error}");
+        new.windows = vec![every_day];
+        let id = f.start(&new).await;
+        let runner = Runner::new(pool.clone());
+        let now = Utc::now();
+        runner.advance(id, now).await.unwrap();
+        f.report(id, 0, CommandStatus::Succeeded).await;
+        runner.advance(id, now).await.unwrap();
+        assert_eq!(f.state(id).await.0, CampaignState::Completed);
+        // Not again in the window it completed in.
+        runner.recur(Utc::now()).await;
+        assert_eq!(f.state(id).await.0, CampaignState::Completed);
+        // The next day's window: run again, by the runner.
+        let tomorrow = Utc::now() + TimeDelta::days(1);
+        runner.recur(tomorrow).await;
+        assert_eq!(f.state(id).await.0, CampaignState::Scheduled);
+        assert_eq!(f.audit(id).await.last().map(String::as_str), Some("campaign.relaunch"));
+        let actor: String = sqlx::query_scalar(
+            "SELECT actor_id FROM audit_log WHERE target_id = $1 ORDER BY id DESC LIMIT 1",
+        )
+        .bind(id.to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(actor, "campaign-runner");
+        let runs: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM campaign_runs WHERE campaign_id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(runs, 1);
+        assert_eq!(queued(runner.advance(id, tomorrow).await.unwrap()), ["agent-1"]);
+
+        // A failed run ends the recurrence.
+        f.report(id, 0, CommandStatus::Failed).await;
+        runner.advance(id, tomorrow).await.unwrap();
+        assert_eq!(f.state(id).await.0, CampaignState::Failed);
+        runner.recur(tomorrow + TimeDelta::days(1)).await;
+        assert_eq!(f.state(id).await.0, CampaignState::Failed);
     }
 
     #[sqlx::test]

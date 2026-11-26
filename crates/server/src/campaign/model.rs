@@ -595,48 +595,141 @@ pub struct SoftwareItem {
     /// The catalogue entry it came from; it may have been deleted since.
     pub catalog_id: Uuid,
     pub name: String,
-    /// `winget`.
+    /// `winget` (Windows), `apt` (Debian family) or `dnf` (RHEL family).
     pub manager: String,
-    /// The package ID, like `7zip.7zip`.
+    /// The package ID, like `7zip.7zip`, or the distribution's package
+    /// name, like `nginx`.
     pub id: String,
-    /// The winget source it installs from, like `winget`.
+    /// The winget source it installs from, like `winget`; empty for apt
+    /// and dnf.
     pub source: String,
+    /// The mirror of the central server an apt or dnf package installs
+    /// from, added to the server's sources for the campaign; absent when
+    /// it comes from the server's own sources.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub mirror: Option<String>,
 }
 
+/// Why a server gets no software command: nothing of the campaign is
+/// for its system.
+pub const NO_SOFTWARE_FOR: &str = "none of this software is for this server's system";
+
 impl SoftwareSpec {
-    /// The payload of each server's `software` command.
-    pub fn change(&self, allow_reboot: bool) -> SoftwareChange {
-        SoftwareChange {
-            action: software::parse_action(&self.action).map_or(0, Into::into),
-            manager: PackageManager::Winget.into(),
-            packages: self
-                .packages
-                .iter()
-                .map(|p| SoftwarePackage {
-                    id: p.id.clone(),
-                    source: p.source.clone(),
-                })
-                .collect(),
-            allow_reboot,
+    /// The payload of the `software` command of a server of `os_family`:
+    /// the packages of its manager only (ADR-0188).
+    pub fn change_for(
+        &self,
+        os_family: &str,
+        allow_reboot: bool,
+    ) -> Result<SoftwareChange, String> {
+        let manager = software::manager_for(os_family).ok_or_else(|| {
+            format!("software deployment is not available on {os_family} servers yet")
+        })?;
+        let key = third_party::key(manager).unwrap_or_default();
+        let packages: Vec<SoftwarePackage> = self
+            .packages
+            .iter()
+            .filter(|p| p.manager == key)
+            .map(|p| SoftwarePackage {
+                id: p.id.clone(),
+                source: p.source.clone(),
+            })
+            .collect();
+        if packages.is_empty() {
+            return Err(NO_SOFTWARE_FOR.into());
         }
+        Ok(SoftwareChange {
+            action: software::parse_action(&self.action).map_or(0, Into::into),
+            manager: manager.into(),
+            packages,
+            allow_reboot,
+        })
     }
 
-    pub fn validate(&self) -> Result<(), String> {
-        if self.packages.iter().any(|p| p.manager != "winget") {
-            return Err("software is installed with winget only for now".into());
+    /// The managers it names, each once, in order.
+    pub fn managers(&self) -> Vec<PackageManager> {
+        let mut managers = Vec::new();
+        for item in &self.packages {
+            if let Some(manager) = third_party::parse(&item.manager) {
+                if !managers.contains(&manager) {
+                    managers.push(manager);
+                }
+            }
         }
-        software::check_change(&self.change(false), None).map_err(|e| e.to_string())
+        managers
+    }
+
+    /// The mirrors its packages install from, each once.
+    pub fn mirrors(&self) -> Vec<String> {
+        let mut mirrors: Vec<String> = Vec::new();
+        for mirror in self.packages.iter().filter_map(|p| p.mirror.as_ref()) {
+            if !mirrors.contains(mirror) {
+                mirrors.push(mirror.clone());
+            }
+        }
+        mirrors
+    }
+
+    /// Checks the action and, per manager, its packages as a server's
+    /// command will carry them.
+    pub fn validate(&self) -> Result<(), String> {
+        if software::parse_action(&self.action).is_none() {
+            return Err("software.action must be `install` or `remove`".into());
+        }
+        if self.packages.is_empty() {
+            return Err(format!("no software to {}", self.action));
+        }
+        if self.packages.len() > software::MAX_PACKAGES {
+            return Err(format!(
+                "at most {} packages at once",
+                software::MAX_PACKAGES
+            ));
+        }
+        for item in &self.packages {
+            let known =
+                third_party::parse(&item.manager).filter(|m| software::is_software_manager(*m));
+            if known.is_none() {
+                return Err(format!(
+                    "unknown software manager `{}`: winget, apt or dnf",
+                    item.manager.escape_debug()
+                ));
+            }
+            if item.mirror.is_some() && item.manager == "winget" {
+                return Err("winget packages install from a winget source, not a mirror".into());
+            }
+        }
+        for family in ["windows", "debian", "rhel"] {
+            match self.change_for(family, false) {
+                Ok(change) => {
+                    software::check_change(&change, Some(family)).map_err(|e| e.to_string())?
+                }
+                Err(error) if error == NO_SOFTWARE_FOR => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 }
 
 /// Why a server gets no software command: its agent refuses them, or
 /// predates them (ADR-0188).
-pub fn software_refusal(state: Option<&str>) -> Option<&'static str> {
+pub fn software_refusal(state: Option<&str>, os_family: &str) -> Option<&'static str> {
+    let windows = os_family == "windows";
     match state {
         Some("accepted") => None,
+        Some("off") if windows => Some(
+            "software installs are not allowed on this server, or were turned off from the web \
+             interface; an administrator allows them there with `monitorflow-agent.exe software on`",
+        ),
         Some("off") => Some(
-            "software installs are not allowed on this server; an administrator allows them \
-             with `monitorflow-agent.exe software on`",
+            "software installs are not allowed on this server, or were turned off from the web \
+             interface; an administrator allows them there with `sudo monitorflow-agent software \
+             on`, or the installer with MF_SOFTWARE_FROM_WEB=1",
+        ),
+        Some(_) if !windows => Some(
+            "this server cannot install software from the catalogue: its sudo rules predate \
+             software installs, or it has no apt or dnf; run the install command again",
         ),
         Some(_) => Some("this server's system cannot install software from the catalogue yet"),
         None => Some("this server's agent is too old to install software; it updates by itself"),
@@ -957,16 +1050,21 @@ mod tests {
         }))
         .unwrap();
         spec.validate().unwrap();
-        let change = spec.change(true);
+        let change = spec.change_for("windows", true).unwrap();
         assert_eq!(change.action, i32::from(software_change::Action::Install));
+        assert_eq!(change.manager(), PackageManager::Winget);
         assert_eq!(change.packages[0].id, "7zip.7zip");
         assert!(change.allow_reboot);
+        assert_eq!(
+            spec.change_for("debian", false),
+            Err(NO_SOFTWARE_FOR.into())
+        );
         let remove = SoftwareSpec {
             action: "remove".into(),
             ..spec.clone()
         };
         assert_eq!(
-            remove.change(false).action,
+            remove.change_for("windows", false).unwrap().action,
             i32::from(software_change::Action::Remove)
         );
         for bad in [
@@ -981,9 +1079,63 @@ mod tests {
         ] {
             assert!(bad.validate().is_err(), "{bad:?}");
         }
-        assert_eq!(software_refusal(Some("accepted")), None);
+        assert_eq!(software_refusal(Some("accepted"), "debian"), None);
         for state in [Some("off"), Some("unsupported"), None] {
-            assert!(software_refusal(state).is_some());
+            assert!(software_refusal(state, "windows").is_some());
+            assert!(software_refusal(state, "rhel").is_some());
+        }
+        assert!(software_refusal(Some("off"), "debian")
+            .unwrap()
+            .contains("MF_SOFTWARE_FROM_WEB=1"));
+    }
+
+    #[test]
+    fn each_server_gets_the_packages_of_its_manager() {
+        let item = |manager: &str, id: &str, source: &str, mirror: Option<&str>| SoftwareItem {
+            catalog_id: Uuid::new_v4(),
+            name: id.into(),
+            manager: manager.into(),
+            id: id.into(),
+            source: source.into(),
+            mirror: mirror.map(Into::into),
+        };
+        let spec = SoftwareSpec {
+            action: "install".into(),
+            packages: vec![
+                item("winget", "Git.Git", "winget", None),
+                item("apt", "nginx", "", Some("nginx-debian")),
+                item("dnf", "nginx", "", None),
+                item("apt", "git", "", Some("nginx-debian")),
+            ],
+        };
+        spec.validate().unwrap();
+        assert_eq!(
+            spec.managers(),
+            [
+                PackageManager::Winget,
+                PackageManager::Apt,
+                PackageManager::Dnf
+            ]
+        );
+        assert_eq!(spec.mirrors(), ["nginx-debian"]);
+        let debian = spec.change_for("debian", false).unwrap();
+        assert_eq!(debian.manager(), PackageManager::Apt);
+        let names: Vec<&str> = debian.packages.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(names, ["nginx", "git"]);
+        assert_eq!(spec.change_for("rhel", false).unwrap().packages.len(), 1);
+        assert!(spec.change_for("linux", false).is_err());
+        // Never a source for apt, a mirror for winget or an unknown manager.
+        for bad in [
+            item("apt", "nginx", "winget", None),
+            item("winget", "Git.Git", "winget", Some("m")),
+            item("snap", "lxd", "", None),
+            item("dnf", "-y", "", None),
+        ] {
+            let spec = SoftwareSpec {
+                action: "install".into(),
+                packages: vec![bad.clone()],
+            };
+            assert!(spec.validate().is_err(), "{bad:?}");
         }
     }
 
