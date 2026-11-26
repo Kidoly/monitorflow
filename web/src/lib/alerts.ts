@@ -897,6 +897,10 @@ function ownTitle(sensor: EffectiveSensor): string {
       return t("virtualization.check.vmware");
     case "hyperv":
       return t("virtualization.check.hyperv");
+    case "aws":
+      return t("cloud.check.aws");
+    case "azure":
+      return t("cloud.check.azure");
     case "postgresql":
     case "mysql":
     case "redis": {

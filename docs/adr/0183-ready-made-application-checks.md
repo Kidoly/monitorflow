@@ -1,7 +1,7 @@
 # ADR-0183: Ready-made application checks
 
 Date: 2026-11-24
-Status: accepted; Kubernetes added the same day; extends ADR-0148 (checks from a probe), ADR-0150 (sealed check passwords) and ADR-0146 (what the importer moves)
+Status: accepted; extends ADR-0148 (checks from a probe), ADR-0150 (sealed check passwords) and ADR-0146 (what the importer moves). Completed on 2026-11-25 with cloud accounts (AWS and Azure), which reuse the inventory of ADR-0156, and on 2026-11-26 with Kubernetes clusters
 
 ## Context
 
@@ -66,7 +66,7 @@ Alerts on metrics a server never writes (replication on a lone server) never fir
 
 ### Kubernetes: a cluster as a device
 
-Added after the first four kinds, as the fifth of this crate.
+Added after the first four kinds, as the fifth of this crate (cloud accounts, below, have a crate of their own).
 
 **A cluster is a device** (ADR-0148): its name, the address of its API server, the central server or the relay of the site that checks it. Its check is of kind `kubernetes`, run by probes only: agents refuse it, as they refuse `vmware`, since a cluster is not a machine with an agent, and its API is what describes it. One check reads the whole cluster each collection. Its incidents are those of the device, so thresholds, silences, notifications and dashboards apply unchanged, as for a vCenter (ADR-0156).
 
@@ -92,6 +92,43 @@ Pods are counted per namespace, not one series per pod: pod names change with ev
 
 **Tests.** A fake API server over TLS with a CA of its own (`crates/apps/src/kubernetes/tests.rs`) covers pages, namespaces, restarts, 401, 403, an untrusted certificate and a closed port. `scripts/kubernetes-test.sh` runs k3s in a container, applies the guide's manifest, checks with `kubectl auth can-i` what the account may and may not do, and runs `crates/apps/tests/real.rs` against it. It runs k3s without a pod network (`--flannel-backend=none`, no kube-proxy), since those need iptables modules a test machine may lack and the check reads only the API; its node is then not ready and its pods pending, which the test reads as such.
 
+### Cloud accounts: AWS and Azure
+
+**An AWS account or an Azure subscription is a device**, as a vCenter is (ADR-0156): `POST /api/devices` with `cloud` credentials, no address to type (it becomes the provider's API host) and no ping. Its check, of kind `aws` or `azure` from a crate of its own, `monitorflow-cloud`, runs every 5 minutes (120 s timeout) **on the central server only**: the store never sends a cloud check to a relay, the API refuses one with a relay as its probe, and relays are not built with the crate. A cloud account is reached over the Internet like the central server's own website checks, and keeping its secret on one machine is simpler than on every relay of a site.
+
+**Its machines are the inventory of ADR-0156.** A collection writes each virtual machine as the shared `vm_*` samples and `vm_info` (`virt=vm`), so `virtual_objects`, the account's page, the server's "Virtual machine … of …" line, matching, "Not this one" and "Install the agent" work unchanged. The `key` is the instance ID (`i-…`) or Azure's VM ID; `host` is the availability zone or the region; `vm_info` adds `size` (instance type or VM size). The source's `up` carries `provider` (`aws`, `azure`), which the web interface uses to show the cloud columns. Snapshots are not written: clouds have none in this sense. Measures, per running machine:
+
+| Measure | AWS | Azure |
+| --- | --- | --- |
+| `vm_powered_on`, `vm_cpu_count` | `instanceState`, `cpuOptions` | `PowerState/running` of the instance view |
+| `vm_cpu_usage_ratio` | CloudWatch `CPUUtilization` (Average) | Azure Monitor `Percentage CPU` (Average) |
+| `vm_network_in_bytes_per_second`, `vm_network_out_bytes_per_second` | `NetworkIn`, `NetworkOut` (Sum over 300 s) | `Network In Total`, `Network Out Total` (Total over PT5M) |
+| `vm_disk_read_bytes_per_second`, `vm_disk_write_bytes_per_second` | `EBSReadBytes`, `EBSWriteBytes` | `Disk Read Bytes`, `Disk Write Bytes` |
+| `vm_status_checks_failed`, `vm_status` | `DescribeInstanceStatus`: impaired system, instance and attached volume checks; `vm_status` 2 when one is impaired, 1 while they initialize or lack data | `VmAvailabilityMetric`: 1 failed when under 1 |
+
+The newest point of the last 20 minutes is taken, as basic EC2 monitoring lags. Stopped machines get no metrics and no status checks. At most 2,000 machines per account and 30 regions. `up` is 0 with `reason` (`connect`, `login`, `permission`, `api`) and the provider's own message when any call failed, the machines read before the failure still written, so a missing CloudWatch right shows on the account instead of hiding its machines.
+
+**Small HTTP clients instead of the SDKs.** AWS is three Query API calls (`ec2:DescribeInstances`, `ec2:DescribeInstanceStatus`, `cloudwatch:GetMetricData` with up to 500 queries a call), signed with Signature Version 4 written here on `ring`'s HMAC-SHA256 and SHA-256 (about a hundred lines, tested against vectors of the AWS test suite), answers read with the bounded XML reader of `monitorflow-vmware`. Azure is OAuth 2.0 client credentials against `login.microsoftonline.com` for a Resource Manager token, kept until a minute before it expires, then `GET`s of Resource Manager: virtual machines with `statusOnly=true` (their power state in one list), network interfaces (MAC and private addresses), and one Azure Monitor metrics request per running machine, eight at a time. A `nextLink` is followed only on Resource Manager's own host, so the token goes nowhere else. Every request is HTTPS (`https_only`), redirects are not followed, answers are bounded to 32 MiB, and no parameter names an endpoint: a stored check cannot be pointed at another host. Tests use fake APIs on the loopback through a constructor only tests reach.
+
+**Credentials are the device's, sealed** in `cloud_credentials` (one row per device: `provider`, `settings` with what is not secret, and `secret` sealed as `cloud_credentials.secret`, ADR-0125), as vCenter credentials are. The API never returns the secret (`secret_set`), refuses credentials as check parameters, and audits `device.create`, `device.cloud_update` and `device.cloud_delete` without it. A change keeps the stored secret only while the provider and the identity stay the same (the access key ID, or the tenant and application): a kept secret never goes to another identity. The provider cannot change. The store adds the credentials to the check in memory on the central server; the sensor's `Debug` hides them, and errors are the provider's messages, which never quote them.
+
+**Least rights**, as the guide says step by step:
+
+| Provider | Credentials and rights |
+| --- | --- |
+| AWS | An IAM user's access key with a policy allowing only `ec2:DescribeInstances`, `ec2:DescribeInstanceStatus` and `cloudwatch:GetMetricData` on `*` (they take no resource) |
+| Azure | A service principal (application ID and client secret) with the built-in Reader role on the subscription, or a custom role with `Microsoft.Compute/virtualMachines/read`, `Microsoft.Compute/virtualMachines/instanceView/read`, `Microsoft.Network/networkInterfaces/read` and `Microsoft.Insights/metrics/read` |
+
+No call of either client changes anything in the account, and nothing runs on a monitored server, so no consent on a server is involved.
+
+**Matching** is ADR-0156's, by the signals the agent already reports, not by a new one: Azure's VM ID is the SMBIOS UUID the guest reads (both byte orders are tried), so an Azure machine with the agent matches by its hardware ID; an EC2 instance's SMBIOS UUID is not its instance ID, so it matches by a network card's MAC address (EC2 lists them), then an address or its private DNS name, which is its default host name. Agents reporting their instance ID from the metadata service would make AWS matching exact; it is left for later, as it needs a network call from the agent.
+
+**Default alerts**, as ordinary thresholds on the device: the account cannot be read (`monitorflow_<provider>_up < 1`, 10 minutes, critical) and a machine's status check failing (`monitorflow_<provider>_vm_status_checks_failed > 0`, 10 minutes, critical, one incident per machine).
+
+**Costs.** CloudWatch bills `GetMetricData` per metric asked for: five per running instance every 5 minutes, about 43,200 a month per instance; status checks come from EC2 and cost nothing. The guide says so.
+
+**The API**, under `/api/v1` with its OpenAPI document (tag `cloud`): `POST /api/devices` takes `cloud`, `POST /api/devices/cloud/test` signs in once from the central server and says how many machines it sees and whether metrics can be read, `GET`, `PUT` and `DELETE /api/devices/{id}/cloud`. Operators of the site add and change accounts; viewers read the inventory, as for vCenters.
+
 ### Moving from another tool
 
 The importer (ADR-0146) maps the equivalent sensors to these kinds where it is simple, PRTG first: its PostgreSQL, MySQL and Docker container sensors, the Zabbix templates "PostgreSQL by Zabbix agent 2", "MySQL by Zabbix agent", "Redis by Zabbix agent 2", "Docker by Zabbix agent 2" and their siblings, and Prometheus jobs scraping `postgres_exporter`, `mysqld_exporter` and `redis_exporter`. Passwords are never exported by these tools, so a database check is approximated: "enter the password on the check". A PRTG database sensor's own SQL query is not run: its connection and response time are, with the template's metrics.
@@ -103,7 +140,8 @@ For Kubernetes, PRTG has no sensor of its own: people read a cluster with REST C
 - **SQL Server**: a `mssql` kind over TDS (the `tiberius` client, with rustls), from the agent on Windows or a probe: connections, batch requests, page life expectancy, buffer cache hit ratio, blocked processes, database sizes and log use, Always On replica state and lag, through `sys.dm_os_performance_counters`, `sys.dm_exec_requests` and `sys.dm_hadr_database_replica_states`, with `VIEW SERVER STATE` as its only right (`VIEW SERVER PERFORMANCE STATE` on 2022). Left out here to keep this change reviewable, and because its test server is a 1.5 GB image needing 2 GB of memory.
 - **Java (JMX)**: JMX is Java RMI, which only a JVM speaks well. The plan is to read Jolokia's HTTP JSON bridge where it is installed (an agent JAR, as Zabbix's Java gateway is a separate process), from the agent or a probe: heap and non-heap use against their maximum, GC count and time per collector, threads, and Tomcat's or Kafka's MBeans as optional groups.
 - **Kubernetes** is now decided above. Left for later: an inventory of the cluster's objects shown on the device's page, as VMware's (`_info` samples into `virtual_objects`, ADR-0156), and nodes matched to the servers already monitored; jobs and cron jobs that failed; and the resource use of pods and nodes, which needs metrics-server (`metrics.k8s.io`).
-- **Cloud providers**: realistic first step, the state and basic metrics of virtual machines of AWS (EC2 `DescribeInstances`, `DescribeInstanceStatus` and CloudWatch `GetMetricData` for CPU, network and status checks), Azure (Resource Graph and Azure Monitor metrics) and Google Cloud (Compute Engine and Cloud Monitoring), each with read-only credentials sealed per account, run from the central server, and matched to monitored servers by instance ID, as virtual machines are (ADR-0156). Managed databases (RDS, Azure SQL, Cloud SQL) then reuse the database kinds above for what is inside, and the cloud check for what the provider sees.
+- **Google Cloud**, a third cloud account kind, `gcp`, on the model above: a service account's JSON key sealed per device, an OAuth token from a JWT signed with RS256 on `ring` (`RsaKeyPair::from_pkcs8`), Compute Engine's `instances.aggregatedList` for the machines (a GCP MAC address is `42:01` followed by the internal IPv4 address, which agents report), and Cloud Monitoring's `timeSeries.list` once per metric for the whole project (processor utilization, network and disk bytes, uptime), with the roles Compute Viewer and Monitoring Viewer. Left out of the first change to keep it reviewable.
+- **Managed databases** (RDS, Azure SQL, Cloud SQL) then reuse the database kinds above for what is inside, and the cloud check for what the provider sees. AWS accounts reached by assuming a role (`sts:AssumeRole`) rather than with a user's key, and agents reporting their EC2 instance ID for exact matching, come with them.
 - **Encrypted Redis** and an **agent-local Unix socket** for PostgreSQL and MySQL (peer authentication without a password).
 
 ## Alternatives rejected
@@ -113,6 +151,9 @@ For Kubernetes, PRTG has no sensor of its own: people read a cluster with REST C
 - **Credentials per device, as SNMP and vCenter have** (ADR-0149, ADR-0156). A server often runs two PostgreSQL clusters, or PostgreSQL and Redis with different accounts; a password per check fits, and the column already exists.
 - **Docker from a probe over the engine's TCP API.** It needs the API opened on the network with a client certificate equal to root on every Docker host; the agent is already there.
 - **Alerts written by the web interface after the check**, as for services. They would not exist for API clients without each one copying the list; a template served by the server, applied in the check's transaction, is the same for everyone.
+- **The AWS and Azure SDKs for cloud accounts.** `aws-sdk-ec2` and `aws-sdk-cloudwatch` with their runtime, and the Azure crates, add hundreds of dependencies and their own HTTP stacks for five read calls; Signature Version 4 is short, specified with test vectors, and `ring` is already in the workspace.
+- **Azure Resource Graph for the machines**, as first planned. It needs the same Reader right but a query language whose answers are harder to bound, and it throttles per user; Resource Manager's list with `statusOnly=true` gives the power state in pages, and the network interfaces come in one more list.
+- **Cloud checks from relays.** A site's relay rarely needs the Internet, and the secret of an account that may hold every machine of a customer stays on the central server.
 - **sqlx's RSA support for MySQL 8 without TLS.** Its `rsa` crate has an unfixed timing advisory; MySQL 8 enables TLS by default, which this path uses.
 
 ## Consequences
@@ -122,5 +163,7 @@ For Kubernetes, PRTG has no sensor of its own: people read a cluster with REST C
 - An agent with `sensors.port_targets` must list `127.0.0.1` (or the database's address) for these checks to run there; the check's error says so.
 - Watching Docker gives the agent's account root's power on that host, which a person grants knowingly; the agent's code only reads.
 - The real tests (`crates/apps/tests/real.rs`, with `scripts/apps-test.sh`) need Docker and are not run by CI, which has no database containers; parsing, limits and failures are unit tested everywhere.
-- SQL Server, JMX and the cloud providers stay on the roadmap as their own tasks, as do Kubernetes' inventory page and nodes matched to servers.
+- AWS accounts and Azure subscriptions are watched with read-only credentials, their machines in the same inventory as a vCenter's; a missing right shows on the account's page with the provider's message.
+- CloudWatch's `GetMetricData` costs a little per running instance, which the guide states.
+- SQL Server, JMX and Google Cloud stay on the roadmap as their own tasks, as do Kubernetes' inventory page and nodes matched to servers.
 - A Kubernetes check reads every pod of the cluster each collection: about 1 MiB of JSON per 300 pods, within the 64 MiB and 10,000 objects of a list it stops at.

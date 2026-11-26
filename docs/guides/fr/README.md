@@ -48,6 +48,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller Kubernetes](surveiller-kubernetes.md) : Suivez un cluster Kubernetes par son API avec un jeton en lecture seule : les nœuds et leurs conditions, les pods qui ne tournent pas ou redémarrent, les déploiements sans assez de réplicas prêts et les volume claims en attente.
 - [Comment surveiller Proxmox VE](surveiller-proxmox-ve.md) : Surveillez vos hôtes Proxmox VE : l'interface web sur le port 8006, le service de cluster, et l'espace disque, le CPU et la mémoire des VM.
 - [Comment surveiller VMware vSphere et Hyper-V](surveiller-vmware-hyper-v.md) : Surveillez les hôtes, clusters, machines virtuelles et banques de données d'un vCenter, d'un hôte ESXi ou d'un hôte Hyper-V, et reliez chaque machine virtuelle à son serveur.
+- [Comment surveiller les machines virtuelles AWS et Azure](surveiller-aws-azure.md) : Surveillez les instances EC2 d'un compte AWS et les machines virtuelles d'un abonnement Azure : leur état, leurs contrôles d'état, leur processeur, leur réseau et leurs disques, avec des identifiants en lecture seule, et reliez chacune à son serveur.
 
 ## Services Linux
 

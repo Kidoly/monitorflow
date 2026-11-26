@@ -2949,6 +2949,18 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "user": "u", "password": "p" }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        // Cloud accounts (ADR-0183): the same.
+        ("GET", "/api/devices/{id}/cloud")
+        | ("PUT", "/api/devices/{id}/cloud")
+        | ("DELETE", "/api/devices/{id}/cloud") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "regions": ["eu-west-3"] }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
+        ("POST", "/api/devices/cloud/test") => {
+            let body = json!({ "site_id": b.site, "cloud": {} });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
         ("POST", "/api/devices/vmware/test") => {
             let body = json!({ "site_id": b.site, "address": "192.0.2.9", "vmware": {} });
             assert_eq!(ctx.status(method, path, Some(body)).await, not_found);

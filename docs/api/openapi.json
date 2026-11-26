@@ -8650,7 +8650,7 @@
           "devices"
         ],
         "summary": "Add a device",
-        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\nWith `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes from the same probe, and its alerts; test the connection and confirm its certificate first with `POST /api/v1/devices/vmware/test`.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
+        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\nWith `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes from the same probe, and its alerts; test the connection and confirm its certificate first with `POST /api/v1/devices/vmware/test`.\n\nWith `cloud` credentials (ADR-0183), it is an AWS account or an Azure subscription: its `address` may be left out (it becomes the provider's API), it gets no ping unless asked, and its `aws` or `azure` check lists its virtual machines every 5 minutes from the central server, with its alerts; test the credentials first with `POST /api/v1/devices/cloud/test`. The secret is stored sealed and never returned.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
         "operationId": "create_device",
         "parameters": [
           {
@@ -8678,6 +8678,21 @@
                     "address": "shop.example.com",
                     "name": "Shop front",
                     "probe": "central",
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                  }
+                },
+                "cloud": {
+                  "summary": "An AWS account, its EC2 instances read every 5 minutes (ADR-0183)",
+                  "value": {
+                    "cloud": {
+                      "key_id": "AKIAIOSFODNN7EXAMPLE",
+                      "provider": "aws",
+                      "regions": [
+                        "eu-west-3"
+                      ],
+                      "secret": "a secret access key"
+                    },
+                    "name": "AWS production",
                     "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
                   }
                 },
@@ -8785,6 +8800,178 @@
           },
           "403": {
             "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/cloud/test": {
+      "post": {
+        "tags": [
+          "cloud"
+        ],
+        "summary": "Test cloud credentials",
+        "description": "Signs in once from the central server, lists the account's virtual machines and reads their metrics, then says what worked. For AWS, a machine-less account still asks CloudWatch, so a missing `cloudwatch:GetMetricData` right shows. Nothing is stored.\n\n**Who**: operator or above on the site. **Area**: `servers`.",
+        "operationId": "test_cloud",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudTestRequest"
+              },
+              "examples": {
+                "aws": {
+                  "summary": "An AWS account in two regions",
+                  "value": {
+                    "cloud": {
+                      "key_id": "AKIAIOSFODNN7EXAMPLE",
+                      "provider": "aws",
+                      "regions": [
+                        "eu-west-3",
+                        "us-east-1"
+                      ],
+                      "secret": "a secret access key"
+                    },
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                  }
+                },
+                "azure": {
+                  "summary": "An Azure subscription read by a service principal",
+                  "value": {
+                    "cloud": {
+                      "key_id": "1f2e3d4c-5b6a-4789-8a9b-0c1d2e3f4a5b",
+                      "provider": "azure",
+                      "secret": "a client secret",
+                      "subscription": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+                      "tenant": "72f988bf-86f1-41af-91ab-2d7cd011db47"
+                    },
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What answered; also when the sign-in failed: `login`, `reason` and `error` say so",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudTested"
+                },
+                "example": {
+                  "error": null,
+                  "login": true,
+                  "metrics": true,
+                  "reason": null,
+                  "running": 11,
+                  "vms": 14,
+                  "warning": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Credentials that are not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`",
             "content": {
               "application/json": {
                 "schema": {
@@ -9405,6 +9592,403 @@
           },
           "404": {
             "description": "No such device (a server with an agent is not one), or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/cloud": {
+      "get": {
+        "tags": [
+          "cloud"
+        ],
+        "summary": "Read a device's cloud credentials, without the secret",
+        "description": "**Who**: any role on the device's site. **Area**: `servers`.",
+        "operationId": "device_cloud",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudCredentials"
+                },
+                "example": {
+                  "key_id": "AKIAIOSFODNN7EXAMPLE",
+                  "provider": "aws",
+                  "regions": [
+                    "eu-west-3",
+                    "us-east-1"
+                  ],
+                  "secret_set": true,
+                  "subscription": null,
+                  "tenant": null,
+                  "updated_at": "2027-01-02T10:20:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, none set, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "cloud"
+        ],
+        "summary": "Set a device's cloud credentials",
+        "description": "Replaces them; what is left out is kept. The secret is kept only while the provider and the identity stay the same (the access key ID, or the tenant and application): a kept secret never goes to another one. The provider cannot change: remove the credentials first. A device without the provider's check gets it, on the central server every 5 minutes, with its alerts: the account cannot be read for 10 minutes (`monitorflow_<provider>_up`), and a machine's status check failing for 10 minutes (`monitorflow_<provider>_vm_status_checks_failed`), both critical. Thresholds the device has already stay.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.cloud_update`, without the secret.",
+        "operationId": "set_device_cloud",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudCredentialsRequest"
+              },
+              "example": {
+                "regions": [
+                  "eu-west-3",
+                  "eu-central-1"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The credentials, without the secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudCredentials"
+                },
+                "example": {
+                  "key_id": "AKIAIOSFODNN7EXAMPLE",
+                  "provider": "aws",
+                  "regions": [
+                    "eu-west-3",
+                    "eu-central-1"
+                  ],
+                  "secret_set": true,
+                  "subscription": null,
+                  "tenant": null,
+                  "updated_at": "2027-01-02T10:20:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Credentials that are not valid: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "cloud"
+        ],
+        "summary": "Remove a device's cloud credentials",
+        "description": "Its cloud check stops running until credentials are set again.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.cloud_delete`.",
+        "operationId": "delete_device_cloud",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The device",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such device, none set, or outside the key's reach: `not_found`",
             "content": {
               "application/json": {
                 "schema": {
@@ -58745,6 +59329,181 @@
         },
         "additionalProperties": false
       },
+      "CloudCredentials": {
+        "type": "object",
+        "description": "What the API shows of a device's cloud credentials: never the secret.",
+        "required": [
+          "provider",
+          "key_id",
+          "regions",
+          "secret_set",
+          "updated_at"
+        ],
+        "properties": {
+          "key_id": {
+            "type": "string",
+            "description": "The access key ID, or the application (client) ID."
+          },
+          "provider": {
+            "type": "string",
+            "description": "`aws` or `azure`."
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "AWS: the regions read; empty for Azure."
+          },
+          "secret_set": {
+            "type": "boolean"
+          },
+          "subscription": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Azure: the subscription; `null` for AWS."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Azure: the tenant; `null` for AWS."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CloudCredentialsRequest": {
+        "type": "object",
+        "description": "Body of a device's cloud credentials. On a change, what is left out\nis kept, the secret only while the provider and the identity it\nbelongs to (access key ID, or tenant and application) stay the same.",
+        "properties": {
+          "key_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "AWS: the access key ID (`AKIA…`). Azure: the application (client)\nID of the service principal."
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`aws` or `azure`. Required the first time; it cannot change."
+          },
+          "regions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "AWS: the regions to read, like `[\"eu-west-3\", \"us-east-1\"]`."
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "AWS: the secret access key. Azure: the client secret. Secret,\nnever returned."
+          },
+          "subscription": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Azure: the subscription ID."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Azure: the directory (tenant) ID, or its domain."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CloudTestRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/devices/cloud/test`.",
+        "required": [
+          "site_id",
+          "cloud"
+        ],
+        "properties": {
+          "cloud": {
+            "$ref": "#/components/schemas/CloudCredentialsRequest",
+            "description": "What to sign in with."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The site the account will be in."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CloudTested": {
+        "type": "object",
+        "description": "What a cloud account answered.",
+        "required": [
+          "login",
+          "vms",
+          "running"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the provider said, in its words; `null` when all worked."
+          },
+          "login": {
+            "type": "boolean",
+            "description": "Whether the sign-in worked and the machines could be listed."
+          },
+          "metrics": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether metrics (CloudWatch, Azure Monitor) could be read; `null`\nwhen there was nothing to ask."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, when `login` is false: `connect`, `login`, `permission` or\n`api`."
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "vms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Machines the credentials see, and how many run.",
+            "minimum": 0
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why metrics could not be read, or another call that failed\n(status checks, network interfaces)."
+          }
+        }
+      },
       "CommandDetail": {
         "allOf": [
           {
@@ -59981,21 +60740,37 @@
         "description": "Body of `POST /api/devices`.",
         "required": [
           "site_id",
-          "name",
-          "address"
+          "name"
         ],
         "properties": {
           "address": {
-            "type": "string",
-            "description": "Where its checks reach it: an IP address or a DNS name."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where its checks reach it: an IP address or a DNS name. Required\nunless it is a cloud account, whose address is then its provider's\nAPI."
+          },
+          "cloud": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloudCredentialsRequest",
+                "description": "For a cloud account (ADR-0183): an AWS account or an Azure\nsubscription, read with read-only credentials. The device then\ngets its `aws` or `azure` check every 5 minutes on the central\nserver, which lists its virtual machines, with the alerts that\ncome with it. Test them first with `POST /api/devices/cloud/test`.\nThe secret is stored sealed, never returned. Not with `snmp`,\n`template` or `vmware`, and only from the central server."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "type": "string",
             "description": "What people call it, like `Core switch`: 1 to 128 characters\nwithout control characters. Its ID is made from it."
           },
           "ping": {
-            "type": "boolean",
-            "description": "Whether to add a ping every minute, with the thresholds that come\nwith it: critical when it gets no answer for 2 minutes, a warning\nabove 20% packet loss for 5 minutes. `true` by default."
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether to add a ping every minute, with the thresholds that come\nwith it: critical when it gets no answer for 2 minutes, a warning\nabove 20% packet loss for 5 minutes. `true` by default, `false`\nfor a cloud account."
           },
           "probe": {
             "type": [
@@ -78523,6 +79298,10 @@
     {
       "name": "virtualization",
       "description": "VMware and Hyper-V: the hosts, clusters, virtual machines and datastores of a vCenter or ESXi host (a device with a `vmware` check, run from a probe) or of a Hyper-V host (a Windows server with a `hyperv` check), kept from what their checks last reported. Each virtual machine is matched to the server or device of the same customer it is, by its hardware ID, a network card, an address or its name. Area `servers`."
+    },
+    {
+      "name": "cloud",
+      "description": "Cloud accounts: an AWS account or an Azure subscription is a device whose `aws` or `azure` check, run every 5 minutes by the central server alone, lists its virtual machines with their state, status checks and basic metrics (processor, network, disks). They join the inventory of `GET /api/v1/servers/{id}/virtualization` and are matched to monitored servers as a vCenter's are. The credentials are read-only, stored sealed and never returned. Area `servers`."
     },
     {
       "name": "inventory",
