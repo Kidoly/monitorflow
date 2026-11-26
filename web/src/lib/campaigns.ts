@@ -113,15 +113,30 @@ export interface WindowDraft {
 }
 
 
-/** The major upgrades this version knows, one release at a time (ADR-0182). */
+/** The major upgrades this version knows, one release at a time, as `common::major_upgrade::KNOWN` (ADR-0182). */
 const DEBIAN_13 = { from: "debian 12", to: "debian 13", fromLabel: "Debian 12 (bookworm)", toLabel: "Debian 13 (trixie)" };
-export const MAJOR_UPGRADES: (typeof DEBIAN_13)[] = [DEBIAN_13];
+const leapp = (id: string, name: string, from: string, to: string): typeof DEBIAN_13 => ({
+  from: `${id} ${from}`,
+  to: `${id} ${to}`,
+  fromLabel: `${name} ${from}`,
+  toLabel: `${name} ${to}`,
+});
+export const MAJOR_UPGRADES: (typeof DEBIAN_13)[] = [
+  DEBIAN_13,
+  { from: "ubuntu 22.04", to: "ubuntu 24.04", fromLabel: "Ubuntu 22.04 (jammy)", toLabel: "Ubuntu 24.04 (noble)" },
+  { from: "ubuntu 24.04", to: "ubuntu 26.04", fromLabel: "Ubuntu 24.04 (noble)", toLabel: "Ubuntu 26.04 (resolute)" },
+  leapp("rhel", "Red Hat Enterprise Linux", "8", "9"),
+  leapp("rhel", "Red Hat Enterprise Linux", "9", "10"),
+  leapp("rocky", "Rocky Linux", "8", "9"),
+  leapp("almalinux", "AlmaLinux", "8", "9"),
+  leapp("almalinux", "AlmaLinux", "9", "10"),
+];
 
 /** "Debian 13 (trixie)" for "debian 13", else the release as given. */
 export function releaseLabel(release: string): string {
-  const known = MAJOR_UPGRADES.find((u) => u.from === release || u.to === release);
-  if (!known) return release;
-  return known.from === release ? known.fromLabel : known.toLabel;
+  const from = MAJOR_UPGRADES.find((u) => u.from === release);
+  if (from) return from.fromLabel;
+  return MAJOR_UPGRADES.find((u) => u.to === release)?.toLabel ?? release;
 }
 
 /** Whether `osVersion` ("debian 12", "debian 12.8") is the release `release`. */

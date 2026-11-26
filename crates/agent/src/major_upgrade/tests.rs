@@ -10,6 +10,9 @@ use super::helper::{self, Exec, Paths};
 use super::sources::{self, rewrite_classic, rewrite_deb822};
 use super::state::{self, State};
 
+/// Ubuntu and the RHEL family.
+mod distributions;
+
 fn debian() -> &'static major_upgrade::Upgrade {
     major_upgrade::next("debian 12").unwrap()
 }
@@ -260,9 +263,9 @@ fn checks_pass_on_a_healthy_host_and_third_party_sources_only_warn() {
     let root = tempfile::tempdir().unwrap();
     host(root.path(), &[("/etc/apt/sources.list", CLASSIC)]);
     let plan = sources::plan(root.path(), debian());
-    let checks = checks::evaluate(&healthy(), 0, &plan);
+    let checks = checks::evaluate(&healthy(), debian(), 0, &plan);
     let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(names, major_upgrade::CHECKS);
+    assert_eq!(names, major_upgrade::checks(debian().method));
     let states: Vec<&str> = checks.iter().map(|c| c.state.as_str()).collect();
     assert_eq!(states, [OK, OK, OK, OK, OK, OK, WARNING]);
     assert_eq!(checks[6].items.len(), 3);
@@ -280,7 +283,7 @@ fn each_problem_fails_its_check() {
         free: 1 << 30,
         reboot: true,
     };
-    let checks = checks::evaluate(&probe, 3, &plan);
+    let checks = checks::evaluate(&probe, debian(), 3, &plan);
     let failed: Vec<&str> = checks
         .iter()
         .filter(|c| c.state == FAILED)

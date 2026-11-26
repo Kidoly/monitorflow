@@ -264,6 +264,9 @@ enum MajorUpgradeStep {
     /// systemd unit.
     #[command(hide = true)]
     Run,
+    /// Print the checks before upgrading to the next release, as the
+    /// server's page shows them; reads only, as any user.
+    Checks,
 }
 
 #[cfg(unix)]
@@ -966,7 +969,7 @@ fn platform_handlers(
     latest_report
 }
 
-/// `major_upgrade` (ADR-0182) on Debian, accepted where the host allowed
+/// `major_upgrade` (ADR-0182) on the Debian and RHEL families, accepted where the host allowed
 /// it and sudo knows the helper, and the watch that reports each phase of
 /// an upgrade; refused as unsupported on other families.
 #[cfg(unix)]
@@ -983,7 +986,7 @@ fn major_upgrade_handler(
     use monitorflow_agent::major_upgrade::state::STATE_DIR;
     use monitorflow_common::command;
 
-    if host.os_family != os::OsFamily::Debian {
+    if !matches!(host.os_family, os::OsFamily::Debian | os::OsFamily::Rhel) {
         handlers.register(
             command::MAJOR_UPGRADE,
             Arc::new(Unsupported::new("major upgrades", "this distribution yet")),
@@ -1101,9 +1104,27 @@ async fn major_upgrade(config: PathBuf, step: Option<MajorUpgradeStep>) -> anyho
     use monitorflow_agent::major_upgrade::checks::Host;
     use monitorflow_agent::major_upgrade::helper::{self, Paths, System};
     use monitorflow_agent::major_upgrade::state::STATE_DIR;
-    use monitorflow_agent::packages::apt::parse_simulation;
     use monitorflow_common::command::MAJOR_UPGRADE;
+    use monitorflow_common::major_upgrade::Method;
 
+    if let Some(MajorUpgradeStep::Checks) = step {
+        return tokio::task::spawn_blocking(|| -> anyhow::Result<()> {
+            let release = os::detect_from(None).os_version;
+            let Some(upgrade) = monitorflow_common::major_upgrade::next(&release) else {
+                anyhow::bail!("this agent knows no next release for {release}");
+            };
+            let upgradable = match upgrade.method {
+                Method::Leapp => dnf_upgradable(false)?,
+                Method::Apt | Method::ReleaseUpgrade => apt_upgradable(false)?,
+            };
+            println!("{} to {}", upgrade.from_label(), upgrade.to_label());
+            for line in monitorflow_agent::major_upgrade::handler::describe(upgrade, upgradable) {
+                println!("{line}");
+            }
+            Ok(())
+        })
+        .await?;
+    }
     if !rustix::process::geteuid().is_root() {
         anyhow::bail!("run as root, as the agent does through sudo");
     }
@@ -1135,30 +1156,20 @@ async fn major_upgrade(config: PathBuf, step: Option<MajorUpgradeStep>) -> anyho
         }
         let running = os::detect_from(None).os_version;
         let upgrade = helper::requested(&command.payload, &running).map_err(anyhow::Error::msg)?;
-        // The checks read fresh lists of the current release.
-        let refresh = std::process::Command::new("/usr/bin/apt-get")
-            .args(["-q", "update"])
-            .env("LC_ALL", "C")
-            .output()
-            .context("cannot run apt-get update")?;
-        if !refresh.status.success() {
-            anyhow::bail!(
-                "`apt-get update` failed: {}",
-                String::from_utf8_lossy(&refresh.stderr).trim()
-            );
-        }
-        let simulation = std::process::Command::new("/usr/bin/apt-get")
-            .args(["-s", "-q", "dist-upgrade"])
-            .env("LC_ALL", "C")
-            .output()
-            .context("cannot run apt-get -s dist-upgrade")?;
-        let upgradable = parse_simulation(&String::from_utf8_lossy(&simulation.stdout))
-            .iter()
-            .filter(|c| c.installed.is_some())
-            .count();
+        let upgradable = match upgrade.method {
+            Method::Leapp => dnf_upgradable(true)?,
+            Method::Apt | Method::ReleaseUpgrade => apt_upgradable(true)?,
+        };
         let now = monitorflow_agent::self_update::unix_ms();
-        helper::start(&command.command_id, upgrade, &Host, upgradable, dir, now)
-            .map_err(anyhow::Error::msg)
+        helper::start(
+            &command.command_id,
+            upgrade,
+            &Host::new(upgrade.method),
+            upgradable,
+            dir,
+            now,
+        )
+        .map_err(anyhow::Error::msg)
     })
     .await?;
     match outcome {
@@ -1172,6 +1183,68 @@ async fn major_upgrade(config: PathBuf, step: Option<MajorUpgradeStep>) -> anyho
             eprintln!("Error: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Updates of the current release apt would install, after a refresh of
+/// its lists when `refresh` (as root): the helper's checks read fresh ones.
+#[cfg(unix)]
+fn apt_upgradable(refresh: bool) -> anyhow::Result<usize> {
+    use monitorflow_agent::packages::apt::parse_simulation;
+
+    if refresh {
+        refresh_apt()?;
+    }
+    let simulation = std::process::Command::new("/usr/bin/apt-get")
+        .args(["-s", "-q", "dist-upgrade"])
+        .env("LC_ALL", "C")
+        .output()
+        .context("cannot run apt-get -s dist-upgrade")?;
+    Ok(
+        parse_simulation(&String::from_utf8_lossy(&simulation.stdout))
+            .iter()
+            .filter(|c| c.installed.is_some())
+            .count(),
+    )
+}
+
+#[cfg(unix)]
+fn refresh_apt() -> anyhow::Result<()> {
+    let refresh = std::process::Command::new("/usr/bin/apt-get")
+        .args(["-q", "update"])
+        .env("LC_ALL", "C")
+        .output()
+        .context("cannot run apt-get update")?;
+    if !refresh.status.success() {
+        anyhow::bail!(
+            "`apt-get update` failed: {}",
+            String::from_utf8_lossy(&refresh.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// Updates of the current release dnf would install, with fresh metadata
+/// when `refresh` (as root), else the cached one. `dnf check-update`
+/// exits 100 when there are some.
+#[cfg(unix)]
+fn dnf_upgradable(refresh: bool) -> anyhow::Result<usize> {
+    use monitorflow_agent::packages::dnf::parse_check_update;
+
+    let metadata = if refresh { "--refresh" } else { "-C" };
+    let run = std::process::Command::new("/usr/bin/dnf")
+        .args(["-q", metadata, "check-update"])
+        .env("LC_ALL", "C")
+        .output()
+        .context("cannot run dnf check-update")?;
+    match run.status.code() {
+        Some(0) => Ok(0),
+        Some(100) => Ok(parse_check_update(&String::from_utf8_lossy(&run.stdout)).len()),
+        code => anyhow::bail!(
+            "`dnf check-update` exited with {}: {}",
+            code.unwrap_or(-1),
+            String::from_utf8_lossy(&run.stderr).trim()
+        ),
     }
 }
 

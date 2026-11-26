@@ -36,7 +36,8 @@ message MajorUpgradeReport {
 
 message UpgradeCheck {
   // `up_to_date`, `held_packages`, `broken_packages`, `free_space`,
-  // `reboot_pending`, `sources` or `third_party_sources`.
+  // `reboot_pending`, `sources`, `release_offered` (Ubuntu), `leapp` (the
+  // RHEL family) or `third_party_sources`.
   string name = 1;
   // "ok", "warning" (never blocks) or "failed".
   string state = 2;
@@ -50,8 +51,9 @@ message MajorUpgradeProgress {
   string command_id = 1;
   string from = 2;
   string to = 3;
-  // `starting`, `sources`, `refreshing`, `upgrading`, `full_upgrade`,
-  // `rebooting`, `done` or `failed`; `done` and `failed` are final.
+  // `starting`, `preupgrade` (leapp), `sources`, `refreshing`,
+  // `upgrading`, `full_upgrade`, `rebooting`, `done` or `failed`; `done`
+  // and `failed` are final.
   string phase = 4;
   string error = 5;
   // A failure before the package step put the sources back as they were.
@@ -60,4 +62,7 @@ message MajorUpgradeProgress {
   repeated string disabled_sources = 7;
   int64 started_at_unix_ms = 8;
   int64 updated_at_unix_ms = 9;
+  // leapp's report, as `leapp preupgrade` and `leapp upgrade` wrote it in
+  // /var/log/leapp/leapp-report.txt; empty outside the RHEL family.
+  string report = 10;
 }

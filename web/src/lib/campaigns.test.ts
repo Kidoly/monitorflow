@@ -18,9 +18,12 @@ import {
   editMode,
   emptyDraft,
   failedServers,
+  MAJOR_UPGRADES,
   newWindow,
   planWaves,
+  releaseLabel,
   requestFromCampaign,
+  runsRelease,
   searchServers,
   updateSources,
   shortWindow,
@@ -535,5 +538,25 @@ describe("software and update approvals (ADR-0188)", () => {
       third_party: [{ manager: "winget", packages: [], hold: ["7zip.7zip"] }],
     });
     expect(requestFromCampaign(approved, back)).toMatchObject({ classifications: ["Critical Updates"], hold: ["KB1"] });
+  });
+});
+
+describe("major upgrades", () => {
+  it("knows Ubuntu LTS and the RHEL family, one release at a time", () => {
+    expect(MAJOR_UPGRADES.map((u) => `${u.from} > ${u.to}`)).toEqual([
+      "debian 12 > debian 13",
+      "ubuntu 22.04 > ubuntu 24.04",
+      "ubuntu 24.04 > ubuntu 26.04",
+      "rhel 8 > rhel 9",
+      "rhel 9 > rhel 10",
+      "rocky 8 > rocky 9",
+      "almalinux 8 > almalinux 9",
+      "almalinux 9 > almalinux 10",
+    ]);
+    expect(releaseLabel("ubuntu 24.04")).toBe("Ubuntu 24.04 (noble)");
+    expect(releaseLabel("rocky 9")).toBe("Rocky Linux 9");
+    expect(releaseLabel("slackware 15")).toBe("slackware 15");
+    expect(runsRelease("rocky 8.10", "rocky 8")).toBe(true);
+    expect(runsRelease("ubuntu 24.10", "ubuntu 24.04")).toBe(false);
   });
 });

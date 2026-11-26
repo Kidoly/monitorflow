@@ -10,6 +10,8 @@ use uuid::Uuid;
 
 /// Longest text kept from an agent.
 const MAX_TEXT: usize = 512;
+/// Longest leapp report kept, as the agent bounds it.
+const MAX_REPORT: usize = 64 << 10;
 const MAX_CHECKS: usize = 16;
 const MAX_ITEMS: usize = 50;
 
@@ -23,7 +25,9 @@ fn bounded(text: &str) -> String {
 pub struct Check {
     /// `allowed`, `agent_version` and `mirror` from the central server;
     /// `up_to_date`, `held_packages`, `broken_packages`, `free_space`,
-    /// `reboot_pending`, `sources` and `third_party_sources` from the agent.
+    /// `reboot_pending`, `sources`, `release_offered` (Ubuntu), `leapp`
+    /// (RHEL, Rocky Linux, AlmaLinux) and `third_party_sources` from the
+    /// agent.
     pub name: String,
     /// `ok`, `warning` (never blocks) or `failed`.
     pub state: String,
@@ -66,14 +70,18 @@ pub struct Progress {
     pub command_id: String,
     pub from: String,
     pub to: String,
-    /// `starting`, `sources`, `refreshing`, `upgrading`, `full_upgrade`,
-    /// `rebooting`, `done` or `failed`.
+    /// `starting`, `preupgrade` (leapp), `sources`, `refreshing`,
+    /// `upgrading`, `full_upgrade`, `rebooting`, `done` or `failed`.
     pub phase: String,
     pub error: Option<String>,
     /// A failure before the package step put the sources back.
     pub sources_restored: bool,
     /// Third-party entries switched off and left off.
     pub disabled_sources: Vec<String>,
+    /// leapp's report as it wrote it, inhibitors included; `null` outside
+    /// the RHEL family.
+    #[serde(default)]
+    pub report: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -100,6 +108,7 @@ impl Progress {
                 .take(MAX_ITEMS)
                 .map(|s| bounded(s))
                 .collect(),
+            report: (!p.report.is_empty()).then(|| p.report.chars().take(MAX_REPORT).collect()),
             started_at: at(p.started_at_unix_ms),
             updated_at: at(p.updated_at_unix_ms),
         }
@@ -204,6 +213,7 @@ mod tests {
                 command_id: "c".into(),
                 phase: "weird".into(),
                 started_at_unix_ms: 1_700_000_000_000,
+                report: "r".repeat(100_000),
                 ..MajorUpgradeProgress::default()
             }),
             ..MajorUpgradeReport::default()
@@ -216,5 +226,6 @@ mod tests {
         assert_eq!(progress.phase, "failed", "an unknown phase is a failure");
         assert!(progress.started_at.is_some() && progress.updated_at.is_none());
         assert_eq!(progress.error, None);
+        assert_eq!(progress.report.unwrap().len(), MAX_REPORT);
     }
 }
