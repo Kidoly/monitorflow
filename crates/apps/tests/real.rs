@@ -69,7 +69,8 @@ async fn check(kind: &str, var: &str, wanted: &[&str]) {
         assert!(!format!("{sample:?}").contains(&password) || password.len() < 3);
     }
 
-    let wrong = params(&host, &port, "not-the-password");
+    // Not a literal: any value but the real password is refused.
+    let wrong = params(&host, &port, &format!("{password}-wrong"));
     let samples = collect(kind, &wrong).await;
     let up = find(&samples, "up").unwrap();
     assert_eq!(up.value, 0.0);

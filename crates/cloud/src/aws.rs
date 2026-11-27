@@ -100,6 +100,16 @@ pub fn authorization(
     format!("AWS4-HMAC-SHA256 Credential={key_id}/{scope}, SignedHeaders={signed}, Signature={signature}")
 }
 
+/// `base` is a test server on this machine: `http://127.0.0.1:port` or
+/// `http://localhost:port`.
+fn is_local(base: &str) -> bool {
+    let Some(rest) = base.strip_prefix("http://") else {
+        return false;
+    };
+    let host = rest.split(['/', ':']).next().unwrap_or("");
+    host == "127.0.0.1" || host == "localhost" || rest.starts_with("[::1]")
+}
+
 /// An AWS account read with one access key.
 pub struct Client {
     pub http: Http,
@@ -112,11 +122,14 @@ pub struct Client {
 impl Client {
     fn url(&self, service: &str, region: &str) -> (String, String) {
         match &self.base {
-            Some(base) => {
+            // A test server on this machine is the only endpoint other
+            // than AWS's, and the only one reached without TLS: a signed
+            // request never leaves the machine in clear text.
+            Some(base) if is_local(base) => {
                 let host = base.split("://").nth(1).unwrap_or(base).to_owned();
                 (format!("{base}/"), host)
             }
-            None => {
+            Some(_) | None => {
                 let host = format!("{service}.{region}.amazonaws.com");
                 (format!("https://{host}/"), host)
             }
@@ -547,6 +560,30 @@ pub fn canonical_query(pairs: &mut [(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_this_machine_is_reached_without_tls() {
+        assert!(is_local("http://127.0.0.1:8080"));
+        assert!(is_local("http://localhost:9000"));
+        assert!(is_local("http://[::1]:9000"));
+        for base in [
+            "http://example.com",
+            "http://127.0.0.1.example.com",
+            "https://127.0.0.1:1",
+        ] {
+            assert!(!is_local(base), "{base}");
+        }
+        let client = Client {
+            http: Http::new(std::time::Duration::from_secs(1), true).unwrap(),
+            key_id: String::new(),
+            secret: String::new(),
+            base: Some("http://example.com".into()),
+        };
+        assert_eq!(
+            client.url("ec2", "eu-west-3").0,
+            "https://ec2.eu-west-3.amazonaws.com/"
+        );
+    }
 
     #[test]
     fn signatures_match_the_aws_test_suite() {

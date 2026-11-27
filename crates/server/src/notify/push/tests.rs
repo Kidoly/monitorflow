@@ -86,8 +86,7 @@ fn a_phone_reads_what_is_encrypted_to_it() {
     let rng = SystemRandom::new();
     let private = agreement::EphemeralPrivateKey::generate(&agreement::ECDH_P256, &rng).unwrap();
     let public = private.compute_public_key().unwrap().as_ref().to_vec();
-    let mut auth = [0u8; 16];
-    rng.fill(&mut auth).unwrap();
+    let auth: [u8; 16] = ring::rand::generate(&rng).unwrap().expose();
     let subscription = Subscription {
         endpoint: "https://push.example.net/send/abc".into(),
         p256dh: public.clone(),
