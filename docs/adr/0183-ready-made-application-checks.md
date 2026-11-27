@@ -226,6 +226,6 @@ Rejected: **the JMX exporter or the Zabbix Java gateway as the bridge**, each a 
 - SQL Server's own TDS client is code to keep, as RESP is; its tests cover the packets, the login and every token it reads, against a fake server and a real one.
 - AWS accounts, Azure subscriptions and Google Cloud projects are watched with read-only credentials, their machines in the same inventory as a vCenter's; a missing right shows on the account's page with the provider's message.
 - CloudWatch's `GetMetricData` costs a little per running instance, which the guide states; Cloud Monitoring is asked five calls per project every 5 minutes.
-- SQL Server's Windows sign-in stays on the roadmap as its own task. A Kubernetes cluster's nodes, namespaces, workloads and failed jobs are on its page, its nodes matched to servers.
+- SQL Server takes a Windows account on the server's Windows agent; the same from a probe (NTLM or Kerberos on Linux) stays on the roadmap as its own task. A Kubernetes cluster's nodes, namespaces, workloads and failed jobs are on its page, its nodes matched to servers.
 - A JVM is watched only with Jolokia loaded into it, a change to its start options that a person makes; the check counts deadlocked threads only if Jolokia's policy allows `exec`.
 - A Kubernetes check reads every pod of the cluster each collection: about 1 MiB of JSON per 300 pods, within the 64 MiB and 10,000 objects of a list it stops at.
