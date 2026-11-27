@@ -1,5 +1,6 @@
-//! The `aws` and `azure` sensors: one client kept between collections,
-//! so Azure's access token is asked for once an hour.
+//! The `aws`, `azure` and `gcp` sensors: one client kept between
+//! collections, so Azure's and Google's access tokens are asked for once
+//! an hour.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -8,8 +9,8 @@ use async_trait::async_trait;
 use monitorflow_sensors::{virt, Sample, Sensor, SensorError};
 use tokio::time::Instant;
 
-use crate::http::{Failure, Http};
-use crate::{aws, azure, Account, CloudVm, Target, What, MAX_VMS};
+use crate::http::{is_local, Failure, Http};
+use crate::{aws, azure, gcp, Account, CloudVm, Target, What, MAX_VMS};
 
 /// Kept before the deadline so a slow answer still reports `up 0`.
 const MARGIN: Duration = Duration::from_millis(300);
@@ -22,6 +23,7 @@ const NOT_IN_CLOUDS: [&str; 2] = ["vm_snapshots", "vm_snapshot_age_seconds"];
 enum Client {
     Aws(aws::Client),
     Azure(azure::Client),
+    Gcp(gcp::Client),
 }
 
 pub struct CloudSensor {
@@ -65,8 +67,13 @@ impl CloudSensor {
 
     /// A sensor whose requests go to `base` over plain HTTP, for tests
     /// against a fake API: every service of the provider answers there.
+    /// Only a server on this machine may stand in for a provider.
     pub fn with_base(target: Target, base: &str) -> Result<Self, String> {
-        Self::build(target, Some(base.trim_end_matches('/').to_owned()))
+        let base = base.trim_end_matches('/');
+        if !is_local(base) {
+            return Err("only a server on this machine can stand in for a cloud API".into());
+        }
+        Self::build(target, Some(base.to_owned()))
     }
 
     fn build(target: Target, base: Option<String>) -> Result<Self, String> {
@@ -91,6 +98,9 @@ impl CloudSensor {
                 subscription.clone(),
                 base.map(|b| (format!("{b}/login"), b)),
             )),
+            Account::Gcp { key, project } => {
+                Client::Gcp(gcp::Client::new(http, key, project.clone(), base)?)
+            }
         };
         Ok(Self { target, client })
     }
@@ -99,6 +109,7 @@ impl CloudSensor {
         match self.client {
             Client::Aws(_) => crate::AWS,
             Client::Azure(_) => crate::AZURE,
+            Client::Gcp(_) => crate::GCP,
         }
     }
 
@@ -107,6 +118,7 @@ impl CloudSensor {
         match &self.target.account {
             Account::Aws { regions, .. } => format!("Amazon EC2 ({})", regions.join(", ")),
             Account::Azure { subscription, .. } => format!("Azure (subscription {subscription})"),
+            Account::Gcp { project, .. } => format!("Google Compute Engine (project {project})"),
         }
     }
 
@@ -206,6 +218,35 @@ impl CloudSensor {
                         let id = m.id.to_ascii_lowercase();
                         let measures = metrics.remove(&id).unwrap_or_default();
                         m.into_vm(nics.get(&id), measures)
+                    })
+                    .collect();
+                Read {
+                    vms,
+                    failure,
+                    listing: None,
+                    metrics: metrics_read,
+                }
+            }
+            (Client::Gcp(client), _) => {
+                let instances = match client.instances(max).await {
+                    Ok(instances) => instances,
+                    Err(failure) => return Read::failed(failure),
+                };
+                // Asked for the whole project, even without a running
+                // machine, so a test says whether the right is there.
+                let (mut metrics, failed) = client.metrics(now).await;
+                let (failure, metrics_read) = match failed {
+                    Some(f) => {
+                        let f = f.within("Cloud Monitoring");
+                        (Some(f.clone()), Some(Err(f)))
+                    }
+                    None => (None, Some(Ok(()))),
+                };
+                let vms = instances
+                    .into_iter()
+                    .map(|i| {
+                        let measures = metrics.remove(&i.id).unwrap_or_default();
+                        i.into_vm(measures)
                     })
                     .collect();
                 Read {

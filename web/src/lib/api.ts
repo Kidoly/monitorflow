@@ -1051,24 +1051,26 @@ export interface DeviceRequest {
   template?: string;
   /** For a vCenter or ESXi host (ADR-0156): its `vmware` check and alerts come with it. */
   vmware?: VmwareCredentialsRequest;
-  /** For an AWS account or an Azure subscription (ADR-0183): read by the central server. */
+  /** For an AWS account, an Azure subscription or a Google Cloud project (ADR-0183): read by the central server. */
   cloud?: CloudCredentialsRequest;
 }
 
-export type CloudProvider = "aws" | "azure";
+export type CloudProvider = "aws" | "azure" | "gcp";
 
 /** Cloud credentials as sent; what is left out keeps the stored value (ADR-0183). */
 export interface CloudCredentialsRequest {
   provider?: CloudProvider;
-  /** AWS: the access key ID. Azure: the application (client) ID. */
+  /** AWS: the access key ID. Azure: the application (client) ID. Google Cloud: the service account, from the key. */
   key_id?: string;
-  /** The secret access key or the client secret. */
+  /** The secret access key, the client secret, or a service account's JSON key file. */
   secret?: string;
   /** AWS only. */
   regions?: string[];
   /** Azure only. */
   tenant?: string;
   subscription?: string;
+  /** Google Cloud only: the key's own project when left out. */
+  project?: string;
 }
 
 /** A device's cloud credentials, never the secret. */
@@ -1078,6 +1080,7 @@ export interface CloudCredentials {
   regions: string[];
   tenant: string | null;
   subscription: string | null;
+  project: string | null;
   secret_set: boolean;
   updated_at: string;
 }

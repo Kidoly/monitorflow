@@ -8659,7 +8659,7 @@
           "devices"
         ],
         "summary": "Add a device",
-        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\nWith `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes from the same probe, and its alerts; test the connection and confirm its certificate first with `POST /api/v1/devices/vmware/test`.\n\nWith `cloud` credentials (ADR-0183), it is an AWS account or an Azure subscription: its `address` may be left out (it becomes the provider's API), it gets no ping unless asked, and its `aws` or `azure` check lists its virtual machines every 5 minutes from the central server, with its alerts; test the credentials first with `POST /api/v1/devices/cloud/test`. The secret is stored sealed and never returned.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
+        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\nWith `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes from the same probe, and its alerts; test the connection and confirm its certificate first with `POST /api/v1/devices/vmware/test`.\n\nWith `cloud` credentials (ADR-0183), it is an AWS account, an Azure subscription or a Google Cloud project: its `address` may be left out (it becomes the provider's API), it gets no ping unless asked, and its `aws`, `azure` or `gcp` check lists its virtual machines every 5 minutes from the central server, with its alerts; test the credentials first with `POST /api/v1/devices/cloud/test`. The secret is stored sealed and never returned.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
         "operationId": "create_device",
         "parameters": [
           {
@@ -8884,7 +8884,7 @@
           "cloud"
         ],
         "summary": "Test cloud credentials",
-        "description": "Signs in once from the central server, lists the account's virtual machines and reads their metrics, then says what worked. For AWS, a machine-less account still asks CloudWatch, so a missing `cloudwatch:GetMetricData` right shows. Nothing is stored.\n\n**Who**: operator or above on the site. **Area**: `servers`.",
+        "description": "Signs in once from the central server, lists the account's virtual machines and reads their metrics, then says what worked. For AWS, a machine-less account still asks CloudWatch, so a missing `cloudwatch:GetMetricData` right shows; Google Cloud always asks Cloud Monitoring. Nothing is stored.\n\n**Who**: operator or above on the site. **Area**: `servers`.",
         "operationId": "test_cloud",
         "parameters": [
           {
@@ -8930,6 +8930,17 @@
                       "secret": "a client secret",
                       "subscription": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
                       "tenant": "72f988bf-86f1-41af-91ab-2d7cd011db47"
+                    },
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                  }
+                },
+                "gcp": {
+                  "summary": "A Google Cloud project read by a service account",
+                  "value": {
+                    "cloud": {
+                      "project": "my-project-123",
+                      "provider": "gcp",
+                      "secret": "{\"type\": \"service_account\", \"client_email\": …, \"private_key\": …}"
                     },
                     "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
                   }
@@ -9690,6 +9701,7 @@
                 },
                 "example": {
                   "key_id": "AKIAIOSFODNN7EXAMPLE",
+                  "project": null,
                   "provider": "aws",
                   "regions": [
                     "eu-west-3",
@@ -9778,7 +9790,7 @@
           "cloud"
         ],
         "summary": "Set a device's cloud credentials",
-        "description": "Replaces them; what is left out is kept. The secret is kept only while the provider and the identity stay the same (the access key ID, or the tenant and application): a kept secret never goes to another one. The provider cannot change: remove the credentials first. A device without the provider's check gets it, on the central server every 5 minutes, with its alerts: the account cannot be read for 10 minutes (`monitorflow_<provider>_up`), and a machine's status check failing for 10 minutes (`monitorflow_<provider>_vm_status_checks_failed`), both critical. Thresholds the device has already stay.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.cloud_update`, without the secret.",
+        "description": "Replaces them; what is left out is kept. The secret is kept only while the provider and the identity stay the same (the access key ID, the tenant and application, or the service account): a kept secret never goes to another one. The provider cannot change: remove the credentials first. A device without the provider's check gets it, on the central server every 5 minutes, with its alerts: the account cannot be read for 10 minutes (`monitorflow_<provider>_up`), and, for AWS and Azure, a machine's status check failing for 10 minutes (`monitorflow_<provider>_vm_status_checks_failed`), both critical. Thresholds the device has already stay.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.cloud_update`, without the secret.",
         "operationId": "set_device_cloud",
         "parameters": [
           {
@@ -9829,6 +9841,7 @@
                 },
                 "example": {
                   "key_id": "AKIAIOSFODNN7EXAMPLE",
+                  "project": null,
                   "provider": "aws",
                   "regions": [
                     "eu-west-3",
@@ -61518,11 +61531,18 @@
         "properties": {
           "key_id": {
             "type": "string",
-            "description": "The access key ID, or the application (client) ID."
+            "description": "The access key ID, the application (client) ID, or the service\naccount's address."
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Google Cloud: the project; `null` otherwise."
           },
           "provider": {
             "type": "string",
-            "description": "`aws` or `azure`."
+            "description": "`aws`, `azure` or `gcp`."
           },
           "regions": {
             "type": "array",
@@ -61539,14 +61559,14 @@
               "string",
               "null"
             ],
-            "description": "Azure: the subscription; `null` for AWS."
+            "description": "Azure: the subscription; `null` otherwise."
           },
           "tenant": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Azure: the tenant; `null` for AWS."
+            "description": "Azure: the tenant; `null` otherwise."
           },
           "updated_at": {
             "type": "string",
@@ -61556,21 +61576,28 @@
       },
       "CloudCredentialsRequest": {
         "type": "object",
-        "description": "Body of a device's cloud credentials. On a change, what is left out\nis kept, the secret only while the provider and the identity it\nbelongs to (access key ID, or tenant and application) stay the same.",
+        "description": "Body of a device's cloud credentials. On a change, what is left out\nis kept, the secret only while the provider and the identity it\nbelongs to (access key ID, tenant and application, or service\naccount) stay the same.",
         "properties": {
           "key_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "AWS: the access key ID (`AKIA…`). Azure: the application (client)\nID of the service principal."
+            "description": "AWS: the access key ID (`AKIA…`). Azure: the application (client)\nID of the service principal. Google Cloud: the service account's\naddress, taken from the key when one is given."
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Google Cloud: the project ID, like `my-project-123`; the key's own\nproject when left out."
           },
           "provider": {
             "type": [
               "string",
               "null"
             ],
-            "description": "`aws` or `azure`. Required the first time; it cannot change."
+            "description": "`aws`, `azure` or `gcp`. Required the first time; it cannot change."
           },
           "regions": {
             "type": [
@@ -61587,7 +61614,7 @@
               "string",
               "null"
             ],
-            "description": "AWS: the secret access key. Azure: the client secret. Secret,\nnever returned."
+            "description": "AWS: the secret access key. Azure: the client secret. Google\nCloud: the service account's JSON key file, whole. Secret, never\nreturned."
           },
           "subscription": {
             "type": [
@@ -61651,7 +61678,7 @@
               "boolean",
               "null"
             ],
-            "description": "Whether metrics (CloudWatch, Azure Monitor) could be read; `null`\nwhen there was nothing to ask."
+            "description": "Whether metrics (CloudWatch, Azure Monitor, Cloud Monitoring) could\nbe read; `null`\nwhen there was nothing to ask."
           },
           "reason": {
             "type": [
@@ -62930,7 +62957,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/CloudCredentialsRequest",
-                "description": "For a cloud account (ADR-0183): an AWS account or an Azure\nsubscription, read with read-only credentials. The device then\ngets its `aws` or `azure` check every 5 minutes on the central\nserver, which lists its virtual machines, with the alerts that\ncome with it. Test them first with `POST /api/devices/cloud/test`.\nThe secret is stored sealed, never returned. Not with `snmp`,\n`template` or `vmware`, and only from the central server."
+                "description": "For a cloud account (ADR-0183): an AWS account, an Azure\nsubscription or a Google Cloud project, read with read-only\ncredentials. The device then gets its `aws`, `azure` or `gcp`\ncheck every 5 minutes on the central\nserver, which lists its virtual machines, with the alerts that\ncome with it. Test them first with `POST /api/devices/cloud/test`.\nThe secret is stored sealed, never returned. Not with `snmp`,\n`template` or `vmware`, and only from the central server."
               },
               {
                 "type": "null"
@@ -82156,7 +82183,7 @@
     },
     {
       "name": "cloud",
-      "description": "Cloud accounts: an AWS account or an Azure subscription is a device whose `aws` or `azure` check, run every 5 minutes by the central server alone, lists its virtual machines with their state, status checks and basic metrics (processor, network, disks). They join the inventory of `GET /api/v1/servers/{id}/virtualization` and are matched to monitored servers as a vCenter's are. The credentials are read-only, stored sealed and never returned. Area `servers`."
+      "description": "Cloud accounts: an AWS account, an Azure subscription or a Google Cloud project is a device whose `aws`, `azure` or `gcp` check, run every 5 minutes by the central server alone, lists its virtual machines with their state, status checks (AWS, Azure) and basic metrics (processor, network, disks). A Google Cloud project is read with a service account's JSON key, given whole as `secret`; its address and project come from the key unless `project` names another. They join the inventory of `GET /api/v1/servers/{id}/virtualization` and are matched to monitored servers as a vCenter's are. The credentials are read-only, stored sealed and never returned. Area `servers`."
     },
     {
       "name": "inventory",

@@ -16,9 +16,11 @@ use crate::cloud;
     paths(test_cloud, device_cloud, set_device_cloud, delete_device_cloud),
     components(schemas(ErrorBody)),
     modifiers(&Common),
-    tags((name = "cloud", description = "Cloud accounts: an AWS account or an Azure subscription is a \
-device whose `aws` or `azure` check, run every 5 minutes by the central server alone, lists its virtual \
-machines with their state, status checks and basic metrics (processor, network, disks). They join the \
+    tags((name = "cloud", description = "Cloud accounts: an AWS account, an Azure subscription or a Google \
+Cloud project is a device whose `aws`, `azure` or `gcp` check, run every 5 minutes by the central server \
+alone, lists its virtual machines with their state, status checks (AWS, Azure) and basic metrics \
+(processor, network, disks). A Google Cloud project is read with a service account's JSON key, given whole \
+as `secret`; its address and project come from the key unless `project` names another. They join the \
 inventory of `GET /api/v1/servers/{id}/virtualization` and are matched to monitored servers as a vCenter's \
 are. The credentials are read-only, stored sealed and never returned. Area `servers`."))
 )]
@@ -33,8 +35,8 @@ fn tested() -> serde_json::Value {
     summary = "Test cloud credentials",
     description = "Signs in once from the central server, lists the account's virtual machines and \
 reads their metrics, then says what worked. For AWS, a machine-less account still asks CloudWatch, so a \
-missing `cloudwatch:GetMetricData` right shows. Nothing is stored.\n\n**Who**: operator or above on the \
-site. **Area**: `servers`.",
+missing `cloudwatch:GetMetricData` right shows; Google Cloud always asks Cloud Monitoring. Nothing is \
+stored.\n\n**Who**: operator or above on the site. **Area**: `servers`.",
     request_body(content = devices::CloudTestRequest, examples(
         ("aws" = (summary = "An AWS account in two regions",
             value = json!({"site_id": ex::SITE, "cloud": {"provider": "aws", "key_id": "AKIAIOSFODNN7EXAMPLE",
@@ -44,6 +46,10 @@ site. **Area**: `servers`.",
                            "tenant": "72f988bf-86f1-41af-91ab-2d7cd011db47",
                            "key_id": "1f2e3d4c-5b6a-4789-8a9b-0c1d2e3f4a5b", "secret": "a client secret",
                            "subscription": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"}}))),
+        ("gcp" = (summary = "A Google Cloud project read by a service account",
+            value = json!({"site_id": ex::SITE, "cloud": {"provider": "gcp",
+                           "secret": "{\"type\": \"service_account\", \"client_email\": …, \"private_key\": …}",
+                           "project": "my-project-123"}}))),
     )),
     responses(
         (status = 200, description = "What answered; also when the sign-in failed: `login`, `reason` \
@@ -56,7 +62,7 @@ fn test_cloud() {}
 
 fn view() -> serde_json::Value {
     json!({"provider": "aws", "key_id": "AKIAIOSFODNN7EXAMPLE", "regions": ["eu-west-3", "us-east-1"],
-           "tenant": null, "subscription": null, "secret_set": true, "updated_at": "2027-01-02T10:20:00Z"})
+           "tenant": null, "subscription": null, "project": null, "secret_set": true, "updated_at": "2027-01-02T10:20:00Z"})
 }
 
 #[utoipa::path(get, path = "/api/v1/devices/{id}/cloud", tag = "cloud",
@@ -73,11 +79,11 @@ fn device_cloud() {}
 #[utoipa::path(put, path = "/api/v1/devices/{id}/cloud", tag = "cloud",
     summary = "Set a device's cloud credentials",
     description = "Replaces them; what is left out is kept. The secret is kept only while the provider \
-and the identity stay the same (the access key ID, or the tenant and application): a kept secret never \
-goes to another one. The provider cannot change: remove the credentials first. A device without the \
+and the identity stay the same (the access key ID, the tenant and application, or the service account): a \
+kept secret never goes to another one. The provider cannot change: remove the credentials first. A device without the \
 provider's check gets it, on the central server every 5 minutes, with its alerts: the account cannot be \
-read for 10 minutes (`monitorflow_<provider>_up`), and a machine's status check failing for 10 minutes \
-(`monitorflow_<provider>_vm_status_checks_failed`), both critical. Thresholds the device has already \
+read for 10 minutes (`monitorflow_<provider>_up`), and, for AWS and Azure, a machine's status check \
+failing for 10 minutes (`monitorflow_<provider>_vm_status_checks_failed`), both critical. Thresholds the device has already \
 stay.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as \
 `device.cloud_update`, without the secret.",
     params(("id" = uuid::Uuid, Path, description = "The device")),

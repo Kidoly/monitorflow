@@ -5,10 +5,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { stubFetch } from "@/test/fetch";
 
-import { CloudFields, type CloudForm, CloudTest, NEW_CLOUD, cloudForm, cloudProblem, cloudRequest, cloudSummary } from "./CloudCredentials";
+import {
+  CloudFields,
+  type CloudForm,
+  CloudTest,
+  NEW_CLOUD,
+  cloudForm,
+  cloudProblem,
+  cloudRequest,
+  cloudSummary,
+  readGcpKey,
+} from "./CloudCredentials";
 
 const AWS: CloudForm = { ...NEW_CLOUD, key_id: " AKIAIOSFODNN7EXAMPLE ", secret: "s3cret", regions: "eu-west-3, us-east-1" };
 const GUID = "72f988bf-86f1-41af-91ab-2d7cd011db47";
+const ACCOUNT = "reader@example-project.iam.gserviceaccount.com";
+/** A key's shape; the browser only reads its account and project. */
+const KEY = JSON.stringify({
+  type: "service_account",
+  project_id: "example-project",
+  private_key: "-----BEGIN PRIVATE KEY-----\nnot a real key\n-----END PRIVATE KEY-----\n",
+  client_email: ACCOUNT,
+});
 
 function Harness() {
   const [value, setValue] = useState<CloudForm>(NEW_CLOUD);
@@ -30,7 +48,7 @@ describe("CloudCredentials", () => {
       secret: "s3cret",
       regions: ["eu-west-3", "us-east-1"],
     });
-    const azure: CloudForm = { provider: "azure", key_id: GUID, secret: "", regions: "", tenant: GUID, subscription: GUID };
+    const azure: CloudForm = { ...NEW_CLOUD, provider: "azure", key_id: GUID, tenant: GUID, subscription: GUID };
     expect(cloudRequest(azure)).toEqual({ provider: "azure", key_id: GUID, tenant: GUID, subscription: GUID });
     expect(cloudProblem(azure, false)).toBeTruthy();
     expect(cloudProblem(azure, true)).toBeNull();
@@ -42,11 +60,21 @@ describe("CloudCredentials", () => {
       regions: ["eu-west-3"],
       tenant: null,
       subscription: null,
+      project: null,
       secret_set: true,
       updated_at: "",
     };
     expect(cloudSummary(stored)).toBe("AWS, key AKIAIOSFODNN7EXAMPLE, eu-west-3");
     expect(cloudForm(stored)).toEqual({ ...NEW_CLOUD, key_id: "AKIAIOSFODNN7EXAMPLE", regions: "eu-west-3" });
+    const gcp = { ...stored, provider: "gcp" as const, key_id: ACCOUNT, regions: [], project: "example-project" };
+    expect(cloudSummary(gcp)).toBe("Google Cloud, project example-project");
+    const kept = cloudForm(gcp);
+    expect(cloudProblem(kept, true)).toBeNull();
+    expect(cloudProblem(kept, false)).toBeTruthy();
+    expect(cloudRequest({ ...kept, project: " other-project " })).toEqual({ provider: "gcp", key_id: ACCOUNT, project: "other-project" });
+    expect(readGcpKey(KEY)).toEqual({ email: ACCOUNT, project: "example-project" });
+    expect(readGcpKey('{"type": "authorized_user"}')).toBeNull();
+    expect(readGcpKey("not json")).toBeNull();
   });
 
   it("asks for each provider's fields, and tests them from the central server", async () => {
@@ -79,6 +107,33 @@ describe("CloudCredentials", () => {
     expect(body).toEqual({
       site_id: "site-1",
       cloud: { provider: "azure", key_id: GUID, secret: "a secret", tenant: GUID, subscription: GUID },
+    });
+  });
+
+  it("reads a Google service account's key file and its project", async () => {
+    const fetchMock = stubFetch({
+      "POST /api/devices/cloud/test": [
+        { status: 200, body: { login: true, reason: null, error: null, vms: 3, running: 2, metrics: true, warning: null } },
+      ],
+    });
+    render(<Harness />);
+    const user = userEvent.setup({ applyAccept: false });
+    await user.selectOptions(screen.getByLabelText("Provider"), "gcp");
+    expect(screen.getByText(/Compute Viewer and Monitoring Viewer/)).toBeTruthy();
+    expect(screen.queryByLabelText("Access key ID")).toBeNull();
+    const input = screen.getByLabelText("Service account key (JSON file)");
+    await user.upload(input, new File(["not a key"], "key.json", { type: "application/json" }));
+    expect(await screen.findByText("This file is not a service account's JSON key.")).toBeTruthy();
+    await user.upload(input, new File([KEY], "key.json", { type: "application/json" }));
+    expect(await screen.findByText(`Key of ${ACCOUNT}.`)).toBeTruthy();
+    expect((screen.getByLabelText("Project ID") as HTMLInputElement).value).toBe("example-project");
+    await user.click(screen.getByRole("button", { name: "Test the credentials" }));
+    expect(await screen.findByText("Signed in: 3 virtual machines, 2 running.")).toBeTruthy();
+    expect(screen.getByText("Metrics can be read.")).toBeTruthy();
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toEqual({
+      site_id: "site-1",
+      cloud: { provider: "gcp", key_id: ACCOUNT, secret: KEY, project: "example-project" },
     });
   });
 });

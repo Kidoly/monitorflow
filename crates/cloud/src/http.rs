@@ -114,6 +114,17 @@ impl Http {
     }
 }
 
+/// `base` is a test server on this machine: `http://127.0.0.1:port`,
+/// `http://localhost:port` or `http://[::1]:port`. Nothing else may stand
+/// in for a provider's endpoints.
+pub fn is_local(base: &str) -> bool {
+    let Some(rest) = base.strip_prefix("http://") else {
+        return false;
+    };
+    let host = rest.split(['/', ':']).next().unwrap_or("");
+    host == "127.0.0.1" || host == "localhost" || rest.starts_with("[::1]")
+}
+
 /// An error and its sources, which say what actually failed.
 fn chain(error: &dyn std::error::Error) -> String {
     let mut text = error.to_string();

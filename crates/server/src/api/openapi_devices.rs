@@ -54,8 +54,9 @@ stored sealed and never returned.\n\n\
 With `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes \
 from the same probe, and its alerts; test the connection and confirm its certificate first with \
 `POST /api/v1/devices/vmware/test`.\n\n\
-With `cloud` credentials (ADR-0183), it is an AWS account or an Azure subscription: its `address` may be left \
-out (it becomes the provider's API), it gets no ping unless asked, and its `aws` or `azure` check lists its \
+With `cloud` credentials (ADR-0183), it is an AWS account, an Azure subscription or a Google Cloud project: \
+its `address` may be left out (it becomes the provider's API), it gets no ping unless asked, and its `aws`, \
+`azure` or `gcp` check lists its \
 virtual machines every 5 minutes from the central server, with its alerts; test the credentials first with \
 `POST /api/v1/devices/cloud/test`. The secret is stored sealed and never returned.\n\n\
 **Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",

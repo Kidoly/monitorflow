@@ -1,16 +1,18 @@
-//! The cloud sensors against fake AWS and Azure APIs over plain HTTP on
-//! the loopback: no real cloud is ever called.
+//! The cloud sensors against fake AWS, Azure and Google Cloud APIs over
+//! plain HTTP on the loopback: no real cloud is ever called.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use monitorflow_cloud::{parse, CloudSensor, AWS, AZURE};
+use monitorflow_cloud::{gcp, parse, CloudSensor, AWS, AZURE, GCP};
 use monitorflow_sensors::{Sample, Sensor};
 use tokio::net::TcpListener;
 
@@ -361,9 +363,233 @@ async fn a_refused_azure_secret_says_so() {
     assert_eq!(find(&samples, "metrics", "").unwrap().value, 1.0);
 }
 
+const GCP_KEY: &str = include_str!("fixtures/gcp_key.json");
+const PROJECT: &str = "example-project";
+
+fn gcp_params(what: &str) -> BTreeMap<String, String> {
+    params(&[("secret", GCP_KEY), ("what", what)])
+}
+
+/// Whether `jwt` is an assertion of the fixture's service account,
+/// signed with its key, for Google's token endpoint.
+fn signed_by_the_fixture(jwt: &str) -> bool {
+    let key = gcp::read_key(GCP_KEY).unwrap();
+    let pair = ring::signature::RsaKeyPair::from_pkcs8(&key.der).unwrap();
+    let public = ring::signature::UnparsedPublicKey::new(
+        &ring::signature::RSA_PKCS1_2048_8192_SHA256,
+        pair.public().as_ref().to_vec(),
+    );
+    let Some((input, signature)) = jwt.rsplit_once('.') else {
+        return false;
+    };
+    let Ok(signature) = URL_SAFE_NO_PAD.decode(signature) else {
+        return false;
+    };
+    if public.verify(input.as_bytes(), &signature).is_err() {
+        return false;
+    }
+    let claims = input.split('.').nth(1).unwrap();
+    let claims: serde_json::Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(claims).unwrap()).unwrap();
+    claims["iss"] == key.email
+        && claims["aud"] == "https://oauth2.googleapis.com/token"
+        && claims["scope"]
+            .as_str()
+            .is_some_and(|s| !s.contains("auth/cloud-platform"))
+}
+
+/// How the fake Google Cloud answers.
+#[derive(Clone, Copy, PartialEq)]
+enum Gcp {
+    Allowed,
+    /// Without Monitoring Viewer.
+    NoMonitoring,
+    /// The key was deleted: no token.
+    Revoked,
+}
+
+/// A fake token endpoint, Compute Engine and Cloud Monitoring.
+fn fake_gcp(mode: Gcp) -> Handler {
+    Arc::new(move |method, target, auth, body| {
+        if target == "/token" {
+            assert_eq!(method, "POST");
+            assert!(
+                body.starts_with(
+                    "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion="
+                ),
+                "{body}"
+            );
+            let jwt = body.split("assertion=").nth(1).unwrap();
+            if mode == Gcp::Revoked || !signed_by_the_fixture(jwt) {
+                return (
+                    400,
+                    r#"{"error":"invalid_grant","error_description":"Invalid JWT Signature."}"#
+                        .into(),
+                );
+            }
+            return (
+                200,
+                r#"{"access_token":"ya29.token-1","expires_in":3599,"token_type":"Bearer"}"#.into(),
+            );
+        }
+        assert_eq!(method, "GET");
+        assert_eq!(auth, "Bearer ya29.token-1", "{target}");
+        let instances = format!("/compute/v1/projects/{PROJECT}/aggregated/instances?");
+        if target.starts_with(&instances) {
+            assert!(target.contains("returnPartialSuccess=true"), "{target}");
+            if target.contains("pageToken=page-2") {
+                return (200, r#"{"items": {"zones/europe-west1-c": {"instances": [
+                    {"id": "222", "name": "db-01", "zone": "projects/example-project/zones/europe-west1-c",
+                     "machineType": "zones/europe-west1-c/machineTypes/n2-standard-4", "status": "TERMINATED",
+                     "networkInterfaces": [{"networkIP": "192.0.2.3"}]}]}}}"#.into());
+            }
+            return (200, r#"{"items": {
+                "zones/europe-west1-b": {"instances": [
+                    {"id": "111", "name": "web-01", "zone": "projects/example-project/zones/europe-west1-b",
+                     "machineType": "zones/europe-west1-b/machineTypes/e2-medium", "status": "RUNNING",
+                     "networkInterfaces": [{"networkIP": "192.0.2.2", "accessConfigs": [{"natIP": "203.0.113.7"}]}]}]},
+                "zones/us-east1-b": {"warning": {"code": "NO_RESULTS_ON_PAGE"}}},
+                "nextPageToken": "page-2"}"#.into());
+        }
+        if target.starts_with(&format!("/v3/projects/{PROJECT}/timeSeries?")) {
+            if mode == Gcp::NoMonitoring {
+                return (403, r#"{"error":{"code":403,"status":"PERMISSION_DENIED","message":"Permission monitoring.timeSeries.list denied (or the resource may not exist)."}}"#.into());
+            }
+            assert!(target.contains("resource.label.instance_id"), "{target}");
+            let point = |value: &str| {
+                format!(
+                    r#"{{"timeSeries":[{{"resource":{{"type":"gce_instance","labels":{{"instance_id":"111"}}}},"points":[{{"interval":{{"endTime":"2026-11-27T10:05:00Z"}},"value":{value}}},{{"interval":{{"endTime":"2026-11-27T10:00:00Z"}},"value":{{"doubleValue":99}}}}]}}]}}"#
+                )
+            };
+            let answer = if target.contains("cpu%2Futilization") {
+                point(r#"{"doubleValue":0.25}"#)
+            } else if target.contains("received_bytes_count") {
+                point(r#"{"doubleValue":1200}"#)
+            } else if target.contains("write_bytes_count") {
+                point(r#"{"doubleValue":40}"#)
+            } else {
+                "{}".into()
+            };
+            return (200, answer);
+        }
+        panic!("unexpected call: {method} {target}");
+    })
+}
+
+#[tokio::test]
+async fn a_google_cloud_project_gives_its_instances() {
+    let (base, seen) = serve(fake_gcp(Gcp::Allowed)).await;
+    let sensor =
+        CloudSensor::with_base(parse(GCP, &gcp_params("inventory")).unwrap(), &base).unwrap();
+    let samples = collect(&sensor).await;
+    let up = find(&samples, "up", "").unwrap();
+    assert_eq!(up.value, 1.0, "{:?}", up.labels);
+    assert_eq!(up.labels["provider"], "gcp");
+    assert_eq!(
+        up.labels["product"],
+        "Google Compute Engine (project example-project)"
+    );
+    let info = find(&samples, "vm_info", "web-01").unwrap();
+    assert_eq!(info.labels["key"], "111");
+    assert_eq!(info.labels["host"], "europe-west1-b");
+    assert_eq!(info.labels["size"], "e2-medium");
+    assert_eq!(info.labels["macs"], "42:01:c0:00:02:02");
+    assert_eq!(info.labels["addresses"], "192.0.2.2,203.0.113.7");
+    let value = |sensor: &str, instance: &str| find(&samples, sensor, instance).map(|s| s.value);
+    assert_eq!(value("vm_powered_on", "web-01"), Some(1.0));
+    assert_eq!(value("vm_cpu_usage_ratio", "web-01"), Some(0.25));
+    assert_eq!(
+        value("vm_network_in_bytes_per_second", "web-01"),
+        Some(1200.0)
+    );
+    assert_eq!(
+        value("vm_disk_write_bytes_per_second", "web-01"),
+        Some(40.0)
+    );
+    assert_eq!(value("vm_network_out_bytes_per_second", "web-01"), None);
+    assert_eq!(value("vm_powered_on", "db-01"), Some(0.0));
+    assert!(find(&samples, "vm_cpu_usage_ratio", "db-01").is_none());
+    assert!(find(&samples, "vm_status_checks_failed", "web-01").is_none());
+
+    // The token is kept for the next collection.
+    collect(&sensor).await;
+    let calls = seen.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.starts_with("POST /token"))
+            .count(),
+        1,
+        "{calls:?}"
+    );
+    // 2 pages of instances and 5 metrics, twice, and one token.
+    assert_eq!(calls.len(), 15, "{calls:?}");
+    assert!(
+        calls.iter().all(|c| !c.contains("PRIVATE")),
+        "the key never travels"
+    );
+}
+
+#[tokio::test]
+async fn google_cloud_failures_say_why() {
+    let (base, _) = serve(fake_gcp(Gcp::NoMonitoring)).await;
+    let sensor =
+        CloudSensor::with_base(parse(GCP, &gcp_params("inventory")).unwrap(), &base).unwrap();
+    let samples = collect(&sensor).await;
+    let up = find(&samples, "up", "").unwrap();
+    assert_eq!(up.value, 0.0);
+    assert_eq!(up.labels["reason"], "permission");
+    assert!(
+        up.labels["error"].starts_with(
+            "Cloud Monitoring: PERMISSION_DENIED: Permission monitoring.timeSeries.list"
+        ),
+        "{:?}",
+        up.labels
+    );
+    assert!(
+        find(&samples, "vm_info", "web-01").is_some(),
+        "machines are still listed"
+    );
+
+    let test = CloudSensor::with_base(parse(GCP, &gcp_params("test")).unwrap(), &base).unwrap();
+    let samples = collect(&test).await;
+    assert_eq!(find(&samples, "login", "").unwrap().value, 1.0);
+    assert_eq!(find(&samples, "vms", "").unwrap().value, 2.0);
+    assert_eq!(find(&samples, "running", "").unwrap().value, 1.0);
+    let metrics = find(&samples, "metrics", "").unwrap();
+    assert_eq!(
+        (metrics.value, metrics.labels["reason"].as_str()),
+        (0.0, "permission")
+    );
+}
+
+#[tokio::test]
+async fn a_refused_google_key_says_so() {
+    let (base, seen) = serve(fake_gcp(Gcp::Revoked)).await;
+    let sensor = CloudSensor::with_base(parse(GCP, &gcp_params("test")).unwrap(), &base).unwrap();
+    let samples = collect(&sensor).await;
+    let login = find(&samples, "login", "").unwrap();
+    assert_eq!(login.value, 0.0);
+    assert_eq!(login.labels["reason"], "login");
+    assert_eq!(
+        login.labels["error"],
+        "invalid_grant: Invalid JWT Signature."
+    );
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        1,
+        "nothing is asked without a token"
+    );
+}
+
 #[tokio::test]
 async fn real_endpoints_are_https_only() {
     // Built without a base, a sensor never speaks plain HTTP; nothing is
     // called here.
     assert!(CloudSensor::new(parse(AWS, &aws("inventory")).unwrap()).is_ok());
+    assert!(CloudSensor::new(parse(GCP, &gcp_params("inventory")).unwrap()).is_ok());
+    // Only this machine stands in for a provider.
+    let target = parse(GCP, &gcp_params("inventory")).unwrap();
+    assert!(CloudSensor::with_base(target.clone(), "http://198.51.100.7:8080").is_err());
+    assert!(CloudSensor::with_base(target, "http://localhost:9").is_ok());
 }

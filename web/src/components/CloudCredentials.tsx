@@ -24,9 +24,24 @@ export interface CloudForm {
   regions: string;
   tenant: string;
   subscription: string;
+  project: string;
 }
 
-export const NEW_CLOUD: CloudForm = { provider: "aws", key_id: "", secret: "", regions: "", tenant: "", subscription: "" };
+export const NEW_CLOUD: CloudForm = { provider: "aws", key_id: "", secret: "", regions: "", tenant: "", subscription: "", project: "" };
+
+/** Largest key file read, as the server takes. */
+const MAX_KEY = 16 * 1024;
+
+/** The service account and project of a Google JSON key, or null when it is not one. */
+export function readGcpKey(text: string): { email: string; project: string } | null {
+  try {
+    const key = JSON.parse(text) as Record<string, unknown>;
+    if (key.type !== "service_account" || typeof key.client_email !== "string" || typeof key.private_key !== "string") return null;
+    return { email: key.client_email, project: typeof key.project_id === "string" ? key.project_id : "" };
+  } catch {
+    return null;
+  }
+}
 
 /** The form of stored credentials: everything but the secret. */
 export function cloudForm(stored: CloudCredentials): CloudForm {
@@ -37,6 +52,7 @@ export function cloudForm(stored: CloudCredentials): CloudForm {
     regions: stored.regions.join(", "),
     tenant: stored.tenant ?? "",
     subscription: stored.subscription ?? "",
+    project: stored.project ?? "",
   };
 }
 
@@ -48,7 +64,7 @@ function regions(text: string): string[] {
     .filter(Boolean);
 }
 
-/** The fields of an AWS account or an Azure subscription (ADR-0183). */
+/** The fields of an AWS account, an Azure subscription or a Google Cloud project (ADR-0183). */
 export function CloudFields({
   value,
   onChange,
@@ -61,7 +77,20 @@ export function CloudFields({
 }) {
   const set = (patch: Partial<CloudForm>) => onChange({ ...value, ...patch });
   const aws = value.provider === "aws";
-  const text = (key: "key_id" | "tenant" | "subscription" | "regions", label: string, placeholder?: string) => (
+  const gcp = value.provider === "gcp";
+  const [keyError, setKeyError] = useState(false);
+  async function chooseKey(file: File | null) {
+    setKeyError(false);
+    if (!file) return;
+    const text = file.size <= MAX_KEY ? await file.text() : "";
+    const key = readGcpKey(text);
+    if (!key) {
+      setKeyError(true);
+      return set({ secret: "" });
+    }
+    set({ secret: text, key_id: key.email, project: value.project.trim() || key.project });
+  }
+  const text = (key: "key_id" | "tenant" | "subscription" | "regions" | "project", label: string, placeholder?: string) => (
     <label className={styles.field}>
       {label}
       <input
@@ -84,27 +113,54 @@ export function CloudFields({
           className={fieldClass}
           value={value.provider}
           disabled={keep}
-          onChange={(e) => set({ provider: e.target.value as CloudProvider })}
+          onChange={(e) => {
+            // Another provider's identity and secret never carry over.
+            setKeyError(false);
+            set({ provider: e.target.value as CloudProvider, key_id: "", secret: "" });
+          }}
         >
           <option value="aws">{t("cloud.provider.aws")}</option>
           <option value="azure">{t("cloud.provider.azure")}</option>
+          <option value="gcp">{t("cloud.provider.gcp")}</option>
         </select>
       </label>
-      <p className={styles.sectionNote}>{aws ? t("cloud.note.aws") : t("cloud.note.azure")}</p>
-      {!aws && text("tenant", t("cloud.tenant"))}
-      {text("key_id", aws ? t("cloud.keyId.aws") : t("cloud.keyId.azure"), aws ? "AKIA…" : undefined)}
-      <label className={styles.field}>
-        {aws ? t("cloud.secret.aws") : t("cloud.secret.azure")}
-        <input
-          className={fieldClass}
-          type="password"
-          autoComplete="new-password"
-          value={value.secret}
-          onChange={(e) => set({ secret: e.target.value })}
-        />
-        {keep && <span className={styles.sectionNote}>{t("cloud.secretKeep")}</span>}
-      </label>
-      {aws ? text("regions", t("cloud.regions"), "eu-west-3") : text("subscription", t("cloud.subscription"))}
+      <p className={styles.sectionNote}>{aws ? t("cloud.note.aws") : gcp ? t("cloud.note.gcp") : t("cloud.note.azure")}</p>
+      {gcp && (
+        <>
+          <label className={styles.field}>
+            {t("cloud.secret.gcp")}
+            <input type="file" accept=".json,application/json" onChange={(e) => void chooseKey(e.target.files?.[0] ?? null)} />
+            {keyError && (
+              <span className={styles.formError} role="alert">
+                {t("cloud.keyBad")}
+              </span>
+            )}
+            {!keyError && value.secret && value.key_id && <span className={styles.sectionNote}>{t("cloud.keyRead", { account: value.key_id })}</span>}
+            {!keyError && !value.secret && keep && value.key_id && (
+              <span className={styles.sectionNote}>{t("cloud.keyKeep", { account: value.key_id })}</span>
+            )}
+          </label>
+          {text("project", t("cloud.project"), "my-project-123")}
+        </>
+      )}
+      {!gcp && (
+        <>
+          {!aws && text("tenant", t("cloud.tenant"))}
+          {text("key_id", aws ? t("cloud.keyId.aws") : t("cloud.keyId.azure"), aws ? "AKIA…" : undefined)}
+          <label className={styles.field}>
+            {aws ? t("cloud.secret.aws") : t("cloud.secret.azure")}
+            <input
+              className={fieldClass}
+              type="password"
+              autoComplete="new-password"
+              value={value.secret}
+              onChange={(e) => set({ secret: e.target.value })}
+            />
+            {keep && <span className={styles.sectionNote}>{t("cloud.secretKeep")}</span>}
+          </label>
+          {aws ? text("regions", t("cloud.regions"), "eu-west-3") : text("subscription", t("cloud.subscription"))}
+        </>
+      )}
     </>
   );
 }
@@ -112,6 +168,7 @@ export function CloudFields({
 /** What is missing before credentials can be sent, or null. */
 export function cloudProblem(value: CloudForm, keep: boolean): string | null {
   const aws = value.provider === "aws";
+  if (value.provider === "gcp") return (!value.secret && !keep) || !value.project.trim() ? t("cloud.need") : null;
   const missing =
     !value.key_id.trim() ||
     (!value.secret && !keep) ||
@@ -122,6 +179,14 @@ export function cloudProblem(value: CloudForm, keep: boolean): string | null {
 /** The request for `value`: an empty secret left out, so a stored one is kept. */
 export function cloudRequest(value: CloudForm): CloudCredentialsRequest {
   const aws = value.provider === "aws";
+  if (value.provider === "gcp") {
+    return {
+      provider: "gcp",
+      ...(value.key_id.trim() && { key_id: value.key_id.trim() }),
+      ...(value.secret && { secret: value.secret }),
+      project: value.project.trim(),
+    };
+  }
   return {
     provider: value.provider,
     key_id: value.key_id.trim(),
@@ -133,6 +198,7 @@ export function cloudRequest(value: CloudForm): CloudCredentialsRequest {
 /** "AWS, key AKIA…, eu-west-3, us-east-1", or "Not set". */
 export function cloudSummary(stored: CloudCredentials | null): string {
   if (!stored) return t("cloud.factNone");
+  if (stored.provider === "gcp") return t("cloud.factGcp", { project: stored.project ?? "" });
   return stored.provider === "aws"
     ? t("cloud.factAws", { key: stored.key_id, regions: stored.regions.join(", ") })
     : t("cloud.factAzure", { subscription: stored.subscription ?? "" });

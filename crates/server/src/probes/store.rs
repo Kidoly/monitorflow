@@ -132,12 +132,13 @@ impl ProbeStore {
 
 /// Kinds whose checks run with their device's credentials (ADR-0149,
 /// ADR-0156, ADR-0157, ADR-0183).
-pub const CREDENTIALED: [&str; 5] = [
+pub const CREDENTIALED: [&str; 6] = [
     monitorflow_snmp::KIND,
     monitorflow_snmp::CUSTOM_KIND,
     monitorflow_vmware::KIND,
     monitorflow_cloud::AWS,
     monitorflow_cloud::AZURE,
+    monitorflow_cloud::GCP,
 ];
 
 /// Adds to each check of `kind` its device's credentials; checks of a

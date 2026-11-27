@@ -1823,6 +1823,7 @@ name = "monitorflow-cloud"
 version = "0.12.1"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "chrono",
  "http-body-util",
  "hyper",

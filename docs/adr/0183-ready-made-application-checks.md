@@ -1,7 +1,7 @@
 # ADR-0183: Ready-made application checks
 
 Date: 2026-11-24
-Status: accepted; extends ADR-0148 (checks from a probe), ADR-0150 (sealed check passwords) and ADR-0146 (what the importer moves). Completed on 2026-11-25 with SQL Server, and with cloud accounts (AWS and Azure), which reuse the inventory of ADR-0156, and on 2026-11-26 with Kubernetes clusters
+Status: accepted; extends ADR-0148 (checks from a probe), ADR-0150 (sealed check passwords) and ADR-0146 (what the importer moves). Completed on 2026-11-25 with SQL Server, and with cloud accounts (AWS and Azure), which reuse the inventory of ADR-0156, on 2026-11-26 with Kubernetes clusters, and on 2026-11-27 with Google Cloud projects
 
 ## Context
 
@@ -103,7 +103,7 @@ Pods are counted per namespace, not one series per pod: pod names change with ev
 
 **Tests.** A fake API server over TLS with a CA of its own (`crates/apps/src/kubernetes/tests.rs`) covers pages, namespaces, restarts, 401, 403, an untrusted certificate and a closed port. `scripts/kubernetes-test.sh` runs k3s in a container, applies the guide's manifest, checks with `kubectl auth can-i` what the account may and may not do, and runs `crates/apps/tests/real.rs` against it. It runs k3s without a pod network (`--flannel-backend=none`, no kube-proxy), since those need iptables modules a test machine may lack and the check reads only the API; its node is then not ready and its pods pending, which the test reads as such.
 
-### Cloud accounts: AWS and Azure
+### Cloud accounts: AWS, Azure and Google Cloud
 
 **An AWS account or an Azure subscription is a device**, as a vCenter is (ADR-0156): `POST /api/devices` with `cloud` credentials, no address to type (it becomes the provider's API host) and no ping. Its check, of kind `aws` or `azure` from a crate of its own, `monitorflow-cloud`, runs every 5 minutes (120 s timeout) **on the central server only**: the store never sends a cloud check to a relay, the API refuses one with a relay as its probe, and relays are not built with the crate. A cloud account is reached over the Internet like the central server's own website checks, and keeping its secret on one machine is simpler than on every relay of a site.
 
@@ -121,7 +121,16 @@ The newest point of the last 20 minutes is taken, as basic EC2 monitoring lags. 
 
 **Small HTTP clients instead of the SDKs.** AWS is three Query API calls (`ec2:DescribeInstances`, `ec2:DescribeInstanceStatus`, `cloudwatch:GetMetricData` with up to 500 queries a call), signed with Signature Version 4 written here on `ring`'s HMAC-SHA256 and SHA-256 (about a hundred lines, tested against vectors of the AWS test suite), answers read with the bounded XML reader of `monitorflow-vmware`. Azure is OAuth 2.0 client credentials against `login.microsoftonline.com` for a Resource Manager token, kept until a minute before it expires, then `GET`s of Resource Manager: virtual machines with `statusOnly=true` (their power state in one list), network interfaces (MAC and private addresses), and one Azure Monitor metrics request per running machine, eight at a time. A `nextLink` is followed only on Resource Manager's own host, so the token goes nowhere else. Every request is HTTPS (`https_only`), redirects are not followed, answers are bounded to 32 MiB, and no parameter names an endpoint: a stored check cannot be pointed at another host. Tests use fake APIs on the loopback through a constructor only tests reach.
 
-**Credentials are the device's, sealed** in `cloud_credentials` (one row per device: `provider`, `settings` with what is not secret, and `secret` sealed as `cloud_credentials.secret`, ADR-0125), as vCenter credentials are. The API never returns the secret (`secret_set`), refuses credentials as check parameters, and audits `device.create`, `device.cloud_update` and `device.cloud_delete` without it. A change keeps the stored secret only while the provider and the identity stay the same (the access key ID, or the tenant and application): a kept secret never goes to another identity. The provider cannot change. The store adds the credentials to the check in memory on the central server; the sensor's `Debug` hides them, and errors are the provider's messages, which never quote them.
+**Google Cloud** (2026-11-27) is a third kind, `gcp`, on the same model: a project is a device, read with a service account's JSON key, given whole as the `secret` and sealed as is. The key names the service account (`client_email`, stored as `key_id`) and its project (`project_id`, the default of `project`, which may name another project the account can read). The sensor signs a JWT with RS256 on `ring` (`RsaKeyPair::from_pkcs8`, the key's `private_key_id` as `kid`), for the read-only scopes `compute.readonly` and `monitoring.read` and the audience `https://oauth2.googleapis.com/token`, and exchanges it there for an access token (RFC 7523), kept until a minute before it expires. Then Compute Engine's `instances.aggregatedList` gives every zone's instances in pages of 500 (`nextPageToken` names a page, never a host, so the token goes nowhere else), and Cloud Monitoring's `timeSeries.list` is asked once per metric for the whole project, aligned over 300 s and grouped by `resource.label.instance_id`: five calls whatever the number of machines. The `key` is the numeric instance ID, `host` the zone, `size` the machine type, the guest host name the instance's `hostname` or its zonal internal DNS name (`<name>.<zone>.c.<project>.internal`), the OS the boot disk's first license. A Compute Engine MAC address is `42:01` followed by the internal IPv4 address, which the sensor writes, so a machine with the agent matches by MAC as an EC2 instance does. Compute Engine has no status checks: `vm_status` stays unknown and the only default alert is `monitorflow_gcp_up`. The uptime metric the first plan named is not read: the shared model has no measure for it and `vm_powered_on` says what matters. Requests are HTTPS like the others; tests reach a fake on the loopback, and the cloud sensor now refuses any test base that is not this machine, for every provider.
+
+| Measure | Google Cloud |
+| --- | --- |
+| `vm_powered_on` | `status` is `RUNNING` |
+| `vm_cpu_usage_ratio` | `compute.googleapis.com/instance/cpu/utilization` (`ALIGN_MEAN`) |
+| `vm_network_in_bytes_per_second`, `vm_network_out_bytes_per_second` | `instance/network/received_bytes_count`, `sent_bytes_count` (`ALIGN_RATE`, summed per instance) |
+| `vm_disk_read_bytes_per_second`, `vm_disk_write_bytes_per_second` | `instance/disk/read_bytes_count`, `write_bytes_count` (`ALIGN_RATE`, summed over disks) |
+
+**Credentials are the device's, sealed** in `cloud_credentials` (one row per device: `provider`, `settings` with what is not secret, and `secret` sealed as `cloud_credentials.secret`, ADR-0125), as vCenter credentials are. The API never returns the secret (`secret_set`), refuses credentials as check parameters, and audits `device.create`, `device.cloud_update` and `device.cloud_delete` without it. A change keeps the stored secret only while the provider and the identity stay the same (the access key ID, the tenant and application, or the service account): a kept secret never goes to another identity. The provider cannot change. The store adds the credentials to the check in memory on the central server; the sensor's `Debug` hides them, and errors are the provider's messages, which never quote them.
 
 **Least rights**, as the guide says step by step:
 
@@ -129,6 +138,7 @@ The newest point of the last 20 minutes is taken, as basic EC2 monitoring lags. 
 | --- | --- |
 | AWS | An IAM user's access key with a policy allowing only `ec2:DescribeInstances`, `ec2:DescribeInstanceStatus` and `cloudwatch:GetMetricData` on `*` (they take no resource) |
 | Azure | A service principal (application ID and client secret) with the built-in Reader role on the subscription, or a custom role with `Microsoft.Compute/virtualMachines/read`, `Microsoft.Compute/virtualMachines/instanceView/read`, `Microsoft.Network/networkInterfaces/read` and `Microsoft.Insights/metrics/read` |
+| Google Cloud | A service account's JSON key with the roles Compute Viewer and Monitoring Viewer on the project, or a custom role with `compute.instances.list` and `monitoring.timeSeries.list` |
 
 No call of either client changes anything in the account, and nothing runs on a monitored server, so no consent on a server is involved.
 
@@ -151,7 +161,7 @@ For Kubernetes, PRTG has no sensor of its own: people read a cluster with REST C
 - **SQL Server, what is left**: signing in with a Windows account (NTLM or Kerberos through SSPI on the Windows agent), TDS 8.0's strict encryption, and finding a named instance's port through SQL Server Browser.
 - **Java (JMX)**: delivered, see its section below.
 - **Kubernetes** is now decided above. Left for later: an inventory of the cluster's objects shown on the device's page, as VMware's (`_info` samples into `virtual_objects`, ADR-0156), and nodes matched to the servers already monitored; jobs and cron jobs that failed; and the resource use of pods and nodes, which needs metrics-server (`metrics.k8s.io`).
-- **Google Cloud**, a third cloud account kind, `gcp`, on the model above: a service account's JSON key sealed per device, an OAuth token from a JWT signed with RS256 on `ring` (`RsaKeyPair::from_pkcs8`), Compute Engine's `instances.aggregatedList` for the machines (a GCP MAC address is `42:01` followed by the internal IPv4 address, which agents report), and Cloud Monitoring's `timeSeries.list` once per metric for the whole project (processor utilization, network and disk bytes, uptime), with the roles Compute Viewer and Monitoring Viewer. Left out of the first change to keep it reviewable.
+- **Google Cloud**: delivered, see above.
 - **Managed databases** (RDS, Azure SQL, Cloud SQL) then reuse the database kinds above for what is inside, and the cloud check for what the provider sees. AWS accounts reached by assuming a role (`sts:AssumeRole`) rather than with a user's key, and agents reporting their EC2 instance ID for exact matching, come with them.
 - **Jolokia with a pinned certificate**: Jolokia's HTTPS certificates are often self-signed; accepting one by its SHA-256 fingerprint, as vCenter's are (ADR-0156), would let a probe send the password without a certificate the machine trusts.
 - **Encrypted Redis** and an **agent-local Unix socket** for PostgreSQL and MySQL (peer authentication without a password).
@@ -182,7 +192,7 @@ Rejected: **the JMX exporter or the Zabbix Java gateway as the bridge**, each a 
 - **Docker from a probe over the engine's TCP API.** It needs the API opened on the network with a client certificate equal to root on every Docker host; the agent is already there.
 - **Alerts written by the web interface after the check**, as for services. They would not exist for API clients without each one copying the list; a template served by the server, applied in the check's transaction, is the same for everyone.
 - **`tiberius` for SQL Server.** Its rustls backend hard-codes aws-lc-rs; see above.
-- **The AWS and Azure SDKs for cloud accounts.** `aws-sdk-ec2` and `aws-sdk-cloudwatch` with their runtime, and the Azure crates, add hundreds of dependencies and their own HTTP stacks for five read calls; Signature Version 4 is short, specified with test vectors, and `ring` is already in the workspace.
+- **The AWS, Azure and Google Cloud SDKs for cloud accounts.** `aws-sdk-ec2` and `aws-sdk-cloudwatch` with their runtime, the Azure crates, and `google-cloud-*` or `yup-oauth2` add hundreds of dependencies and their own HTTP stacks for a few read calls; Signature Version 4 is short, specified with test vectors, an RS256 JWT is a few lines on `ring`, which is already in the workspace.
 - **Azure Resource Graph for the machines**, as first planned. It needs the same Reader right but a query language whose answers are harder to bound, and it throttles per user; Resource Manager's list with `statusOnly=true` gives the power state in pages, and the network interfaces come in one more list.
 - **Cloud checks from relays.** A site's relay rarely needs the Internet, and the secret of an account that may hold every machine of a customer stays on the central server.
 - **sqlx's RSA support for MySQL 8 without TLS.** Its `rsa` crate has an unfixed timing advisory; MySQL 8 enables TLS by default, which this path uses.
@@ -195,8 +205,8 @@ Rejected: **the JMX exporter or the Zabbix Java gateway as the bridge**, each a 
 - Watching Docker gives the agent's account root's power on that host, which a person grants knowingly; the agent's code only reads.
 - The real tests (`crates/apps/tests/real.rs`, with `scripts/apps-test.sh`, Tomcat and a Kafka broker with Jolokia among them) need Docker (and 2 GB of memory for SQL Server 2022, whose test builds an availability group of one replica without a cluster) and are not run by CI, which has no database containers; parsing, limits and failures are unit tested everywhere.
 - SQL Server's own TDS client is code to keep, as RESP is; its tests cover the packets, the login and every token it reads, against a fake server and a real one.
-- AWS accounts and Azure subscriptions are watched with read-only credentials, their machines in the same inventory as a vCenter's; a missing right shows on the account's page with the provider's message.
-- CloudWatch's `GetMetricData` costs a little per running instance, which the guide states.
-- Google Cloud stays on the roadmap as its own task, as do SQL Server's Windows sign-in, Kubernetes' inventory page and nodes matched to servers.
+- AWS accounts, Azure subscriptions and Google Cloud projects are watched with read-only credentials, their machines in the same inventory as a vCenter's; a missing right shows on the account's page with the provider's message.
+- CloudWatch's `GetMetricData` costs a little per running instance, which the guide states; Cloud Monitoring is asked five calls per project every 5 minutes.
+- SQL Server's Windows sign-in, Kubernetes' inventory page and nodes matched to servers stay on the roadmap as their own tasks.
 - A JVM is watched only with Jolokia loaded into it, a change to its start options that a person makes; the check counts deadlocked threads only if Jolokia's policy allows `exec`.
 - A Kubernetes check reads every pod of the cluster each collection: about 1 MiB of JSON per 300 pods, within the 64 MiB and 10,000 objects of a list it stops at.

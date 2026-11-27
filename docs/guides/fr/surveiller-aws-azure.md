@@ -1,14 +1,14 @@
 ---
-title: "Comment surveiller les machines virtuelles AWS et Azure"
-description: "Surveillez les instances EC2 d'un compte AWS et les machines virtuelles d'un abonnement Azure : leur état, leurs contrôles d'état, leur processeur, leur réseau et leurs disques, avec des identifiants en lecture seule, et reliez chacune à son serveur."
+title: "Comment surveiller les machines virtuelles AWS, Azure et Google Cloud"
+description: "Surveillez les instances EC2 d'un compte AWS, les machines virtuelles d'un abonnement Azure et les instances Compute Engine d'un projet Google Cloud : leur état, leurs contrôles d'état, leur processeur, leur réseau et leurs disques, avec des identifiants en lecture seule, et reliez chacune à son serveur."
 slug: surveiller-aws-azure
 lang: fr
 translation: monitor-aws-azure
 ---
 
-# Comment surveiller les machines virtuelles AWS et Azure
+# Comment surveiller les machines virtuelles AWS, Azure et Google Cloud
 
-Un compte cloud contient des machines où personne n'a installé l'agent, et des machines dont l'hôte tombe en panne sans qu'elles le sachent. MonitorFlow lit un compte AWS ou un abonnement Azure par son API, toutes les 5 minutes depuis le serveur central, avec des identifiants qui ne peuvent que lire. Chaque machine virtuelle montre son état, ses contrôles d'état et ses métriques de base, et elle est reliée au serveur que vous surveillez déjà quand c'en est un.
+Un compte cloud contient des machines où personne n'a installé l'agent, et des machines dont l'hôte tombe en panne sans qu'elles le sachent. MonitorFlow lit un compte AWS, un abonnement Azure ou un projet Google Cloud par son API, toutes les 5 minutes depuis le serveur central, avec des identifiants qui ne peuvent que lire. Chaque machine virtuelle montre son état, ses contrôles d'état et ses métriques de base, et elle est reliée au serveur que vous surveillez déjà quand c'en est un.
 
 ## Pourquoi c'est important
 
@@ -61,6 +61,24 @@ Microsoft.Insights/metrics/read
 
 Sans `networkInterfaces/read`, les machines sont listées sans leurs cartes réseau ni leurs adresses, et moins d'entre elles sont reliées à leur serveur.
 
+## Google Cloud : créer un compte de service avec une clé JSON
+
+Les rôles **Lecteur de Compute** (Compute Viewer) et **Lecteur Monitoring** (Monitoring Viewer) sur le projet suffisent. Avec la CLI gcloud :
+
+```
+gcloud iam service-accounts create monitorflow-reader --project <project-id>
+gcloud projects add-iam-policy-binding <project-id> \
+  --member serviceAccount:monitorflow-reader@<project-id>.iam.gserviceaccount.com --role roles/compute.viewer
+gcloud projects add-iam-policy-binding <project-id> \
+  --member serviceAccount:monitorflow-reader@<project-id>.iam.gserviceaccount.com --role roles/monitoring.viewer
+gcloud iam service-accounts keys create monitorflow-key.json \
+  --iam-account monitorflow-reader@<project-id>.iam.gserviceaccount.com
+```
+
+La dernière commande écrit le fichier de clé. Il contient une clé privée : donnez-le à MonitorFlow, puis supprimez-le. Pour donner moins que ces rôles, créez un rôle personnalisé avec seulement `compute.instances.list` et `monitoring.timeSeries.list`. Si votre organisation interdit les clés de compte de service (la règle `iam.disableServiceAccountKeyCreation`), un administrateur doit les autoriser pour ce projet. Le même compte de service peut lire d'autres projets dès qu'il y a les rôles : ajoutez un équipement par projet.
+
+MonitorFlow demande à Cloud Monitoring cinq listes par projet toutes les 5 minutes, quel que soit le nombre de machines, soit environ 43 200 appels par mois et par projet. Consultez la tarification de Cloud Monitoring de Google pour les lectures au-delà du quota gratuit.
+
 ## Ajouter le compte
 
 Dans le parc, **Ajouter un équipement** : un nom comme *AWS production*, puis cochez **C'est un compte cloud**. Choisissez le fournisseur et remplissez ce qu'il demande :
@@ -69,21 +87,22 @@ Dans le parc, **Ajouter un équipement** : un nom comme *AWS production*, puis 
 | --- | --- |
 | AWS | ID de clé d'accès, clé d'accès secrète, régions (comme `eu-west-3, us-east-1`) |
 | Azure | ID de l'annuaire (locataire), ID d'application (client), secret client, ID d'abonnement |
+| Google Cloud | Le fichier de clé du compte de service, ID du projet (celui de la clé est rempli) |
 
 **Tester les identifiants** : le serveur central se connecte une fois et dit combien de machines il voit, combien tournent, et si les métriques sont lisibles. **Ajouter l'équipement**. Il n'y a pas d'adresse à taper ni de ping : la page du compte montre ses machines dans les 5 minutes.
 
-Le secret est enregistré scellé, n'est plus jamais affiché et n'est jamais écrit dans les journaux ni dans le journal d'audit. Dans les **Détails** de l'équipement, **Compte cloud › Modifier…** change les régions ou le secret ; une nouvelle clé d'accès ou un autre locataire demande son propre secret. Les relais ne reçoivent jamais d'identifiants cloud : le compte est toujours lu par le serveur central.
+Le secret est enregistré scellé, n'est plus jamais affiché et n'est jamais écrit dans les journaux ni dans le journal d'audit. Dans les **Détails** de l'équipement, **Compte cloud › Modifier…** change les régions, le projet ou le secret ; une nouvelle clé d'accès, un autre locataire ou un autre compte de service demande son propre secret. Les relais ne reçoivent jamais d'identifiants cloud : le compte est toujours lu par le serveur central.
 
 ## Ce que MonitorFlow vérifie
 
-| Affiché | AWS | Azure |
-| --- | --- | --- |
-| État | En marche, arrêtée, en attente | En marche, arrêtée, désallouée |
-| Zone et type | Zone de disponibilité, type d'instance | Région, taille |
-| Processeur | CloudWatch `CPUUtilization` | Azure Monitor `Percentage CPU` |
-| Réseau | `NetworkIn`, `NetworkOut` | `Network In Total`, `Network Out Total` |
-| Disques | `EBSReadBytes`, `EBSWriteBytes` | `Disk Read Bytes`, `Disk Write Bytes` |
-| Contrôles d'état | Contrôles du système, de l'instance et des volumes attachés | Disponibilité de la machine vue par Azure (`VmAvailabilityMetric`) |
+| Affiché | AWS | Azure | Google Cloud |
+| --- | --- | --- | --- |
+| État | En marche, arrêtée, en attente | En marche, arrêtée, désallouée | En marche, arrêtée (terminated), suspendue |
+| Zone et type | Zone de disponibilité, type d'instance | Région, taille | Zone, type de machine |
+| Processeur | CloudWatch `CPUUtilization` | Azure Monitor `Percentage CPU` | Cloud Monitoring `instance/cpu/utilization` |
+| Réseau | `NetworkIn`, `NetworkOut` | `Network In Total`, `Network Out Total` | `instance/network/received_bytes_count`, `sent_bytes_count` |
+| Disques | `EBSReadBytes`, `EBSWriteBytes` | `Disk Read Bytes`, `Disk Write Bytes` | `instance/disk/read_bytes_count`, `write_bytes_count` |
+| Contrôles d'état | Contrôles du système, de l'instance et des volumes attachés | Disponibilité de la machine vue par Azure (`VmAvailabilityMetric`) | Aucun : Compute Engine n'en a pas |
 
 Le réseau et les disques sont affichés par seconde, en moyenne sur 5 minutes. La surveillance de base d'EC2 a un point toutes les 5 minutes : la valeur la plus récente peut donc dater de 10 minutes. Les machines arrêtées n'ont ni métriques ni contrôles d'état.
 
@@ -92,13 +111,13 @@ Les alertes fournies, modifiables sur la page de l'équipement comme tout seuil�
 | Alerte | Par défaut |
 | --- | --- |
 | Le compte n'est pas lisible (identifiants refusés, droit manquant, API qui ne répond pas) | Critique après 10 minutes, avec le message du fournisseur |
-| Un contrôle d'état échoue | Critique après 10 minutes, par machine |
+| Un contrôle d'état échoue (AWS et Azure) | Critique après 10 minutes, par machine |
 
 ## Les machines et les serveurs déjà surveillés
 
-MonitorFlow relie chaque machine au serveur ou à l'équipement du même client qu'elle est, comme pour VMware : sur Azure par son identifiant matériel (l'ID de VM est celui que l'agent remonte), sur AWS par l'adresse MAC d'une carte réseau, puis par une adresse ou le nom d'hôte. La ligne de la machine nomme son serveur et la façon dont il a été trouvé ; **Pas celle-ci** et **Associer automatiquement** le corrigent. Une machine sans l'agent a **Installer l'agent**.
+MonitorFlow relie chaque machine au serveur ou à l'équipement du même client qu'elle est, comme pour VMware : sur Azure par son identifiant matériel (l'ID de VM est celui que l'agent remonte), sur AWS et Google Cloud par l'adresse MAC d'une carte réseau (sur Google Cloud, `42:01` suivi de l'adresse interne), puis par une adresse ou le nom d'hôte. La ligne de la machine nomme son serveur et la façon dont il a été trouvé ; **Pas celle-ci** et **Associer automatiquement** le corrigent. Une machine sans l'agent a **Installer l'agent**.
 
 ## Quand une alerte se déclenche
 
 - **Un contrôle d'état échoue** sur AWS : un contrôle du système désigne l'hôte ; arrêtez puis démarrez l'instance (sans simple redémarrage) pour la déplacer sur un autre. Un contrôle de l'instance désigne la machine elle-même : regardez la sortie de sa console pour un disque plein ou un réglage réseau. Sur Azure, regardez l'**État des ressources** de la machine.
-- **Le compte n'est pas lisible** : le message dit ce qu'AWS ou Azure a refusé : une clé d'accès supprimée ou renouvelée, un secret client expiré (ils durent deux ans au plus), ou un droit retiré.
+- **Le compte n'est pas lisible** : le message dit ce qu'AWS, Azure ou Google Cloud a refusé : une clé d'accès supprimée ou renouvelée, un secret client expiré (ils durent deux ans au plus), une clé de compte de service supprimée ou désactivée, ou un droit retiré.

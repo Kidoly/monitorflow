@@ -11,7 +11,7 @@ use monitorflow_sensors::virt::{Status, Vm};
 use monitorflow_vmware::xml::{self, Element};
 use ring::{digest, hmac};
 
-use crate::http::{bounded, encode, form, Failure, Http};
+use crate::http::{bounded, encode, form, is_local, Failure, Http};
 use crate::CloudVm;
 
 const EC2_VERSION: &str = "2016-11-15";
@@ -98,16 +98,6 @@ pub fn authorization(
     let key = mac(key.as_ref(), "aws4_request");
     let signature = hex(mac(key.as_ref(), &to_sign).as_ref());
     format!("AWS4-HMAC-SHA256 Credential={key_id}/{scope}, SignedHeaders={signed}, Signature={signature}")
-}
-
-/// `base` is a test server on this machine: `http://127.0.0.1:port` or
-/// `http://localhost:port`.
-fn is_local(base: &str) -> bool {
-    let Some(rest) = base.strip_prefix("http://") else {
-        return false;
-    };
-    let host = rest.split(['/', ':']).next().unwrap_or("");
-    host == "127.0.0.1" || host == "localhost" || rest.starts_with("[::1]")
 }
 
 /// An AWS account read with one access key.

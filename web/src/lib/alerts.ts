@@ -967,6 +967,8 @@ function ownTitle(sensor: EffectiveSensor): string {
       return t("cloud.check.aws");
     case "azure":
       return t("cloud.check.azure");
+    case "gcp":
+      return t("cloud.check.gcp");
     case "postgresql":
     case "mysql":
     case "mssql":
