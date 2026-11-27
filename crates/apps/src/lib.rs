@@ -20,9 +20,9 @@
 //! or a log line.
 
 pub mod docker;
-pub mod mssql;
 pub mod jmx;
 pub mod kubernetes;
+pub mod mssql;
 pub mod mysql;
 mod params;
 pub mod postgresql;

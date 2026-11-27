@@ -1577,7 +1577,9 @@ mod tests {
         // REST Custom may read Jolokia too: its settings hold both URLs.
         assert_eq!(family("restcustom"), Family::HttpData);
         assert_eq!(family("paessler.rest.custom"), Family::HttpData);
-        assert!(REST_SETTINGS.iter().all(|s| wanted("restcustom").0.contains(s)));
+        assert!(REST_SETTINGS
+            .iter()
+            .all(|s| wanted("restcustom").0.contains(s)));
         let sensor = |t: &str, url: Option<&str>| {
             let mut s = Object::new(1, Kind::Sensor, "API", Some(0));
             s.sensor_type = Some(t.into());
