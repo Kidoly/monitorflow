@@ -15,6 +15,7 @@
 //! and one whose browser never came ([`RemoteHub::tidy`]).
 
 pub mod desktop;
+pub mod rdp;
 mod session;
 
 use std::collections::HashMap;
@@ -145,6 +146,11 @@ impl RemoteHub {
             }
         });
         hub
+    }
+
+    /// The database, for what a session writes besides its row.
+    pub(crate) fn pool(&self) -> &PgPool {
+        &self.inner.pool
     }
 
     fn local(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, mpsc::Sender<Inbound>>> {
@@ -386,6 +392,14 @@ impl RemoteHub {
         sqlx::query(
             "DELETE FROM remote_session_recordings rec USING remote_sessions r
              WHERE rec.session_id = r.id
+               AND r.created_at < now() - make_interval(days => (
+                   SELECT retention_days FROM remote_access_settings))",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "DELETE FROM remote_desktop_frames f USING remote_sessions r
+             WHERE f.session_id = r.id
                AND r.created_at < now() - make_interval(days => (
                    SELECT retention_days FROM remote_access_settings))",
         )

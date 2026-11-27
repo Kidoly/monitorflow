@@ -1,0 +1,22 @@
+/* Play, the position, the time and the speed on one line, of one height. */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-height: var(--control-h);
+}
+
+.position {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* The screen scales to the page's width: no scrollbars. */
+.screen {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-panel);
+  background: #0c0c0e;
+}

@@ -1,4 +1,4 @@
-import type { RemoteSession, ServerDetail } from "./api";
+import type { DesktopFrame, RemoteSession, ServerDetail } from "./api";
 import { acceptance, type Acceptance } from "./commandKinds";
 
 /** What the agent does with remote terminals, as it last reported (ADR-0190). */
@@ -55,4 +55,34 @@ export function decodeChunk(data: string): Uint8Array {
   const bytes = new Uint8Array(text.length);
   for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
   return bytes;
+}
+
+/** Whether a picture of a desktop's recording covers the whole screen: a replay can start from it (ADR-0192). */
+export const isWhole = (frame: DesktopFrame): boolean =>
+  frame.x === 0 && frame.y === 0 && frame.width === frame.screen_width && frame.height === frame.screen_height;
+
+/**
+ * The pictures to draw, in order, to show the screen at `ms` when those up to index `drawn` are drawn (-1
+ * for none), and the index of the last of them. Going back, or past a whole picture, starts again from
+ * the last whole picture before `ms`.
+ */
+export function framesToDraw(frames: DesktopFrame[], drawn: number, ms: number): { draw: DesktopFrame[]; drawn: number } {
+  let target = -1;
+  let whole = -1;
+  for (const [i, frame] of frames.entries()) {
+    if (frame.at_ms > ms) break;
+    target = i;
+    if (isWhole(frame)) whole = i;
+  }
+  if (target < 0 || target === drawn) return { draw: [], drawn: target };
+  const start = target > drawn && whole <= drawn ? drawn + 1 : Math.max(whole, 0);
+  return { draw: frames.slice(start, target + 1), drawn: target };
+}
+
+/** "0:05", "12:30", "1:02:03". */
+export function clock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const [h, m, s] = [Math.floor(total / 3600), Math.floor(total / 60) % 60, total % 60];
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }

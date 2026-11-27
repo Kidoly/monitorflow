@@ -1702,6 +1702,10 @@ pub fn router(state: ApiState) -> Router {
             get(remote_sessions::recording),
         )
         .route(
+            "/api/remote-sessions/{id}/recording/frames/{seq}",
+            get(remote_sessions::frame),
+        )
+        .route(
             "/api/remote-sessions/{id}/socket",
             get(remote_sessions::socket),
         )

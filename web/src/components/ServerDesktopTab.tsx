@@ -22,6 +22,9 @@ import { RemoteSessionsTable } from "./ServerTerminalTab";
 
 // IronRDP's WebAssembly client, a few MB, is loaded only on this tab.
 const RemoteDesktop = dynamic(() => import("./RemoteDesktop").then((m) => m.RemoteDesktop), { ssr: false });
+const DesktopRecordingView = dynamic(() => import("./DesktopRecording").then((m) => m.DesktopRecordingView), {
+  ssr: false,
+});
 
 function statusLine(state: DesktopState | null): string {
   switch (state?.step) {
@@ -41,7 +44,8 @@ const EMPTY: DesktopCredentials = { username: "", password: "", domain: "" };
 
 /**
  * The Remote desktop tab of a Windows server (ADR-0190): a sign-in with a Windows account, the live
- * desktop through the server's own Remote Desktop service, and the server's past desktop sessions.
+ * desktop through the server's own Remote Desktop service, and the server's past desktop sessions with
+ * the replay of recorded ones (ADR-0192).
  */
 export function ServerDesktopTab({ server }: { server: ServerDetail }) {
   const me = useMe();
@@ -54,6 +58,7 @@ export function ServerDesktopTab({ server }: { server: ServerDetail }) {
   const [state, setState] = useState<DesktopState | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [controls, setControls] = useState<DesktopControls | null>(null);
+  const [replay, setReplay] = useState<string | null>(null);
   const fetcher = useCallback((signal: AbortSignal) => api.remoteSessions(server.id, signal), [server.id]);
   const sessions = usePolledData(fetcher, { enabled: access?.can_review ?? false });
   const refreshSessions = sessions.refresh;
@@ -95,6 +100,7 @@ export function ServerDesktopTab({ server }: { server: ServerDetail }) {
           <div className={terminalStyles.bar}>
             <span className={terminalStyles.status} role="status">
               {run === null ? t("remote.desktop.intro", { minutes: access.idle_timeout_minutes }) : statusLine(state)}
+              {run === null && access.recorded && ` ${t("remote.terminal.recordedNote")}`}
             </span>
             {live && (
               <span className={adminStyles.buttonRow}>
@@ -171,6 +177,7 @@ export function ServerDesktopTab({ server }: { server: ServerDetail }) {
           )}
         </div>
       )}
+      {replay && <DesktopRecordingView sessionId={replay} onClose={() => setReplay(null)} />}
       {access.can_review && (
         <RemoteSessionsTable
           kind="desktop"
@@ -178,6 +185,7 @@ export function ServerDesktopTab({ server }: { server: ServerDetail }) {
           admin={admin}
           username={me?.username}
           onClose={closeSession}
+          onReplay={setReplay}
         />
       )}
     </div>

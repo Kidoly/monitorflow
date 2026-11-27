@@ -232,6 +232,7 @@ db_tests! {
                 "remediation_policies",
                 "remediation_rules",
                 "remote_access_settings",
+                "remote_desktop_frames",
                 "remote_session_recordings",
                 "remote_sessions",
                 "report_schedules",

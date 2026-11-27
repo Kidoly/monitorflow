@@ -30,6 +30,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
+use super::rdp::recorder::{self, Feed};
+use super::rdp::{self, Connection, Framer, FromClient, FromService};
 use super::{FromBrowser, RemoteHub, ToBrowser, COMMAND_TTL};
 
 pub use ironrdp_rdcleanpath;
@@ -42,6 +44,12 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_X224: usize = 1024;
 /// Bytes between the TLS stream and the session's channels.
 const PIPE: usize = 64 * 1024;
+/// PDUs waiting for the recorder.
+const FEED: usize = 64;
+/// Why a recorded desktop refuses a client asking for the graphics
+/// pipeline: its screen would reach the recording as nothing it decodes.
+const GRAPHICS_PIPELINE: &str =
+    "this desktop is recorded, and the client asked for a graphics mode the recording cannot read";
 
 /// Why a desktop's WebSocket was refused before its session ran.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -137,7 +145,8 @@ pub async fn run(
     let (session_tx, session_rx) = mpsc::channel(64);
     let (output_tx, output_rx) = mpsc::channel(64);
     let runner = hub.clone();
-    let task = tokio::spawn(async move { runner.run(attached, session_rx, output_tx).await });
+    let session_of = attached.clone();
+    let task = tokio::spawn(async move { runner.run(session_of, session_rx, output_tx).await });
     let (near, far) = tokio::io::duplex(PIPE);
     let (opened_tx, opened_rx) = oneshot::channel();
     tokio::spawn(pump(far, session_tx.clone(), output_rx, opened_tx));
@@ -148,6 +157,7 @@ pub async fn run(
         drop(near);
         return Ok(task.await.unwrap_or_else(|_| "the session stopped".into()));
     }
+    let opened_at = tokio::time::Instant::now();
     let abort = |reason: String| {
         let session_tx = session_tx.clone();
         async move {
@@ -156,6 +166,7 @@ pub async fn run(
     };
     let tls = match handshake(near, &request.x224).await {
         Ok((tls, confirm)) => {
+            let protocol = rdp::selected_protocol(&confirm);
             let chain: Vec<Vec<u8>> = tls
                 .get_ref()
                 .1
@@ -169,7 +180,7 @@ pub async fn run(
             {
                 Ok(response) => {
                     let _ = to_browser.send(response).await;
-                    Some(tls)
+                    Some((tls, protocol))
                 }
                 Err(_) => {
                     let _ = to_browser.send(error_pdu(502)).await;
@@ -193,37 +204,161 @@ pub async fn run(
             None
         }
     };
-    if let Some(tls) = tls {
-        let (mut reader, mut writer) = tokio::io::split(tls);
-        let up = async {
-            while let Some(bytes) = from_browser.recv().await {
-                if writer.write_all(&bytes).await.is_err() {
-                    break;
-                }
-            }
-            let _ = writer.shutdown().await;
+    if let Some((tls, protocol)) = tls {
+        let (feed, recording) = if attached.recorded {
+            let (feed, rx) = mpsc::channel(FEED);
+            let store = recorder::Store {
+                pool: hub.pool().clone(),
+                session,
+            };
+            (
+                Some(feed),
+                Some(tokio::spawn(recorder::record(store, rx, opened_at))),
+            )
+        } else {
+            (None, None)
         };
-        let down = async {
-            let mut buffer = vec![0u8; 16 * 1024];
-            loop {
-                match reader.read(&mut buffer).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        if to_browser.send(buffer[..n].to_vec()).await.is_err() {
-                            break;
-                        }
-                    }
-                }
+        let mut recording = recording;
+        let proxying = proxy(
+            tls,
+            protocol,
+            attached.recorded,
+            &mut from_browser,
+            &to_browser,
+            feed,
+        );
+        // The recorder failing ends the session: a recorded desktop must be
+        // recorded.
+        let failed = async {
+            match recording.as_mut() {
+                Some(task) => match task.await {
+                    Ok(Err(error)) => Some(error.to_string()),
+                    Ok(Ok(())) => None,
+                    Err(_) => Some("the recording stopped".to_owned()),
+                },
+                None => std::future::pending().await,
             }
         };
-        // Either side ending ends the session; its task says why.
-        tokio::select! {
-            () = up => {}
-            () = down => {}
+        let stopped = tokio::select! {
+            reason = proxying => reason,
+            Some(reason) = failed => {
+                recording = None;
+                Some(reason)
+            }
+        };
+        if let Some(reason) = stopped {
+            abort(reason).await;
+        }
+        // The last picture, once the proxy no longer feeds it.
+        if let Some(task) = recording {
+            if let Ok(Err(error)) = task.await {
+                tracing::warn!(%session, %error, "a desktop recording ended early");
+            }
         }
     }
     drop(session_tx);
     Ok(task.await.unwrap_or_else(|_| "the session stopped".into()))
+}
+
+/// Carries RDP between the browser and the service's TLS, whole PDUs
+/// only, reading them as they pass and feeding the recorder `feed` with
+/// the service's screen. Returns why it had to stop, if it did; when
+/// either side closes, `None`.
+async fn proxy<S>(
+    tls: tokio_rustls::client::TlsStream<S>,
+    protocol: u32,
+    recorded: bool,
+    from_browser: &mut mpsc::Receiver<Vec<u8>>,
+    to_browser: &mpsc::Sender<Vec<u8>>,
+    feed: Option<mpsc::Sender<Feed>>,
+) -> Option<String>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let connection = std::sync::Mutex::new(Connection::default());
+    let read = || {
+        connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
+    let (mut reader, mut writer) = tokio::io::split(tls);
+    let up = async {
+        let mut framer = Framer::client();
+        while let Some(bytes) = from_browser.recv().await {
+            let pdus = match framer.push(&bytes) {
+                Ok(pdus) => pdus,
+                Err(error) => return Some(error.to_string()),
+            };
+            let mut out = Vec::with_capacity(bytes.len());
+            let mut feeds = Vec::new();
+            for pdu in pdus {
+                let mut connection = read();
+                match connection.from_client(&pdu) {
+                    FromClient::Pointer { x, y } => feeds.push(Feed::Pointer { x, y }),
+                    FromClient::Compression(c) => feeds.push(Feed::Compression(c)),
+                    FromClient::Channel { .. } | FromClient::Other => {}
+                }
+                if recorded && connection.wants_graphics_pipeline {
+                    return Some(GRAPHICS_PIPELINE.to_owned());
+                }
+                out.extend_from_slice(&pdu.bytes);
+            }
+            if let Some(feed) = &feed {
+                for next in feeds {
+                    // Gone: the recorder failed, and says why.
+                    if feed.send(next).await.is_err() {
+                        return None;
+                    }
+                }
+            }
+            if !out.is_empty() && writer.write_all(&out).await.is_err() {
+                break;
+            }
+        }
+        let _ = writer.shutdown().await;
+        None
+    };
+    let down = async {
+        let mut framer = Framer::service(protocol);
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            let n = match reader.read(&mut buffer).await {
+                Ok(0) | Err(_) => return None,
+                Ok(n) => n,
+            };
+            let pdus = match framer.push(&buffer[..n]) {
+                Ok(pdus) => pdus,
+                Err(error) => return Some(error.to_string()),
+            };
+            let mut out = Vec::with_capacity(n);
+            for pdu in pdus {
+                let what = read().from_service(&pdu);
+                if let Some(feed) = &feed {
+                    let next = match what {
+                        FromService::Screen => Some(Feed::Screen(pdu.bytes.clone())),
+                        FromService::Io => Some(Feed::Io(pdu.bytes.clone())),
+                        FromService::Channel { .. } | FromService::Other => None,
+                    };
+                    // A slow recorder slows the service, as a slow browser
+                    // does.
+                    if let Some(next) = next {
+                        if feed.send(next).await.is_err() {
+                            return None;
+                        }
+                    }
+                }
+                out.extend_from_slice(&pdu.bytes);
+            }
+            if !out.is_empty() && to_browser.send(out).await.is_err() {
+                return None;
+            }
+        }
+    };
+    // Either side ending ends the session; its task says why.
+    tokio::select! {
+        reason = up => reason,
+        reason = down => reason,
+    }
 }
 
 /// Between the TLS stream's end and the session's channels.

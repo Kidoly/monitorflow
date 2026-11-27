@@ -140,7 +140,7 @@ export function ServerTerminalTab({ server }: { server: ServerDetail }) {
 
 /**
  * The server's past sessions of one kind, newest first, with Close for open ones (who opened it, or an
- * administrator) and, for recorded terminals, Replay for administrators.
+ * administrator) and, for recorded ones, Replay for administrators.
  */
 export function RemoteSessionsTable({
   kind,
@@ -170,16 +170,11 @@ export function RemoteSessionsTable({
       header: t("remote.sessions.end"),
       cell: (s) => s.close_reason ?? t("remote.sessions.stillOpen"),
     },
-    // Desktops are never recorded: no column to say so on each line.
-    ...(kind === "terminal"
-      ? [
-          {
-            key: "recorded",
-            header: t("remote.sessions.recorded"),
-            cell: (s: RemoteSession) => (s.recorded ? t("remote.sessions.yes") : t("remote.sessions.no")),
-          },
-        ]
-      : []),
+    {
+      key: "recorded",
+      header: t("remote.sessions.recorded"),
+      cell: (s: RemoteSession) => (s.recorded ? t("remote.sessions.yes") : t("remote.sessions.no")),
+    },
   ];
   if (sessions.error && !sessions.data) {
     return <ErrorState what={t("remote.sessions.what")} error={describeError(sessions.error)} onRetry={sessions.refresh} />;

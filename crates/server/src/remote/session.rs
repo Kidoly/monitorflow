@@ -186,8 +186,10 @@ impl RemoteHub {
             bytes_in: 0,
             bytes_out: 0,
         };
+        // A desktop's output is TLS: its proxy records the screen
+        // (`super::rdp::recorder`).
         let mut recording = Recording {
-            on: attached.recorded,
+            on: attached.recorded && attached.is_terminal(),
             seq: 0,
             pending: Vec::new(),
             pending_at_ms: 0,

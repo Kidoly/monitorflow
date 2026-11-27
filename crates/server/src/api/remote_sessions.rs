@@ -1,6 +1,7 @@
 //! Remote terminals and desktops from a server's page (ADR-0190): who
 //! may open them, starting one, its WebSocket, the list of past sessions
-//! and the recordings of terminals.
+//! and their recordings: terminals' transcripts, desktops' pictures
+//! (ADR-0192).
 //!
 //! Starting a session answers a one-time token, valid one minute, which
 //! the browser (or any API client) presents as the first message of the
@@ -15,8 +16,8 @@ use std::time::Duration;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::response::Response;
+use axum::http::{header, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::Engine;
 use chrono::{DateTime, Utc};
@@ -52,8 +53,8 @@ pub struct RemoteAccessSettings {
     /// The lowest role, on a server's site, that may open a terminal or a
     /// desktop there; `null` lets nobody. Viewers never may.
     pub min_role: Option<Role>,
-    /// Whether what terminals print is kept, for replay by the site's
-    /// administrators. Desktops are never recorded.
+    /// Whether sessions are recorded, for replay by the site's
+    /// administrators: what terminals print, and the screen of desktops.
     pub record: bool,
     /// A session closes after this many minutes without input, 1 to 1440.
     pub idle_timeout_minutes: i32,
@@ -180,7 +181,7 @@ pub struct RemoteTerminalAccess {
     pub can_open: bool,
     /// Whether this person may see the past sessions of this server.
     pub can_review: bool,
-    /// Whether new terminals are recorded. Desktops never are.
+    /// Whether new terminals and desktops are recorded.
     pub recorded: bool,
     pub idle_timeout_minutes: i32,
 }
@@ -355,8 +356,8 @@ pub async fn start(
         "desktop" => true,
         _ => return Err(ApiError::Invalid("kind must be terminal or desktop".into())),
     };
-    // A desktop shows the screen, not a transcript: nothing to record.
-    let recorded = settings.record && !desktop;
+    // A terminal's transcript, or a desktop's screen (ADR-0192).
+    let recorded = settings.record;
     if let Some(refusal) = refusal(&host, desktop) {
         return Err(ApiError::Conflict(refusal));
     }
@@ -555,30 +556,73 @@ pub struct RecordingChunk {
     pub data: String,
 }
 
+/// One picture of a desktop's recording (ADR-0192).
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct DesktopFrame {
+    /// Its number, for `GET /api/v1/remote-sessions/{id}/recording/frames/{seq}`.
+    pub seq: i32,
+    /// Milliseconds after the session opened.
+    pub at_ms: i64,
+    /// The part of the screen the picture covers, in pixels.
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    /// The size of the whole screen when it was taken. A picture as large
+    /// as it starts the screen again.
+    pub screen_width: i32,
+    pub screen_height: i32,
+    /// The size of its PNG, in bytes.
+    pub bytes: i32,
+}
+
 /// Answer of `GET /api/remote-sessions/{id}/recording`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RemoteRecording {
     pub session: RemoteSession,
-    /// In order; replaying them into a terminal of the session's size
-    /// shows what it showed.
+    /// A terminal's, in order; replaying them into a terminal of the
+    /// session's size shows what it showed. Empty for a desktop.
     pub chunks: Vec<RecordingChunk>,
+    /// A desktop's pictures, in order; drawing each at its place, from a
+    /// picture of the whole screen on, shows what the screen showed.
+    /// Empty for a terminal.
+    pub frames: Vec<DesktopFrame>,
 }
 
-/// `GET /api/remote-sessions/{id}/recording`: what a recorded session
-/// printed. Administrators of the server's site only, as it may show
-/// anything the terminal showed.
-pub async fn recording(
-    State(state): State<ApiState>,
-    user: CurrentUser,
-    Path(id): Path<String>,
-) -> Result<Json<RemoteRecording>, ApiError> {
-    let (session, site, _) = reviewable(&state, &user, &id).await?;
+/// The recorded session `id`, once `user` may read its recording: an
+/// administrator of its server's site, as it may show anything the
+/// session showed.
+async fn recorded(
+    state: &ApiState,
+    user: &CurrentUser,
+    id: &str,
+) -> Result<RemoteSession, ApiError> {
+    let (session, site, _) = reviewable(state, user, id).await?;
     if !user.sites_with(Role::Administrator).contains(site) {
         return Err(ApiError::Forbidden);
     }
     if !session.recorded {
         return Err(ApiError::NotFound);
     }
+    Ok(session)
+}
+
+/// `GET /api/remote-sessions/{id}/recording`: what a recorded terminal
+/// printed, or the pictures of a recorded desktop's screen.
+pub async fn recording(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<RemoteRecording>, ApiError> {
+    let session = recorded(&state, &user, &id).await?;
+    let frames: Vec<DesktopFrame> = sqlx::query_as(
+        "SELECT seq, at_ms, x, y, width, height, screen_width, screen_height,
+                octet_length(image) AS bytes
+         FROM remote_desktop_frames WHERE session_id = $1 ORDER BY seq",
+    )
+    .bind(session.id)
+    .fetch_all(&state.pool)
+    .await?;
     let rows: Vec<(i64, Vec<u8>)> = sqlx::query_as(
         "SELECT at_ms, output FROM remote_session_recordings WHERE session_id = $1 ORDER BY seq",
     )
@@ -604,7 +648,43 @@ pub async fn recording(
         },
     )
     .await?;
-    Ok(Json(RemoteRecording { session, chunks }))
+    Ok(Json(RemoteRecording {
+        session,
+        chunks,
+        frames,
+    }))
+}
+
+/// `GET /api/remote-sessions/{id}/recording/frames/{seq}`: one picture of
+/// a desktop's recording, a PNG. The same people as the recording; its
+/// reading is audited there, once, not for each picture.
+pub async fn frame(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path((id, seq)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let session = recorded(&state, &user, &id).await?;
+    let seq: i32 = seq.parse().map_err(|_| ApiError::NotFound)?;
+    let image: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT image FROM remote_desktop_frames WHERE session_id = $1 AND seq = $2",
+    )
+    .bind(session.id)
+    .bind(seq)
+    .fetch_optional(&state.pool)
+    .await?;
+    let mut response = image.ok_or(ApiError::NotFound)?.into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    // A recording never changes.
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=86400, immutable"),
+    );
+    Ok(response)
 }
 
 /// The first WebSocket message.

@@ -15,10 +15,19 @@ vi.mock("next/navigation", () => import("@/test/navigation"));
 // IronRDP's client needs a real browser: the live desktop is a stand-in here.
 vi.mock("next/dynamic", () => ({
   default: () =>
-    function Stub({ serverId, credentials }: { serverId: string; credentials: { username: string; password: string } }) {
+    function Stub({
+      serverId,
+      credentials,
+      sessionId,
+    }: {
+      serverId?: string;
+      credentials?: { username: string; password: string };
+      sessionId?: string;
+    }) {
+      if (sessionId) return <div data-testid="replay">{sessionId}</div>;
       return (
         <div data-testid="desktop">
-          {serverId} {credentials.username} {credentials.password}
+          {serverId} {credentials?.username} {credentials?.password}
         </div>
       );
     },
@@ -63,7 +72,11 @@ describe("ServerDesktopTab", () => {
     stubFetch({
       [`GET /api/servers/${s.id}/remote-sessions`]: {
         status: 200,
-        body: [session(), session({ id: "t1", kind: "terminal", close_reason: "closed by carol" })],
+        body: [
+          session(),
+          session({ id: "d2", recorded: true, close_reason: "closed by dave" }),
+          session({ id: "t1", kind: "terminal", close_reason: "closed by carol" }),
+        ],
       },
     });
     render(
@@ -71,12 +84,16 @@ describe("ServerDesktopTab", () => {
         <ServerDesktopTab server={s} />
       </As>,
     );
-    expect(screen.getByText(/closes after 15 minutes without input and is not recorded/)).toBeInTheDocument();
+    expect(screen.getByText(/closes after 15 minutes without input\. What it shows is recorded\./)).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Remote desktop sessions" });
     expect(within(table).getByText("closed after 15 minutes without input")).toBeInTheDocument();
     expect(within(table).queryByText("closed by carol")).not.toBeInTheDocument();
-    expect(within(table).queryByText("Recorded")).not.toBeInTheDocument();
-    expect(within(table).queryByRole("button", { name: "Replay" })).not.toBeInTheDocument();
+    expect(within(table).getByText("Recorded")).toBeInTheDocument();
+    // Only the recorded session has a replay, for the site's administrators.
+    const replays = within(table).getAllByRole("button", { name: "Replay" });
+    expect(replays).toHaveLength(1);
+    await userEvent.click(replays[0]!);
+    expect(screen.getByTestId("replay")).toHaveTextContent("d2");
 
     await userEvent.type(screen.getByLabelText("Account"), "Administrator");
     await userEvent.type(screen.getByLabelText("Password"), "s3cret");

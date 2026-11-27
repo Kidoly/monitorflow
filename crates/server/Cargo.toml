@@ -52,6 +52,12 @@ rustls.workspace = true
 # tunnel, behind IronRDP's RDCleanPath handshake.
 tokio-rustls.workspace = true
 ironrdp-rdcleanpath.workspace = true
+ironrdp-pdu.workspace = true
+ironrdp-core.workspace = true
+ironrdp-bulk.workspace = true
+ironrdp-graphics.workspace = true
+ironrdp-session.workspace = true
+png.workspace = true
 futures-util.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true

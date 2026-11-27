@@ -120,6 +120,32 @@ impl Harness {
         )
     }
 
+    /// A GET whose answer is not JSON: its status, content type and bytes.
+    async fn raw(&self, uri: &str, cookie: &str) -> (StatusCode, String, Vec<u8>) {
+        let state = ApiState::new(
+            self.pool.clone(),
+            self.registry.clone(),
+            ApiSettings::default(),
+        )
+        .with_remote(self.hub.clone());
+        let request = Request::builder()
+            .uri(uri)
+            .header("cookie", cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = api::router(state).oneshot(request).await.unwrap();
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .map(|v| v.to_str().unwrap().to_owned())
+            .unwrap_or_default();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
+            .await
+            .unwrap();
+        (status, content_type, bytes.to_vec())
+    }
+
     async fn login(&self, name: &str, role: Role, scope: GrantScope) -> String {
         users::create_user_with(
             &self.pool,
@@ -379,6 +405,14 @@ db_tests! {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query("INSERT INTO remote_desktop_frames (session_id, seq, at_ms, x, y, width, height,
+                         screen_width, screen_height, image)
+                     VALUES ($1, 0, 0, 0, 0, 8, 8, 8, 8, 'x'), ($2, 0, 0, 0, 0, 8, 8, 8, 8, 'y')")
+            .bind(old)
+            .bind(live)
+            .execute(&pool)
+            .await
+            .unwrap();
         h.hub.tidy().await.unwrap();
         let reason = |id: Uuid| {
             let pool = pool.clone();
@@ -394,6 +428,11 @@ db_tests! {
         assert_eq!(reason(stale).await.as_deref(), Some("the central server instance running it stopped"));
         assert_eq!(reason(live).await, None);
         let kept: Vec<Uuid> = sqlx::query_scalar("SELECT session_id FROM remote_session_recordings")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, [live]);
+        let kept: Vec<Uuid> = sqlx::query_scalar("SELECT session_id FROM remote_desktop_frames")
             .fetch_all(&pool)
             .await
             .unwrap();
@@ -430,15 +469,15 @@ db_tests! {
         let (status, started) = h.send("POST", &uri, &admin, desktop.clone()).await;
         assert_eq!(status, StatusCode::CREATED, "{started}");
         assert_eq!(started["session"]["kind"], "desktop");
-        // Recording is on, but a desktop's screen is never recorded.
-        assert_eq!(started["session"]["recorded"], false);
+        // Recording is on: the desktop's screen is recorded (ADR-0192).
+        assert_eq!(started["session"]["recorded"], true);
         let details: Value = sqlx::query_scalar(
             "SELECT details FROM audit_log WHERE action = 'remote_session.start'",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!((&details["kind"], &details["recorded"]), (&json!("desktop"), &json!(false)));
+        assert_eq!((&details["kind"], &details["recorded"]), (&json!("desktop"), &json!(true)));
         // And the terminal itself is refused where only desktops are allowed.
         let (status, error) = h.send("POST", &uri, &admin, Some(json!({"kind": "terminal"}))).await;
         assert_eq!(status, StatusCode::CONFLICT);
@@ -449,9 +488,42 @@ db_tests! {
         let token = started["token"].as_str().unwrap().to_owned();
         assert_eq!(h.hub.attach(id, &token, 80, 24).await.unwrap_err(), AttachError::Refused);
         let attached = h.hub.attach_desktop(id, &token).await.unwrap();
-        assert_eq!((attached.kind.as_str(), attached.recorded), ("desktop", false));
+        assert_eq!((attached.kind.as_str(), attached.recorded), ("desktop", true));
         assert_eq!(h.hub.attach_desktop(id, &token).await.unwrap_err(), AttachError::Refused);
         let (_, list) = h.send("GET", &uri, &admin, None).await;
         assert_eq!(list[0]["kind"], "desktop");
+
+        // Its recording: the pictures, each a PNG of its own.
+        sqlx::query("INSERT INTO remote_desktop_frames (session_id, seq, at_ms, x, y, width, height,
+                         screen_width, screen_height, image)
+                     VALUES ($1, 0, 40, 0, 0, 1024, 576, 1024, 576, '\\x89504e47'::bytea),
+                            ($1, 1, 1040, 10, 20, 30, 40, 1024, 576, '\\x89504e4701'::bytea)")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let recording = format!("/api/remote-sessions/{id}/recording");
+        assert_eq!(h.send("GET", &recording, &operator, None).await.0, StatusCode::FORBIDDEN);
+        let (status, replay) = h.send("GET", &recording, &admin, None).await;
+        assert_eq!(status, StatusCode::OK, "{replay}");
+        assert_eq!(replay["chunks"], json!([]));
+        assert_eq!(replay["frames"], json!([
+            {"seq": 0, "at_ms": 40, "x": 0, "y": 0, "width": 1024, "height": 576,
+             "screen_width": 1024, "screen_height": 576, "bytes": 4},
+            {"seq": 1, "at_ms": 1040, "x": 10, "y": 20, "width": 30, "height": 40,
+             "screen_width": 1024, "screen_height": 576, "bytes": 5},
+        ]));
+        assert_eq!(h.audit("remote_session.recording_read").await, 1);
+        let picture = h.raw(&format!("{recording}/frames/1"), &admin).await;
+        assert_eq!(picture, (StatusCode::OK, "image/png".into(), b"\x89PNG\x01".to_vec()));
+        for (path, user, status) in [
+            (format!("{recording}/frames/2"), &admin, StatusCode::NOT_FOUND),
+            (format!("{recording}/frames/x"), &admin, StatusCode::NOT_FOUND),
+            (format!("{recording}/frames/0"), &operator, StatusCode::FORBIDDEN),
+        ] {
+            assert_eq!(h.raw(&path, user).await.0, status, "{path}");
+        }
+        // Reading the pictures is not audited again.
+        assert_eq!(h.audit("remote_session.recording_read").await, 1);
     }
 }
