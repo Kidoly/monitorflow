@@ -3,12 +3,27 @@ import type { ReactNode } from "react";
 import { cx } from "./cx";
 import styles from "./Markdown.module.css";
 
-/** A link's target when it is one we follow: http(s), mail, or a page of this site. */
+/** Schemes a link may use besides a page of this site. */
+const LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+
+/**
+ * A link's target when it is one we follow: http(s), mail, or a page of this site.
+ * The target is rebuilt from the parsed URL, never passed on as written: a page of
+ * this site keeps only its path, query and fragment, so it cannot name another host.
+ */
 export function safeHref(href: string): string | null {
   const target = href.trim();
-  if (/^(https?:\/\/|mailto:)/i.test(target)) return target;
-  if (target.startsWith("/") && !target.startsWith("//")) return target;
-  return null;
+  if (target.startsWith("/") && !target.startsWith("//")) {
+    const url = new URL(target, "https://site.invalid");
+    return `${url.pathname}${url.search}${url.hash}`;
+  }
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return null;
+  }
+  return LINK_SCHEMES.has(url.protocol) ? url.href : null;
 }
 
 const INLINE = /(\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\))/;

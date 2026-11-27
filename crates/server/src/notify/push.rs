@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
-use ring::rand::{SecureRandom, SystemRandom};
+use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use ring::{aead, agreement, hkdf};
 use serde_json::{json, Value};
@@ -183,8 +183,7 @@ pub fn encrypt(subscription: &Subscription, plaintext: &[u8]) -> Result<Vec<u8>,
     let rng = SystemRandom::new();
     let private = agreement::EphemeralPrivateKey::generate(&agreement::ECDH_P256, &rng)?;
     let public = private.compute_public_key()?;
-    let mut salt = [0u8; 16];
-    rng.fill(&mut salt)?;
+    let salt: [u8; 16] = ring::rand::generate(&rng)?.expose();
     let peer = agreement::UnparsedPublicKey::new(&agreement::ECDH_P256, &subscription.p256dh);
     let secret = agreement::agree_ephemeral(private, &peer, |s| s.to_vec())
         .map_err(|_| PushError::BadKeys)?;
