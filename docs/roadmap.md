@@ -221,7 +221,9 @@ Updates within a release are done (Phase 4). Moving a server to the next release
 - [x] Major distribution upgrades, Debian 12 (bookworm) to Debian 13 (trixie): move servers to the next release of their distribution in waves like a campaign. An explicit action with warnings, a snapshot recommended before, and nothing done on a server that did not agree to it (ADR-0182).
 - [x] Major distribution upgrades, Ubuntu LTS to the next LTS, on the same command, unit, checks and campaigns (ADR-0182).
 - [x] Major distribution upgrades, RHEL 8 to 9 and 9 to 10 with its derivatives (Rocky, AlmaLinux) through leapp and ELevate (ADR-0182).
-- [ ] Major distribution upgrades, the rest (ADR-0182): Rocky Linux 9 to 10 once ELevate publishes `leapp-data-rocky` for el9; Ubuntu and RHEL servers on the MonitorFlow mirrors (refused today, their own sources must be put back first); `leapp preupgrade` alone from the server's page, before a campaign.
+- [x] Major distribution upgrades, Ubuntu and RHEL servers on the MonitorFlow mirrors: the campaign puts their own sources back first, and the mirrors of the new release after (ADR-0182).
+- [x] Major distribution upgrades, `leapp preupgrade` alone from the server's page, before a campaign, showing its report (ADR-0182).
+- [ ] Major distribution upgrades, Rocky Linux 9 to 10 once ELevate publishes `leapp-data-rocky` for el9 (none in its el9 repositories, stable or testing, on 2026-11-27) (ADR-0182).
 
   Design note, now ADR-0182:
 

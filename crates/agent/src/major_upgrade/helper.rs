@@ -105,16 +105,7 @@ pub fn start(
     let _lock = lock(dir).map_err(|e| format!("cannot lock {}: {e}", dir.display()))?;
     let boot = state::boot_id();
     let running = crate::os::detect_from(None).os_version;
-    if let Some(previous) = state::read(dir).map_err(|e| e.to_string())? {
-        let previous = previous.effective(&boot, &running);
-        if !previous.phase.is_final() {
-            return Err(format!(
-                "an upgrade to {} is already running ({})",
-                previous.to,
-                previous.phase.as_str()
-            ));
-        }
-    }
+    refuse_running(dir, &boot, &running)?;
     let plan = sources::plan(Path::new("/"), upgrade);
     let checks = checks::evaluate(probe, upgrade, upgradable, &plan);
     let mut started = Started::default();
@@ -127,6 +118,10 @@ pub fn start(
     if let Some(failure) = checks::first_failure(&checks) {
         return Err(failure);
     }
+    // The campaign puts the server's own sources back first (ADR-0182).
+    if let Some(blocker) = sources::blocker(&plan, upgrade.method) {
+        return Err(format!("sources: {blocker}"));
+    }
     let state = State::new(
         command_id,
         &upgrade.from_release(),
@@ -134,6 +129,78 @@ pub fn start(
         &boot,
         now,
     );
+    launch(dir, upgrade, state, started)
+}
+
+/// `leapp preupgrade` alone, before any campaign (`leapp_preupgrade`,
+/// ADR-0182): on the RHEL family, with leapp and its data installed and no
+/// upgrade running. It writes leapp's report and changes nothing, so the
+/// other checks are leapp's own.
+pub fn start_preupgrade(
+    command_id: &str,
+    upgrade: &Upgrade,
+    probe: &dyn Probe,
+    dir: &Path,
+    now: i64,
+) -> Result<Started, String> {
+    if upgrade.method != Method::Leapp {
+        return Err(format!(
+            "leapp preupgrade is for the RHEL family, not {}",
+            upgrade.from_label()
+        ));
+    }
+    state::prepare(dir).map_err(|e| e.to_string())?;
+    let _lock = lock(dir).map_err(|e| format!("cannot lock {}: {e}", dir.display()))?;
+    let boot = state::boot_id();
+    let running = crate::os::detect_from(None).os_version;
+    refuse_running(dir, &boot, &running)?;
+    let check = checks::leapp_installed(probe, upgrade);
+    let mut started = Started::default();
+    started.lines.push(format!(
+        "check {}: {} ({})",
+        check.name, check.state, check.detail
+    ));
+    if let Some(failure) = checks::first_failure(std::slice::from_ref(&check)) {
+        return Err(failure);
+    }
+    let mut state = State::new(
+        command_id,
+        &upgrade.from_release(),
+        &upgrade.to_release(),
+        &boot,
+        now,
+    );
+    state.preupgrade_only = true;
+    launch(dir, upgrade, state, started)
+}
+
+/// Refuses while the last upgrade, or preupgrade, is not finished.
+fn refuse_running(dir: &Path, boot: &str, running: &str) -> Result<(), String> {
+    if let Some(previous) = state::read(dir).map_err(|e| e.to_string())? {
+        let previous = previous.effective(boot, running);
+        if !previous.phase.is_final() {
+            let what = if previous.preupgrade_only {
+                "leapp preupgrade"
+            } else {
+                "an upgrade"
+            };
+            return Err(format!(
+                "{what} to {} is already running ({})",
+                previous.to,
+                previous.phase.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Writes `state` and starts the unit that runs it.
+fn launch(
+    dir: &Path,
+    upgrade: &Upgrade,
+    state: State,
+    mut started: Started,
+) -> Result<Started, String> {
     state::write(dir, &state).map_err(|e| e.to_string())?;
     let output = Command::new("/usr/bin/systemd-run")
         .args([
@@ -160,8 +227,13 @@ pub fn start(
         let _ = state::write(dir, &failed);
         return Err(error);
     }
+    let what = if state.preupgrade_only {
+        "leapp preupgrade"
+    } else {
+        "the upgrade"
+    };
     started.lines.push(format!(
-        "started the upgrade from {} to {} in {UNIT}.service; its log is {}",
+        "started {what} from {} to {} in {UNIT}.service; its log is {}",
         upgrade.from_label(),
         upgrade.to_label(),
         dir.join(LOG).display()
@@ -257,6 +329,10 @@ pub fn run(paths: &Paths, exec: &mut dyn Exec, now: impl Fn() -> i64) -> Result<
         state::write(&paths.state_dir, state).map_err(|e| e.to_string())
     };
 
+    if state.preupgrade_only {
+        preupgrade_alone(paths, upgrade, exec, &mut state, &set)?;
+        return Ok(state);
+    }
     let finished = match upgrade.method {
         Method::Apt => apt_steps(paths, upgrade, exec, &mut state, &set)?,
         Method::ReleaseUpgrade => release_upgrade_steps(paths, upgrade, exec, &mut state, &set)?,
@@ -416,8 +492,8 @@ fn release_upgrade_steps(
     set: &Set<'_>,
 ) -> Result<bool, String> {
     let plan = sources::plan(&paths.root, upgrade);
-    if let Some(refusal) = &plan.refusal {
-        set(state, Phase::Failed, Some(refusal.clone()))?;
+    if let Some(blocker) = sources::blocker(&plan, upgrade.method) {
+        set(state, Phase::Failed, Some(blocker))?;
         return Ok(false);
     }
     state.disabled_sources = plan.third_party.clone();
@@ -545,8 +621,8 @@ fn leapp_steps(
     set: &Set<'_>,
 ) -> Result<bool, String> {
     let plan = sources::plan(&paths.root, upgrade);
-    if let Some(refusal) = &plan.refusal {
-        set(state, Phase::Failed, Some(refusal.clone()))?;
+    if let Some(blocker) = sources::blocker(&plan, upgrade.method) {
+        set(state, Phase::Failed, Some(blocker))?;
         return Ok(false);
     }
     set(state, Phase::Preupgrade, None)?;
@@ -556,6 +632,29 @@ fn leapp_steps(
     set(state, Phase::Upgrading, None)?;
     let unchanged = format!("the server still runs {}", upgrade.from_label());
     leapp(paths, "upgrade", &unchanged, exec, state, set)
+}
+
+/// `leapp preupgrade` alone: its report kept, `done` without an
+/// inhibitor, and nothing else.
+fn preupgrade_alone(
+    paths: &Paths,
+    upgrade: &Upgrade,
+    exec: &mut dyn Exec,
+    state: &mut State,
+    set: &Set<'_>,
+) -> Result<(), String> {
+    if upgrade.method != Method::Leapp {
+        return set(
+            state,
+            Phase::Failed,
+            Some("leapp preupgrade is for the RHEL family".into()),
+        );
+    }
+    set(state, Phase::Preupgrade, None)?;
+    if leapp(paths, "preupgrade", "nothing was changed", exec, state, set)? {
+        set(state, Phase::Done, None)?;
+    }
+    Ok(())
 }
 
 /// The release `/etc/os-release` under `root` names, like "ubuntu 24.04".

@@ -2,15 +2,16 @@
 //! leapp takes the target release's repositories from its own data
 //! (RHEL's subscription or the ELevate data), so nothing here writes: the
 //! plan lists the enabled repositories that are not the distribution's,
-//! which leapp leaves as they are, and refuses a server on the MonitorFlow
-//! mirrors, whose files name the old release's mirror.
+//! which leapp leaves as they are, and notes a server on the MonitorFlow
+//! mirrors, whose files name the old release's mirror: the campaign puts
+//! its own repositories back first.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use monitorflow_common::major_upgrade::Upgrade;
 
-use super::sources::{Plan, MIRROR_REFUSAL};
+use super::sources::Plan;
 
 const REPOS: &str = "etc/yum.repos.d";
 
@@ -151,9 +152,7 @@ pub fn plan(root: &Path, upgrade: &Upgrade) -> Plan {
             }
         }
     }
-    if mirrored {
-        plan.refusal = Some(MIRROR_REFUSAL.replace("{tool}", "leapp"));
-    }
+    plan.mirrored = mirrored;
     plan
 }
 
@@ -213,7 +212,10 @@ mod tests {
         )
         .unwrap();
         let mirrored = super::plan(dir.path(), rocky);
-        assert!(mirrored.refusal.unwrap().contains("MonitorFlow mirrors"));
+        assert_eq!(mirrored.refusal, None);
+        assert!(mirrored.mirrored);
+        let blocked = super::super::sources::blocker(&mirrored, rocky.method).unwrap();
+        assert!(blocked.contains("MonitorFlow mirrors"), "{blocked}");
     }
 
     #[test]

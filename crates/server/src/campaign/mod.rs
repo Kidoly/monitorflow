@@ -12,8 +12,10 @@
 //! at them before its update and gets its previous sources back after.
 //!
 //! A major upgrade campaign (ADR-0182) moves its servers to the next
-//! release of their distribution instead, with a snapshot first.
+//! release of their distribution instead, with a snapshot first; Ubuntu
+//! and RHEL servers on the mirrors go back to their own sources for it.
 
+mod major_sources;
 mod model;
 mod pin;
 pub mod query;

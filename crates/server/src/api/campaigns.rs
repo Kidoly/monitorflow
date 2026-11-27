@@ -227,7 +227,11 @@ pub struct TargetView {
     pub error: Option<String>,
     pub finished_at: Option<DateTime<Utc>>,
     /// With pinned snapshots: the `configure_sources` command before the
-    /// update and the command restoring the sources after it.
+    /// update and the command restoring the sources after it. In a major
+    /// upgrade of Ubuntu or the RHEL family on the mirrors: the
+    /// `revert_sources` before it, and the command putting the mirrors
+    /// back after it, the revert itself when the server keeps its own
+    /// sources (ADR-0182).
     pub sources_command_id: Option<Uuid>,
     pub restore_command_id: Option<Uuid>,
     /// The local snapshot taken before the update, if any (ADR-0094).

@@ -82,6 +82,10 @@ pub struct Progress {
     /// the RHEL family.
     #[serde(default)]
     pub report: Option<String>,
+    /// `leapp preupgrade` alone (`leapp_preupgrade`), not an upgrade:
+    /// `done` means leapp found no inhibitor; the release did not change.
+    #[serde(default)]
+    pub preupgrade_only: bool,
     pub started_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -109,6 +113,7 @@ impl Progress {
                 .map(|s| bounded(s))
                 .collect(),
             report: (!p.report.is_empty()).then(|| p.report.chars().take(MAX_REPORT).collect()),
+            preupgrade_only: p.preupgrade_only,
             started_at: at(p.started_at_unix_ms),
             updated_at: at(p.updated_at_unix_ms),
         }

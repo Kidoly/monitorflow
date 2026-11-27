@@ -33,6 +33,11 @@ pub const TAKE_SNAPSHOT: &str = "take_snapshot";
 pub const DELETE_SNAPSHOT: &str = "delete_snapshot";
 /// Kind of [`crate::proto::v1::MajorUpgrade`] commands (ADR-0182).
 pub const MAJOR_UPGRADE: &str = "major_upgrade";
+/// Kind of `leapp preupgrade` alone, before any campaign, with a
+/// [`crate::proto::v1::MajorUpgrade`] payload (ADR-0182). A kind of its
+/// own, so that an agent that predates it refuses it instead of reading a
+/// full upgrade.
+pub const LEAPP_PREUPGRADE: &str = "leapp_preupgrade";
 /// Kind of [`crate::proto::v1::SoftwareChange`] commands (ADR-0188).
 pub const SOFTWARE: &str = "software";
 /// Kind of [`crate::proto::v1::SoftwareOff`] commands (ADR-0188).

@@ -1140,7 +1140,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         ("POST", "/api/servers/{id}/ai-commands")
         | ("POST", "/api/sites/{id}/ai-commands")
-        | ("POST", "/api/servers/{id}/software") => {
+        | ("POST", "/api/servers/{id}/software")
+        | ("POST", "/api/servers/{id}/major-upgrade/preupgrade") => {
             let id = if path.starts_with("/api/sites") {
                 b.site
             } else {

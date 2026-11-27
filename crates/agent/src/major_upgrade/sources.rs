@@ -63,6 +63,11 @@ pub struct Plan {
     pub third_party: Vec<String>,
     /// Why the upgrade cannot go on with these sources, if it cannot.
     pub refusal: Option<String>,
+    /// Ubuntu and the RHEL family: the server takes its packages from the
+    /// MonitorFlow mirrors, which their tools do not use. The campaign
+    /// puts its own sources back first (ADR-0182); the helper refuses to
+    /// start while it is so.
+    pub mirrored: bool,
 }
 
 /// What one file's rewrite found.
@@ -447,17 +452,34 @@ pub fn plan(root: &Path, upgrade: &Upgrade) -> Plan {
             let mirrored = plan.files.iter().any(|f| {
                 f.path.file_name().and_then(|n| n.to_str()) == Some(MONITORFLOW_FILE) && f.changed()
             });
-            if plan.refusal.is_none() && mirrored {
-                plan.refusal = Some(MIRROR_REFUSAL.replace("{tool}", "do-release-upgrade"));
-            }
+            plan.mirrored = mirrored;
             plan
         }
         Method::Leapp => super::repos::plan(root, upgrade),
     }
 }
 
-/// Why Ubuntu and the RHEL family refuse a server on the mirrors.
-pub const MIRROR_REFUSAL: &str = "the server takes its packages from the MonitorFlow mirrors, which {tool} does not use; put its own sources back first (Revert package sources on its page)";
+/// Why the helper does not start on a server still on the mirrors, on
+/// Ubuntu and the RHEL family.
+pub const MIRROR_REFUSAL: &str = "the server still takes its packages from the MonitorFlow mirrors, which {tool} does not use; a campaign puts its own sources back first, and Revert package sources on its page does it by hand";
+
+/// The tool that would not use the mirrors, for [`MIRROR_REFUSAL`].
+pub fn tool(method: Method) -> &'static str {
+    match method {
+        Method::Apt => "apt",
+        Method::ReleaseUpgrade => "do-release-upgrade",
+        Method::Leapp => "leapp",
+    }
+}
+
+/// Why the helper must not go on with `plan`: its refusal, or the
+/// mirrors where the tool does not use them.
+pub fn blocker(plan: &Plan, method: Method) -> Option<String> {
+    plan.refusal.clone().or_else(|| {
+        (plan.mirrored && method != Method::Apt)
+            .then(|| MIRROR_REFUSAL.replace("{tool}", tool(method)))
+    })
+}
 
 fn apt_plan(root: &Path, upgrade: &Upgrade) -> Plan {
     let mut plan = Plan::default();

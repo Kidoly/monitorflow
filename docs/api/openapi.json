@@ -19693,7 +19693,7 @@
           "campaigns"
         ],
         "summary": "List the servers that can move to the next release",
-        "description": "For each server the caller sees on a release MonitorFlow can upgrade\nfrom (Debian 12 for now), or with a major upgrade recorded: the next\nrelease, every check before upgrading to it, the rollback it would\nget, and the progress of its last upgrade (ADR-0182). The central\nserver's checks come first (`allowed`: the server allows major upgrades\nfrom the web interface; `agent_version`: its agent knows the target;\n`mirror`: the mirrors carry the target when the server uses them), then\nthe agent's (`up_to_date`, `held_packages`, `broken_packages`,\n`free_space`, `reboot_pending`, `sources`, `third_party_sources`). A\n`warning` never blocks; `ready` is false while any check `failed`. The\nagent runs its checks again just before the upgrade. Upgrades\nthemselves are campaigns with `major_upgrade`.\n\nNeeds any role on the servers' sites and the key area \"updates\".",
+        "description": "For each server the caller sees on a release MonitorFlow can upgrade\nfrom (Debian 12, Ubuntu LTS, RHEL 8 and 9, Rocky Linux 8, AlmaLinux 8\nand 9), or with a major upgrade recorded: the next\nrelease, every check before upgrading to it, the rollback it would\nget, and the progress of its last upgrade (ADR-0182). The central\nserver's checks come first (`allowed`: the server allows major upgrades\nfrom the web interface; `agent_version`: its agent knows the target;\n`mirror`: the mirrors carry the target when the server uses them; on\nUbuntu and the RHEL family, a `warning` when they do not, as the\ncampaign puts the server's own sources back for the upgrade and keeps\nthem until the mirrors carry the new release), then the agent's\n(`up_to_date`, `held_packages`, `broken_packages`, `free_space`,\n`reboot_pending`, `sources`, `release_offered` on Ubuntu, `leapp` on the\nRHEL family, `third_party_sources`). A `warning` never blocks; `ready`\nis false while any check `failed`. The agent runs its checks again just\nbefore the upgrade. Upgrades themselves are campaigns with\n`major_upgrade`; `leapp preupgrade` alone is `POST\n/servers/{id}/major-upgrade/preupgrade`, whose report comes back in\n`progress` with `preupgrade_only`.\n\nNeeds any role on the servers' sites and the key area \"updates\".",
         "operationId": "list_major_upgrades",
         "parameters": [
           {
@@ -19735,6 +19735,7 @@
                 "example": {
                   "servers": [
                     {
+                      "can_preupgrade": false,
                       "can_upgrade": true,
                       "checks": [
                         {
@@ -43461,6 +43462,159 @@
         }
       }
     },
+    "/api/v1/servers/{id}/major-upgrade/preupgrade": {
+      "post": {
+        "tags": [
+          "campaigns"
+        ],
+        "summary": "Run leapp preupgrade alone on a server",
+        "description": "Queues a `leapp_preupgrade` command for the next release of a server of\nthe RHEL family (RHEL, Rocky Linux, AlmaLinux), before any campaign\n(ADR-0182). Its agent's root helper checks the signed command, that the\nserver allows major upgrades from the web interface, that leapp and its\ndata are installed and that no upgrade is running, then runs `leapp\npreupgrade` alone in the upgrade's unit: it writes leapp's report and\nchanges nothing on the server. The report comes back in the server's\n`progress` of `GET /major-upgrades`, with `preupgrade_only` set:\n`done` when leapp found no inhibitor, `failed` with the inhibitors'\ntitles otherwise. The command succeeds once leapp started; it waits an\nhour for an offline server. Audited as `command.create`.\n\nNeeds the administrator role on the server's customer as a whole, never\na site's, as for a major upgrade campaign. Through an API key, the\n\"updates\" area. `can_preupgrade` of `GET /major-upgrades` says whether\nthe caller may run it now.",
+        "operationId": "leapp_preupgrade",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Command queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDetail"
+                },
+                "example": {
+                  "error": null,
+                  "exit_code": null,
+                  "expires_at": "2026-11-27T11:00:00Z",
+                  "finished_at": null,
+                  "id": "b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e",
+                  "issued_at": "2026-11-27T10:00:00Z",
+                  "kind": "leapp_preupgrade",
+                  "parameters": {
+                    "from": "rocky 8",
+                    "to": "rocky 9"
+                  },
+                  "requested_by": "0d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a",
+                  "sent_at": null,
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "started_at": null,
+                  "state": "queued",
+                  "stderr": "",
+                  "stdout": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: a bad ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller does not administer the server's customer as a whole. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such server, or of a site the caller cannot read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`, saying why in a sentence: the server is not of the RHEL family, MonitorFlow knows no next release for it, it does not allow major upgrades from the web interface, its agent predates this command, or it is removed; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/metrics": {
       "get": {
         "tags": [
@@ -61051,7 +61205,7 @@
               "null"
             ],
             "format": "uuid",
-            "description": "With pinned snapshots: the `configure_sources` command before the\nupdate and the command restoring the sources after it."
+            "description": "With pinned snapshots: the `configure_sources` command before the\nupdate and the command restoring the sources after it. In a major\nupgrade of Ubuntu or the RHEL family on the mirrors: the\n`revert_sources` before it, and the command putting the mirrors\nback after it, the revert itself when the server keeps its own\nsources (ADR-0182)."
           },
           "status": {
             "type": "string",
@@ -68092,6 +68246,10 @@
           "phase": {
             "type": "string",
             "description": "`starting`, `preupgrade` (leapp), `sources`, `refreshing`,\n`upgrading`, `full_upgrade`, `rebooting`, `done` or `failed`."
+          },
+          "preupgrade_only": {
+            "type": "boolean",
+            "description": "`leapp preupgrade` alone (`leapp_preupgrade`), not an upgrade:\n`done` means leapp found no inhibitor; the release did not change."
           },
           "report": {
             "type": [
@@ -78014,9 +78172,14 @@
           "ready",
           "checks",
           "rollback",
-          "can_upgrade"
+          "can_upgrade",
+          "can_preupgrade"
         ],
         "properties": {
+          "can_preupgrade": {
+            "type": "boolean",
+            "description": "The user may run `leapp preupgrade` alone on it now (`POST\n/servers/{id}/major-upgrade/preupgrade`): the RHEL family, an\nadministrator of its customer, and an agent that accepts it."
+          },
           "can_upgrade": {
             "type": "boolean",
             "description": "The user may start it: an administrator of its customer."
