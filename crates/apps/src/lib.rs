@@ -31,6 +31,8 @@ pub mod redis;
 mod resp;
 mod tds;
 pub mod templates;
+// Docker's socket exists on Unix only; Windows reports the check unsupported.
+#[cfg(unix)]
 mod unix_http;
 
 use std::collections::BTreeMap;

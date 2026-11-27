@@ -3,7 +3,6 @@
 //! sudoers must allow, a fake helper that saves its stdin, and fake
 //! package tools that log their arguments.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use monitorflow_common::proto::v1::{CommandAcceptance, SoftwareOff};
@@ -72,7 +71,7 @@ async fn a_failed_write_changes_nothing() {
 
 #[cfg(unix)]
 mod linux {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use monitorflow_common::command::{SHELL, SOFTWARE};
     use monitorflow_common::proto::v1::{
