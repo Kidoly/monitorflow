@@ -98,6 +98,12 @@
   white-space: nowrap;
 }
 
+/* A certificate fingerprint: 95 characters, wrapped on a narrow screen. */
+.sectionNote code.fingerprint {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* A label and its control, stacked. */
 .field {
   display: flex;

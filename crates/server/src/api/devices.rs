@@ -786,8 +786,8 @@ pub struct VmwareTestRequest {
 /// The certificate a test met.
 #[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
 pub struct TestedCertificate {
-    /// `AB:CD:…`, to compare with the one the vCenter shows and send back
-    /// as `fingerprint`.
+    /// `AB:CD:…`, to compare with the one the vCenter or Jolokia shows and
+    /// send back as `fingerprint`.
     pub fingerprint: String,
     /// Whether it is trusted: by the probe's roots, or by the fingerprint
     /// given.
@@ -797,6 +797,24 @@ pub struct TestedCertificate {
     pub subject: String,
     /// When it expires; `null` when it does not read.
     pub not_after: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl TestedCertificate {
+    /// What a test's `certificate_trusted` sample says.
+    pub fn of(sample: &monitorflow_common::proto::v1::Sample) -> Self {
+        let label = |name: &str| sample.labels.get(name).cloned().unwrap_or_default();
+        Self {
+            fingerprint: label("fingerprint"),
+            trusted: sample.value >= 1.0,
+            by_roots: label("by_roots") == "true",
+            subject: label("subject"),
+            not_after: label("not_after")
+                .parse::<i64>()
+                .ok()
+                .filter(|t| *t > 0)
+                .and_then(|t| chrono::DateTime::from_timestamp(t, 0)),
+        }
+    }
 }
 
 /// What a vCenter or ESXi host answered.
@@ -849,18 +867,7 @@ pub fn vmware_tested(
         product: label(answers.filter(|_| up), "product"),
         version: label(answers.filter(|_| up), "version"),
         api_type: label(answers.filter(|_| up), "api_type"),
-        certificate: certificate.map(|c| TestedCertificate {
-            fingerprint: c.labels.get("fingerprint").cloned().unwrap_or_default(),
-            trusted: c.value >= 1.0,
-            by_roots: c.labels.get("by_roots").is_some_and(|v| v == "true"),
-            subject: c.labels.get("subject").cloned().unwrap_or_default(),
-            not_after: c
-                .labels
-                .get("not_after")
-                .and_then(|t| t.parse::<i64>().ok())
-                .filter(|t| *t > 0)
-                .and_then(|t| chrono::DateTime::from_timestamp(t, 0)),
-        }),
+        certificate: certificate.map(TestedCertificate::of),
         login: login.map(|l| l.value >= 1.0),
         objects: samples
             .iter()

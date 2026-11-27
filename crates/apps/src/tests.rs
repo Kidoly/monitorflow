@@ -436,6 +436,41 @@ fn jmx_parameters_are_checked() {
 }
 
 #[test]
+fn jmx_pins_a_certificate_over_https_only() {
+    let print = "AB:".repeat(31) + "AB";
+    let pinned = [
+        ("host", "192.0.2.7"),
+        ("password", "secret"),
+        ("tls", "verify"),
+        ("fingerprint", print.as_str()),
+    ];
+    assert!(build(JMX, &params(&pinned), Place::Relay).is_ok());
+    let hex = "ab".repeat(32);
+    let lower = [("tls", "verify"), ("fingerprint", hex.as_str())];
+    assert!(build(JMX, &params(&lower), Place::Relay).is_ok());
+    // A fingerprint over HTTP would mean nothing.
+    assert!(error(JMX, &[("fingerprint", print.as_str())], Place::Check).contains("HTTPS only"));
+    let bad = [("tls", "verify"), ("fingerprint", "abc")];
+    assert!(error(JMX, &bad, Place::Check).contains("64 hexadecimal digits"));
+    // The test looks at an HTTPS certificate.
+    assert!(build(
+        JMX,
+        &params(&[("tls", "verify"), ("what", "test")]),
+        Place::Relay
+    )
+    .is_ok());
+    assert!(error(JMX, &[("what", "test")], Place::Check).contains("`tls` `verify`"));
+    assert!(error(JMX, &[("what", "look")], Place::Check).contains("`collect` or `test`"));
+    // Still no password in clear to a pinned host over HTTP.
+    let clear = [
+        ("host", "192.0.2.7"),
+        ("password", "secret"),
+        ("tls", "off"),
+    ];
+    assert!(error(JMX, &clear, Place::Relay).contains("over HTTPS only"));
+}
+
+#[test]
 fn mbean_names_are_split() {
     let keys = jmx::mbean_keys(r#"Catalina:type=ThreadPool,name="http-nio-8080""#);
     assert_eq!(keys["type"], "ThreadPool");

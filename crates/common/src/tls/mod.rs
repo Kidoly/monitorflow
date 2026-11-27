@@ -13,6 +13,7 @@ mod peer;
 mod pinned;
 mod token;
 mod transport;
+pub mod trust;
 
 #[cfg(test)]
 mod tests;

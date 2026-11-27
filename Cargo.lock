@@ -1801,6 +1801,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "monitorflow-common",
  "monitorflow-sensors",
  "rcgen",
  "regex",
@@ -1860,6 +1861,7 @@ dependencies = [
  "ring",
  "rustix",
  "rustls",
+ "rustls-native-certs",
  "rustls-pemfile",
  "ruzstd",
  "serde",
@@ -1878,6 +1880,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "utoipa",
+ "webpki-roots",
  "windows-sys 0.61.2",
  "x509-parser",
 ]
@@ -2169,18 +2172,15 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "monitorflow-common",
  "monitorflow-sensors",
  "quick-xml",
  "rcgen",
  "reqwest",
- "ring",
  "rustls",
- "rustls-native-certs",
  "tokio",
  "tokio-rustls",
  "tracing",
- "webpki-roots",
- "x509-parser",
 ]
 
 [[package]]

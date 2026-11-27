@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::tls::{self, show_fingerprint, Trust, Verifier};
+use crate::tls::{self, Trust, Verifier};
 use crate::xml::{self, escape, Element};
 
 /// Most bytes of answers read for one call, or for all the pages of one
@@ -196,21 +196,7 @@ impl Client {
 
     /// Why the last handshake failed on its certificate, if it did.
     fn certificate_failure(&self) -> Option<Failure> {
-        let seen = self.verifier.seen()?;
-        let pin = match self.trust {
-            Trust::Look => return None,
-            Trust::Verify(pin) => pin,
-        };
-        if seen.trusted || pin == Some(seen.fingerprint) {
-            return None;
-        }
-        let shown = show_fingerprint(&seen.fingerprint);
-        Some(Failure::Certificate(match pin {
-            Some(_) => format!("the certificate changed: its fingerprint is now {shown}"),
-            None => format!(
-                "the certificate is not trusted; its fingerprint is {shown}, confirm it to trust it"
-            ),
-        }))
+        self.verifier.failure().map(Failure::Certificate)
     }
 
     /// Sends one call and returns the element inside the SOAP body.

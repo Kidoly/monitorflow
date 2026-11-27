@@ -168,7 +168,7 @@ export function VmwareTest({
               <>
                 <p>{t("virtualization.vmware.certificate", { subject: certificate.subject })}</p>
                 <p>
-                  <code>{certificate.fingerprint}</code>
+                  <code className={styles.fingerprint}>{certificate.fingerprint}</code>
                 </p>
                 <p>{t("virtualization.vmware.certificateUntrusted")}</p>
                 <Switch

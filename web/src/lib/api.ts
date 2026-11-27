@@ -1132,6 +1132,34 @@ export interface VmwareTested {
   probe: string;
 }
 
+/** The certificate a test met, to trust by its fingerprint. */
+export type TestedCertificate = NonNullable<VmwareTested["certificate"]>;
+
+/** A Java check's settings for a test of its HTTPS certificate (ADR-0183). */
+export interface JmxTestRequest {
+  /** `central` or a relay's ID; absent: a device's default probe. */
+  probe?: string;
+  /** Absent: the server's address. */
+  host?: string;
+  port?: number;
+  path?: string;
+  user?: string;
+  password?: string;
+  fingerprint?: string;
+}
+
+/** What a Jolokia over HTTPS answered to a test. */
+export interface JmxTested {
+  answers: boolean;
+  error: string | null;
+  certificate: TestedCertificate | null;
+  /** null when not tried: a certificate not trusted yet, the password never sent then. */
+  reads: boolean | null;
+  vm: string | null;
+  version: string | null;
+  probe: string;
+}
+
 /** One host, cluster, virtual machine or datastore of a source. */
 export interface VirtualObject {
   id: string;
@@ -6078,6 +6106,8 @@ export const api = {
     request<{ objects: SnmpObject[]; names: Record<string, string> }>(`/api/snmp-objects?q=${encodeURIComponent(q)}`, { signal }),
 
   /** What a vCenter or ESXi host answers, from its probe; logs in only once its certificate is trusted (ADR-0156). */
+  testJmx: (serverId: string, body: JmxTestRequest) =>
+    request<JmxTested>(`/api/servers/${encodeURIComponent(serverId)}/jmx/test`, { method: "POST", body }),
   testVmware: (body: { site_id: string; address: string; probe?: string; vmware: VmwareCredentialsRequest }) =>
     request<VmwareTested>("/api/devices/vmware/test", { method: "POST", body }),
 

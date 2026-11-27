@@ -81,7 +81,10 @@ pub struct EntryRequest {
     /// and `redis` nothing more.
     /// `jmx` (a Java virtual machine through Jolokia) takes `tls` `off` or
     /// `verify` only, its password over HTTPS or to the loopback only, and
-    /// also `path` (`/jolokia/`) and `groups` (`tomcat`, `kafka`, `none`).
+    /// also `path` (`/jolokia/`), `groups` (`tomcat`, `kafka`, `none`) and,
+    /// with `verify`, `fingerprint`: the SHA-256 of a certificate the
+    /// probe's roots do not trust (often Jolokia's self-signed one), as
+    /// `POST /api/servers/{id}/jmx/test` shows it.
     /// `docker`, run by the agent only, takes `engine` (`docker` or
     /// `podman`), `containers` (a regular expression on names) and
     /// `stats`. `kubernetes`, run from a probe only, takes `host` (the
@@ -353,6 +356,11 @@ pub fn validate_full(
         }
         monitorflow_webcheck::build(&check, None).map_err(|e| e.to_string())?;
     } else if app {
+        if request.kind == monitorflow_apps::JMX && config.params.contains_key("what") {
+            return Err(
+                "param `what` is not for a check: test with POST /api/servers/{id}/jmx/test".into(),
+            );
+        }
         // Checked with the address and secret it will run with (ADR-0183).
         let mut check = config.params.clone();
         if let Some(address) = address {
