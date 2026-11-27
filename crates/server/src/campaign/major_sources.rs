@@ -221,6 +221,7 @@ mod tests {
             vm_snapshot_at: None,
             vm_snapshot_error: None,
             software_state: None,
+            msi_known: false,
         }
     }
 
