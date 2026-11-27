@@ -142,9 +142,10 @@ enum Command {
     },
     /// Let the central server install and remove software from its
     /// catalogue on this host, or stop it (ADR-0188): sets
-    /// `commands.software` in `--config`. Restart the MonitorFlowAgent
-    /// service afterwards; the update service reads it at each request.
-    #[cfg(windows)]
+    /// `commands.software` in `--config` and forgets a "turn off" from the
+    /// web interface. The update service on Windows, and the root helper
+    /// on Linux, read it at each request; restart the agent for its
+    /// report. On Linux, run it as root.
     Software {
         #[arg(value_enum)]
         state: OnOff,
@@ -241,6 +242,10 @@ enum PackagesCommand {
     /// packages it names (all, security only or named). Exits with the
     /// package manager's code when it fails.
     Update,
+    /// Read a `software` command the central server signed on stdin, check
+    /// it and `commands.software`, then install or remove its packages
+    /// with the host's apt or dnf (ADR-0188).
+    Software,
 }
 
 #[cfg(unix)]
@@ -348,6 +353,10 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
             return packages_update(cli.config.clone()).await
         }
         #[cfg(unix)]
+        Some(Command::Packages(PackagesCommand::Software)) => {
+            return packages_software(cli.config.clone()).await
+        }
+        #[cfg(unix)]
         Some(Command::Snapshots(command)) => {
             let path = cli.config.clone();
             return tokio::task::spawn_blocking(move || snapshots(&path, command)).await?;
@@ -439,7 +448,6 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         Some(Command::Scripts { state }) => {
             return set_scripts(&cli.config, state == OnOff::On).await;
         }
-        #[cfg(windows)]
         Some(Command::Software { state }) => {
             return set_software(&cli.config, state == OnOff::On).await;
         }
@@ -504,10 +512,46 @@ async fn set_ai_commands(path: &Path, action: AiCommandsAction) -> anyhow::Resul
     set_key(path, key, on).await
 }
 
-/// `software on|off`: sets `commands.software` (ADR-0188).
+/// `software on|off`: sets `commands.software` and forgets the web
+/// interface's "off" (ADR-0188): a choice made on the host wins.
 #[cfg(windows)]
 async fn set_software(path: &Path, on: bool) -> anyhow::Result<()> {
     set_key(path, monitorflow_agent::ai_commands::Key::Software, on).await
+}
+
+/// `software on|off`, as root: sets `commands.software`, which the root
+/// helper reads at each change, and forgets the web interface's "off".
+#[cfg(unix)]
+async fn set_software(path: &Path, on: bool) -> anyhow::Result<()> {
+    use monitorflow_agent::ai_commands::{self, Key, Outcome};
+
+    let file = path.to_owned();
+    let (outcome, config) =
+        tokio::task::spawn_blocking(move || ai_commands::set(&file, Key::Software, on)).await??;
+    let data_dir = config.data_dir.clone();
+    let forgot =
+        tokio::task::spawn_blocking(move || monitorflow_agent::software::forget(&data_dir))
+            .await?
+            .with_context(|| {
+                format!(
+                    "cannot remove the web interface's choice in {}",
+                    config.data_dir.display()
+                )
+            })?;
+    let what = if on {
+        "the central server may install and remove software"
+    } else {
+        "the central server may not install or remove software"
+    };
+    if outcome == Outcome::Unchanged && !forgot {
+        println!("{what} already ({})", path.display());
+    } else {
+        println!(
+            "{what} in {}; it applies at once, and the web interface shows it once the agent restarts: systemctl restart monitorflow-agent",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Sets `commands.<key>` in the configuration file and says so.
@@ -535,7 +579,18 @@ async fn set_key(
                     )
                 })?
         }
-        Key::FromWeb | Key::RootActions | Key::Scripts | Key::Software => false,
+        Key::Software => {
+            let data_dir = config.data_dir.clone();
+            tokio::task::spawn_blocking(move || monitorflow_agent::software::forget(&data_dir))
+                .await?
+                .with_context(|| {
+                    format!(
+                        "cannot remove the web interface's choice in {}",
+                        config.data_dir.display()
+                    )
+                })?
+        }
+        Key::FromWeb | Key::RootActions | Key::Scripts => false,
     };
     let what = match (key, on) {
         (Key::Shell, true) => "AI commands are on",
@@ -798,7 +853,8 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         logs
     };
     let mut handlers = Handlers::default();
-    let latest_report = platform_handlers(&config, &host, &mut handlers, &stop);
+    let software = software_handlers(&config, &mut handlers).await;
+    let latest_report = platform_handlers(&config, &host, &software, &mut handlers, &stop);
     let ai_switch = ai_handlers(&config, &mut handlers);
     #[cfg(unix)]
     root_action_handler(&config, &ai_switch, &mut handlers).await;
@@ -874,7 +930,10 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         .with_upload(uplink)
         .with_commands(commands_stream)
         .with_remote(remote_end)
-        .with_command_handlers(reporting, ai_switch.subscribe());
+        .with_command_handlers(
+            reporting,
+            either_changed(ai_switch.subscribe(), software.switch.subscribe()),
+        );
     if let Some(reports) = latest_report {
         agent = agent.with_reports(reports);
     }
@@ -895,6 +954,62 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         let _ = sensors.await;
     }
     result
+}
+
+/// Fires each time `a` or `b` does, so a new `Hello` reports either change.
+fn either_changed(
+    mut a: tokio::sync::watch::Receiver<()>,
+    mut b: tokio::sync::watch::Receiver<()>,
+) -> tokio::sync::watch::Receiver<()> {
+    let (sender, receiver) = tokio::sync::watch::channel(());
+    tokio::spawn(async move {
+        loop {
+            let open = tokio::select! {
+                changed = a.changed() => changed.is_ok(),
+                changed = b.changed() => changed.is_ok(),
+            };
+            if !open || sender.send(()).is_err() {
+                break;
+            }
+        }
+    });
+    receiver
+}
+
+/// Whether software installs are allowed (ADR-0188), and whether sudo
+/// knows the Linux helper.
+struct Software {
+    switch: Arc<monitorflow_agent::software::SoftwareSwitch>,
+    #[cfg_attr(windows, allow(dead_code))]
+    sudo_rule: bool,
+}
+
+/// `software_off`, and the state the `software` handlers read: the
+/// host's consent and the web interface's "off".
+async fn software_handlers(config: &AgentConfig, handlers: &mut Handlers) -> Software {
+    use monitorflow_agent::software::{SoftwareOffHandler, SoftwareSwitch};
+
+    let switch = Arc::new(SoftwareSwitch::load(
+        config.commands.software,
+        &config.data_dir,
+    ));
+    handlers.register(
+        monitorflow_common::command::SOFTWARE_OFF,
+        Arc::new(SoftwareOffHandler::new(switch.clone())),
+    );
+    #[cfg(unix)]
+    let sudo_rule = {
+        use monitorflow_agent::software::linux;
+        let tools = monitorflow_agent::packages::Tools::default();
+        let rule = switch.consent() && linux::sudo_rule(&tools).await;
+        if switch.consent() && !rule {
+            tracing::warn!("{}", linux::OLD_SUDO_RULES);
+        }
+        rule
+    };
+    #[cfg(windows)]
+    let sudo_rule = false;
+    Software { switch, sudo_rule }
 }
 
 /// `shell` and `ai_commands`, which share whether AI commands are on:
@@ -957,6 +1072,7 @@ async fn root_action_handler(
 fn platform_handlers(
     config: &AgentConfig,
     host: &HostInfo,
+    software: &Software,
     handlers: &mut Handlers,
     stop: &Shutdown,
 ) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
@@ -977,7 +1093,7 @@ fn platform_handlers(
         handlers.register(
             command::APPLY_UPDATES,
             Arc::new(ApplyUpdatesHandler::new(
-                manager,
+                manager.clone(),
                 reports.clone(),
                 tools.clone(),
             )),
@@ -997,6 +1113,19 @@ fn platform_handlers(
             handlers.register(kind, Arc::new(handler));
         }
         major_upgrade_handler(config, host, &tools, &reports, handlers, stop);
+        handlers.register(
+            command::SOFTWARE,
+            Arc::new(
+                monitorflow_agent::software::linux::LinuxSoftwareHandler::new(
+                    software.switch.clone(),
+                    host.os_family,
+                    software.sudo_rule,
+                    manager,
+                    reports,
+                    tools.clone(),
+                ),
+            ),
+        );
         latest_report
     });
     if latest_report.is_none() {
@@ -1007,15 +1136,11 @@ fn platform_handlers(
             (command::REVERT_SOURCES, "package sources"),
             (command::TAKE_SNAPSHOT, "snapshots"),
             (command::DELETE_SNAPSHOT, "snapshots"),
+            (command::SOFTWARE, "software installs"),
         ] {
             handlers.register(kind, Arc::new(Unsupported::new(what, "this system")));
         }
     }
-    // Linux installs from the catalogue come later (ADR-0188).
-    handlers.register(
-        command::SOFTWARE,
-        Arc::new(Unsupported::new("software installs", "Linux")),
-    );
     handlers.register(
         command::SELF_UPDATE,
         Arc::new(self_update::handler::SelfUpdateHandler::new(
@@ -1089,6 +1214,7 @@ fn major_upgrade_handler(
 fn platform_handlers(
     config: &AgentConfig,
     _host: &HostInfo,
+    software: &Software,
     handlers: &mut Handlers,
     stop: &Shutdown,
 ) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
@@ -1114,7 +1240,7 @@ fn platform_handlers(
         Arc::new(SoftwareHandler::new(
             service.clone(),
             reports,
-            config.commands.software,
+            software.switch.clone(),
         )),
     );
     handlers.register(
@@ -1426,6 +1552,54 @@ async fn packages_update(config: PathBuf) -> anyhow::Result<()> {
     }
     if !outcome.upgraded && outcome.error.is_none() {
         writeln!(stdout, "nothing to upgrade")?;
+    }
+    stdout.flush()?;
+    if let Some(error) = &outcome.error {
+        writeln!(stderr, "Error: {error}")?;
+        stderr.flush()?;
+        std::process::exit(outcome.exit_code());
+    }
+    Ok(())
+}
+
+/// The software helper (ADR-0188), as root: checks the consent, the web
+/// interface's "off", the signed command and the change before anything
+/// else, then prints what it skipped and ran, and the error last on
+/// stderr.
+#[cfg(unix)]
+async fn packages_software(config: PathBuf) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    use monitorflow_agent::helper_trust::Place;
+    use monitorflow_agent::packages::Tools;
+    use monitorflow_agent::software::helper;
+
+    if !rustix::process::geteuid().is_root() {
+        anyhow::bail!("run as root, as the agent does through sudo");
+    }
+    let family = os::detect()
+        .context("cannot tell the package manager")?
+        .os_family;
+    let change = tokio::task::spawn_blocking(move || {
+        let now = monitorflow_agent::self_update::unix_ms();
+        helper::authorized(
+            &config,
+            &mut std::io::stdin().lock(),
+            |config| Place::agent(&config.tls_paths()),
+            family,
+            now,
+        )
+    })
+    .await??;
+    let outcome = helper::execute(&change, family, &Tools::default()).await;
+    let (mut stdout, mut stderr) = (std::io::stdout().lock(), std::io::stderr().lock());
+    for note in &outcome.notes {
+        writeln!(stdout, "{note}")?;
+    }
+    for run in &outcome.runs {
+        writeln!(stdout, "$ {}", run.line)?;
+        stdout.write_all(&run.stdout)?;
+        stderr.write_all(&run.stderr)?;
     }
     stdout.flush()?;
     if let Some(error) = &outcome.error {
@@ -1837,6 +2011,10 @@ mod update_service {
             let config: monitorflow_common::config::AgentConfig =
                 config::load(&super::default_config()).map_err(|e| format!("{e:#}"))?;
             consented(&run, config.commands.software)?;
+            // The web interface's "off" (ADR-0188), which only takes away.
+            if monitorflow_agent::software::turned_off(&data_dir) {
+                return Err(monitorflow_agent::software::TURNED_OFF.into());
+            }
         }
         Ok(run)
     }

@@ -48,6 +48,10 @@ enum PackageManager {
   // Linux.
   PACKAGE_MANAGER_FLATPAK = 2;
   PACKAGE_MANAGER_SNAP = 3;
+  // The distributions' own managers, for software from the catalogue only
+  // (ADR-0188): never in a ThirdPartySelection or a PackageReport.
+  PACKAGE_MANAGER_APT = 4;
+  PACKAGE_MANAGER_DNF = 5;
 }
 
 // What an ApplyUpdates asks of one third-party manager.
@@ -73,7 +77,8 @@ message SoftwareChange {
     ACTION_REMOVE = 2;
   }
   Action action = 1;
-  // The manager that installs or removes them; winget only for now.
+  // The manager that installs or removes them: winget on Windows, apt or
+  // dnf on Linux, the one of the host's distribution.
   PackageManager manager = 2;
   // At least one, at most 100, each ID once.
   repeated SoftwarePackage packages = 3;
@@ -83,12 +88,20 @@ message SoftwareChange {
 
 // One package of a SoftwareChange.
 message SoftwarePackage {
-  // In the manager's grammar (`common::third_party::valid_id`).
+  // In the manager's grammar (`common::third_party::valid_id`): a winget
+  // package ID, or a package name of the distribution for apt and dnf.
   string id = 1;
   // Where to install it from: a winget source name, like `winget`. A
-  // removal takes the app as installed and ignores it.
+  // removal takes the app as installed and ignores it. Empty for apt and
+  // dnf, which install from the host's configured sources.
   string source = 2;
 }
+
+// Payload of a Command of kind "software_off" (ADR-0188): stops the
+// central server from installing and removing software on this host. It
+// only takes the power away; nothing the server sends gives it back, only
+// the host's administrator does (`monitorflow-agent software on`).
+message SoftwareOff {}
 
 // The packages installed on an agent's host, sent after every apply_updates
 // and periodically.

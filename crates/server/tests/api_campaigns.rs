@@ -177,7 +177,7 @@ db_tests! {
             [
                 "agent_version", "command_ttl_s", "created_at", "created_by", "current_wave", "customer_id",
                 "customer_name", "error", "failure_threshold", "finished_at", "id", "major_upgrade", "name", "previous_runs",
-                "progress", "server_ids", "site_id", "software", "sources", "spec", "started_at", "state",
+                "progress", "recurring", "server_ids", "site_id", "software", "sources", "spec", "started_at", "state",
                 "wave_count", "wave_specs", "waves", "windows"
             ]
         );

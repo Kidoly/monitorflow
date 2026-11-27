@@ -53,6 +53,11 @@
 #                    server's script library as its own user
 #                    (commands.scripts, ADR-0189), also on a host already
 #                    installed; 0 takes that back. Unset keeps what is there.
+#   MF_SOFTWARE_FROM_WEB=1  agent only: let the central server install and
+#                    remove software of its catalogue with apt or dnf
+#                    (commands.software, ADR-0188), also on a host already
+#                    installed; the web interface can then only turn it
+#                    off. 0 takes that back. Unset keeps what is there.
 #   MF_MAJOR_UPGRADES_FROM_WEB=1  agent only: allow major upgrades of the
 #                    distribution from the web interface
 #                    (packages.major_upgrades, ADR-0182), also on a host
@@ -123,6 +128,7 @@ MF_AI_COMMANDS_FROM_WEB=${MF_AI_COMMANDS_FROM_WEB:-}
 MF_AI_ROOT_ACTIONS=${MF_AI_ROOT_ACTIONS:-}
 MF_ALLOW_SCRIPTS=${MF_ALLOW_SCRIPTS:-}
 MF_MAJOR_UPGRADES_FROM_WEB=${MF_MAJOR_UPGRADES_FROM_WEB:-}
+MF_SOFTWARE_FROM_WEB=${MF_SOFTWARE_FROM_WEB:-}
 MF_REMOTE_TERMINAL=${MF_REMOTE_TERMINAL:-}
 MF_REMOTE_TERMINAL_USER=${MF_REMOTE_TERMINAL_USER:-}
 
@@ -413,6 +419,11 @@ case $MF_MAJOR_UPGRADES_FROM_WEB in
     *) die "MF_MAJOR_UPGRADES_FROM_WEB must be 1 or 0" ;;
 esac
 [ -z "$MF_MAJOR_UPGRADES_FROM_WEB" ] || [ "$MF_ROLE" = agent ] || die "MF_MAJOR_UPGRADES_FROM_WEB is for agents"
+case $MF_SOFTWARE_FROM_WEB in
+    '' | 0 | 1) ;;
+    *) die "MF_SOFTWARE_FROM_WEB must be 1 or 0" ;;
+esac
+[ -z "$MF_SOFTWARE_FROM_WEB" ] || [ "$MF_ROLE" = agent ] || die "MF_SOFTWARE_FROM_WEB is for agents"
 case $MF_REMOTE_TERMINAL in
     '' | 0 | 1) ;;
     *) die "MF_REMOTE_TERMINAL must be 1 or 0" ;;
@@ -553,6 +564,15 @@ if [ "$MF_MAJOR_UPGRADES_FROM_WEB" = 1 ]; then
 elif [ "$MF_MAJOR_UPGRADES_FROM_WEB" = 0 ]; then
     "$BIN" --config "$CONF" major-upgrades off >/dev/null
     say "major upgrades from the web interface are refused on this agent"
+fi
+# In agent.toml, which the root helper reads itself (ADR-0188). Either
+# value also forgets a "turn off" from the web interface.
+if [ "$MF_SOFTWARE_FROM_WEB" = 1 ]; then
+    "$BIN" --config "$CONF" software on >/dev/null
+    say "the central server can install and remove software of its catalogue on this agent; MF_SOFTWARE_FROM_WEB=0 takes that back"
+elif [ "$MF_SOFTWARE_FROM_WEB" = 0 ]; then
+    "$BIN" --config "$CONF" software off >/dev/null
+    say "software installs from the web interface are refused on this agent"
 fi
 
 # In agent.toml, which root owns: the agent's user cannot change it.

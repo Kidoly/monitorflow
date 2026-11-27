@@ -636,7 +636,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   const [remoteTerminal, setRemoteTerminal] = useState(false);
   // Unticked too (ADR-0190): a desktop gives a whole Windows session, its own consent.
   const [remoteDesktop, setRemoteDesktop] = useState(false);
-  // Off by default (ADR-0188): software from the catalogue, on Windows only.
+  // Off by default (ADR-0188): software from the catalogue, with winget, apt or dnf.
   const [softwareFromWeb, setSoftwareFromWeb] = useState(false);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
@@ -645,7 +645,17 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
     {
       name: "Linux",
       note: t("install.linux.note"),
-      command: linuxInstallCommand(token, source, origin, through, aiFromWeb, scripts, majorFromWeb, remoteTerminal),
+      command: linuxInstallCommand(
+        token,
+        source,
+        origin,
+        through,
+        aiFromWeb,
+        scripts,
+        majorFromWeb,
+        remoteTerminal,
+        softwareFromWeb,
+      ),
     },
     {
       name: "Windows",

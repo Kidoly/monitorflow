@@ -636,6 +636,72 @@ describe("ServerPage", () => {
     });
   });
 
+  describe("Software installs", () => {
+    const kinds = { apply_updates: "accepted", shell: "off", software: "accepted", software_off: "accepted" };
+    const showAs = (user: Parameters<typeof As>[0]["user"]) =>
+      render(
+        <As user={user}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+    const fact = () => screen.getByText("Software installs").parentElement!;
+
+    it("lets administrators of the site turn them off, never on", async () => {
+      const queued = command({ id: "c9", kind: "software_off", parameters: {}, state: "queued" });
+      const fetchMock = stubFetch(
+        routes({
+          [`GET /api/servers/${ID}`]: ok({ ...web1, command_kinds: kinds }),
+          [`POST /api/servers/${ID}/software`]: { status: 201, body: { ...queued, stdout: null, stderr: null } },
+        }),
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      showAs(me({ role: "administrator", customer_id: null, site_id: web1.site_id }));
+      await heading();
+      expect(fact()).toHaveTextContent("Allowed");
+      await user.click(screen.getByRole("button", { name: "Turn off software installs…" }));
+      expect(screen.getByText(/Only the server's administrator can turn them on again/)).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Turn off software installs" }));
+      await vi.waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          `/api/servers/${ID}/software`,
+          expect.objectContaining({ method: "POST", body: JSON.stringify({ on: false }) }),
+        ),
+      );
+    });
+
+    it("offers no switch to operators nor for an agent that does not know it", async () => {
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: ok({ ...web1, command_kinds: kinds }) }));
+      showAs(me({ role: "operator", customer_id: null, site_id: null }));
+      await heading();
+      expect(screen.queryByRole("button", { name: "Turn off software installs…" })).not.toBeInTheDocument();
+    });
+
+    it("says who turned them off, and the line that turns them on on the server", async () => {
+      const change = {
+        command_id: "c9",
+        state: "succeeded",
+        requested_by: "alice",
+        issued_at: "2026-11-20T10:00:00Z",
+        finished_at: "2026-11-20T10:00:05Z",
+        error: null,
+      };
+      stubFetch(
+        routes({
+          [`GET /api/servers/${ID}`]: ok({
+            ...web1,
+            command_kinds: { ...kinds, software: "off" },
+            software_off_change: change,
+          }),
+        }),
+      );
+      showAs(customerAdmin);
+      await heading();
+      expect(fact()).toHaveTextContent(/Off\s*Turned off by alice/);
+      expect(fact()).toHaveTextContent("sudo monitorflow-agent software on");
+      expect(screen.queryByRole("button", { name: "Turn off software installs…" })).not.toBeInTheDocument();
+    });
+  });
+
   it("switches tabs through the URL", async () => {
     stubFetch(routes());
     render(<ServerPage id={ID} />);

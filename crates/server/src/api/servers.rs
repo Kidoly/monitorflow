@@ -214,6 +214,9 @@ pub struct ServerDetail {
     /// The last time AI commands were turned on or off from the web
     /// interface, `null` if never (ADR-0098).
     pub ai_commands_change: Option<super::ai_commands::AiCommandsChange>,
+    /// The last time software installs were turned off from the web
+    /// interface, `null` if never (ADR-0188).
+    pub software_off_change: Option<super::software_switch::SoftwareOffChange>,
     /// What this person may do with remote terminals here (ADR-0190).
     pub remote_terminal: super::remote_sessions::RemoteTerminalAccess,
 }
@@ -622,6 +625,7 @@ pub async fn detail(
     let row = row.ok_or(ApiError::NotFound)?;
     let certificate = latest_certificate(&state.pool, PeerRole::Agent, &row.peer_id).await?;
     let ai_commands_change = super::ai_commands::last_change(&state.pool, row.id).await?;
+    let software_off_change = super::software_switch::last_change(&state.pool, row.id).await?;
     let remote_terminal = super::remote_sessions::access(&state, &user, row.site_id).await?;
     let mut server = [ServerView::new(&state, row)];
     super::dependencies::mark_unreachable(&state, &mut server).await?;
@@ -630,6 +634,7 @@ pub async fn detail(
         server,
         certificate,
         ai_commands_change,
+        software_off_change,
         remote_terminal,
     }))
 }

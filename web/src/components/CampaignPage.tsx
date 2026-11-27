@@ -120,6 +120,7 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
       label: t("campaigns.fact.windows"),
       value: campaign.windows.length === 0 ? t("campaigns.anyTime") : campaign.windows.map(describeWindow).join("; "),
     },
+    ...(campaign.recurring ? [{ label: t("campaigns.fact.recurring"), value: t("campaigns.form.recurringNote") }] : []),
     ...(campaign.sources
       ? [
           {

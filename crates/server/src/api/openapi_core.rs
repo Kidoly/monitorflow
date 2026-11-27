@@ -1026,7 +1026,7 @@ that customer. **Area**: `servers`."),
 fn server_proxmox_guests() {}
 
 /// A command just queued, of `kind` with `parameters`.
-fn queued(kind: &str, parameters: serde_json::Value) -> serde_json::Value {
+pub(super) fn queued(kind: &str, parameters: serde_json::Value) -> serde_json::Value {
     json!({
         "id": ex::COMMAND, "server_id": ex::SERVER, "kind": kind, "parameters": parameters,
         "state": "queued", "issued_at": "2026-11-14T10:00:00Z", "expires_at": "2026-11-15T10:00:00Z",

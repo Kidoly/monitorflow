@@ -131,6 +131,22 @@ describe("CampaignForm", () => {
     expect(push).toHaveBeenCalledWith(expect.stringContaining(`id=${CAMPAIGN_ID}`));
   });
 
+  it("runs a campaign again at each window when asked, which needs a recurring window", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({ ...inventory, "POST /api/campaigns": { status: 201, body: detail() } });
+    render(<CampaignForm me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "New campaign" });
+    await user.type(within(form).getByLabelText("Name"), "Nightly");
+    await user.selectOptions(within(form).getByLabelText("Every server of the site"), "site-1");
+    await user.click(within(form).getByRole("switch", { name: "Run again at each window" }));
+    await user.click(screen.getByRole("button", { name: "Create campaign" }));
+    expect(screen.getByText("A campaign that runs again at each window needs a weekly, monthly or yearly window.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add window" }));
+    await user.click(screen.getByRole("button", { name: "Create campaign" }));
+    const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(call?.[1]?.body as string)).toMatchObject({ recurring: true });
+  });
+
   it("shows client-side errors without sending, then API errors", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({
@@ -377,7 +393,7 @@ describe("CampaignForm", () => {
     ]);
   });
 
-  it("installs software of the catalogue on the Windows servers (ADR-0188)", async () => {
+  it("installs software of the catalogue on the servers of its manager (ADR-0188)", async () => {
     const user = userEvent.setup();
     const SEVEN = "1b7c5d6e-1f2a-4b3c-8d4e-5f6a7b8c9d01";
     const fetchMock = stubFetch({
@@ -406,8 +422,10 @@ describe("CampaignForm", () => {
     await user.click(within(form).getByRole("radio", { name: "Install or remove software" }));
     expect(within(form).queryByRole("group", { name: "Windows Update" })).not.toBeInTheDocument();
     expect(within(form).queryByRole("group", { name: "Updates from" })).not.toBeInTheDocument();
-    expect(screen.getByText("1 server targeted. 1 left out: software goes to Windows servers only.")).toBeInTheDocument();
+    // Nothing chosen yet: every system can take some software.
+    expect(screen.getByText("2 servers targeted.")).toBeInTheDocument();
     await user.click(await within(form).findByRole("checkbox", { name: /7-Zip/ }));
+    expect(screen.getByText("1 server targeted. 1 left out: none of the software chosen is for its system.")).toBeInTheDocument();
     await user.click(within(form).getByRole("radio", { name: "Remove" }));
     await user.click(screen.getByRole("button", { name: "Create campaign" }));
     const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");

@@ -41,7 +41,9 @@ use uuid::Uuid;
 
 use super::model::{software_refusal, MajorUpgradeSpec, SourcesMode};
 use super::pin::{self, Configurer, Next, Pending, PinSources};
-use super::store::{cancel_queued, close_waves, Actor, CampaignRow, COLUMNS};
+use super::store::{
+    cancel_queued, close_waves, Actor, CampaignError, CampaignRow, CampaignStore, COLUMNS,
+};
 use crate::agent_releases;
 use crate::api::audit::{self, Event};
 use crate::commands::major_upgrade::{self as upgrade, Progress};
@@ -153,6 +155,7 @@ impl Runner {
                 tracing::warn!(%error, "cannot record the snapshots campaigns pin; will retry");
             }
         }
+        self.recur(now).await;
         let ids = match self.due().await {
             Ok(ids) => ids,
             Err(error) => {
@@ -165,6 +168,71 @@ impl Runner {
                 tracing::warn!(campaign = %id, %error, "cannot advance a campaign; will retry");
             }
         }
+    }
+
+    /// Runs again every recurring campaign whose last run completed
+    /// before the window open at `now` (ADR-0188), as "Run again" does,
+    /// audited as `campaign.relaunch` by the runner. One with commands
+    /// still in flight or sources to restore waits for the next tick.
+    pub async fn recur(&self, now: DateTime<Utc>) {
+        let due: Vec<Uuid> = match sqlx::query_scalar(
+            "SELECT id FROM campaigns
+             WHERE recurring AND state = 'completed' AND finished_at IS NOT NULL
+               AND campaign_window_end(id, $1) IS NOT NULL
+               AND campaign_window_end(id, $1)
+                   IS DISTINCT FROM campaign_window_end(id, finished_at)
+             ORDER BY finished_at",
+        )
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(due) => due,
+            Err(error) => {
+                tracing::warn!(%error, "cannot list recurring campaigns; will retry");
+                return;
+            }
+        };
+        let store = CampaignStore::new(self.pool.clone());
+        for id in due {
+            match store.relaunch(id, false, ACTOR).await {
+                Ok(_) => tracing::info!(campaign = %id, "recurring campaign run again"),
+                Err(CampaignError::Busy(reason)) => {
+                    tracing::debug!(campaign = %id, %reason, "recurring campaign waits")
+                }
+                Err(CampaignError::Database(error)) => {
+                    tracing::warn!(campaign = %id, %error, "cannot run a recurring campaign again; will retry")
+                }
+                // What it holds no longer plans (a server or snapshot
+                // gone): it stops recurring, with why, for a person.
+                Err(error) => {
+                    tracing::warn!(campaign = %id, %error, "a recurring campaign cannot run again");
+                    if let Err(error) = self.stop_recurring(id, &error.to_string()).await {
+                        tracing::warn!(campaign = %id, %error, "cannot record why a campaign stopped recurring");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ends the recurrence of `id`, which cannot run again, with `reason`
+    /// as its error, audited as `campaign.update` by the runner.
+    async fn stop_recurring(&self, id: Uuid, reason: &str) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let error = format!("stopped recurring: {reason}");
+        sqlx::query("UPDATE campaigns SET recurring = false, error = $2 WHERE id = $1")
+            .bind(id)
+            .bind(&error)
+            .execute(&mut *tx)
+            .await?;
+        record(
+            &mut tx,
+            id,
+            "campaign.update",
+            json!({"recurring": false, "error": error}),
+        )
+        .await?;
+        tx.commit().await
     }
 
     /// The campaigns [`Self::tick`] steps: the active ones, and those with
@@ -560,9 +628,11 @@ async fn queue(
                 // Software from the catalogue (ADR-0188), where the host
                 // allowed it.
                 (None, Some(software)) => {
-                    match software_refusal(target.software_state.as_deref()) {
+                    match software_refusal(target.software_state.as_deref(), &target.os_family) {
                         Some(error) => Err(error.to_owned()),
-                        None => Ok((SOFTWARE, software.change(spec.allow_reboot).encode_to_vec())),
+                        None => software
+                            .change_for(&target.os_family, spec.allow_reboot)
+                            .map(|change| (SOFTWARE, change.encode_to_vec())),
                     }
                 }
                 (None, None) => spec

@@ -183,6 +183,7 @@ impl Fleet {
             }),
             agent_version: None,
             software: None,
+            recurring: false,
             created_by: None,
             major_upgrade: None,
         }

@@ -16,8 +16,20 @@ pub fn key(manager: PackageManager) -> Option<&'static str> {
         PackageManager::Winget => Some("winget"),
         PackageManager::Flatpak => Some("flatpak"),
         PackageManager::Snap => Some("snap"),
+        PackageManager::Apt => Some("apt"),
+        PackageManager::Dnf => Some("dnf"),
         PackageManager::Unspecified => None,
     }
+}
+
+/// Whether `manager` is a third-party one, which updates select. apt and
+/// dnf are the distributions' own: only software from the catalogue
+/// names them (ADR-0188).
+pub fn is_third_party(manager: PackageManager) -> bool {
+    matches!(
+        manager,
+        PackageManager::Winget | PackageManager::Flatpak | PackageManager::Snap
+    )
 }
 
 /// The manager named `key`, the reverse of [`key`].
@@ -26,6 +38,8 @@ pub fn parse(key: &str) -> Option<PackageManager> {
         "winget" => Some(PackageManager::Winget),
         "flatpak" => Some(PackageManager::Flatpak),
         "snap" => Some(PackageManager::Snap),
+        "apt" => Some(PackageManager::Apt),
+        "dnf" => Some(PackageManager::Dnf),
         _ => None,
     }
 }
@@ -48,6 +62,7 @@ pub fn valid_id(manager: PackageManager, id: &str) -> bool {
         PackageManager::Winget => valid_winget_id(id),
         PackageManager::Flatpak => valid_flatpak_ref(id),
         PackageManager::Snap => valid_snap_name(id),
+        PackageManager::Apt | PackageManager::Dnf => crate::command::valid_package_name(id),
         PackageManager::Unspecified => false,
     }
 }
@@ -163,7 +178,9 @@ pub fn check(apply: &ApplyUpdates, os_family: Option<&str>) -> Result<(), Select
     for selection in &apply.third_party {
         let manager = PackageManager::try_from(selection.manager)
             .map_err(|_| SelectionError::UnknownManager)?;
-        let name = key(manager).ok_or(SelectionError::UnknownManager)?;
+        let name = key(manager)
+            .filter(|_| is_third_party(manager))
+            .ok_or(SelectionError::UnknownManager)?;
         if !seen.insert(manager) {
             return Err(SelectionError::Duplicate(name));
         }

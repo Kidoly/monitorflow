@@ -20,7 +20,7 @@ import {
 import { updateAvailable } from "@/lib/agentVersion";
 import { certificateProblem, certificateState } from "@/lib/certificates";
 import { metricsError } from "@/lib/charts";
-import { aiCommands, aiSwitch, commandSummary, unsupportedReason } from "@/lib/commandKinds";
+import { acceptance, aiCommands, aiSwitch, commandSummary, unsupportedReason } from "@/lib/commandKinds";
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
 import { administersCustomer, administersSite, modifiesSite, multiCustomer, multiSite, useMe } from "@/lib/me";
@@ -696,6 +696,86 @@ function AiCommandsSwitch({ server, on, onChanged }: { server: ServerDetail; on:
   );
 }
 
+/** The line that turns software installs on, run on the server itself (ADR-0188). */
+const softwareOnLine = (osFamily: string) =>
+  osFamily === "windows" ? "monitorflow-agent.exe software on" : "sudo monitorflow-agent software on";
+
+/**
+ * Whether the central server may install software here (ADR-0188), with "Turn off software installs…"
+ * for administrators of the site. Turning them on again is the server's administrator's alone.
+ */
+function SoftwareFact({ server, onChanged }: { server: ServerDetail; onChanged: () => void }) {
+  const me = useMe();
+  const kinds = server.command_kinds ?? {};
+  const state = acceptance(kinds.software);
+  const change = server.software_off_change ?? null;
+  const who = change ? (change.requested_by ?? t("server.change.removedUser")) : "";
+  const at = change ? minutes(change.issued_at) : "";
+  const line = (() => {
+    if (!change) return null;
+    if (isActive(change)) {
+      const later = server.status === "offline" ? t("server.change.whenBack") : "";
+      return t("server.change.turningOff", { who, at }) + later;
+    }
+    if (change.state === "succeeded" && state === "off") {
+      return t("server.change.turnedOff", { who, at: minutes(change.finished_at ?? change.issued_at) });
+    }
+    if (change.state === "failed") {
+      return t("server.change.failedOff", { who, at, error: change.error ?? t("server.change.unknownError") });
+    }
+    if (change.state === "expired") return t("server.change.expiredOff", { who, at });
+    return null;
+  })();
+  switch (state) {
+    case "accepted":
+      return (
+        <>
+          <Label tone="warn">{t("server.software.allowed")}</Label>
+          {line}
+          {kinds.software_off === "accepted" &&
+            !(change && isActive(change)) &&
+            administersSite(me, server.customer_id, server.site_id) && (
+              <>
+                {" "}
+                <InlineConfirm
+                  trigger={t("server.software.offTrigger")}
+                  triggerVariant="danger"
+                  layout="row"
+                  title={t("server.software.offTitle", { server: server.hostname })}
+                  consequence={t("server.software.offConsequence")}
+                  confirmLabel={t("server.software.offConfirm")}
+                  confirmVariant="danger"
+                  pendingLabel={t("server.switch.sending")}
+                  onConfirm={async () => {
+                    await api.turnSoftwareOff(server.id);
+                    onChanged();
+                  }}
+                  describeError={(e) => t("server.switch.failed", { error: describeError(e) })}
+                />
+              </>
+            )}
+        </>
+      );
+    case "off":
+      return (
+        <>
+          <Label tone="neutral">{t("server.software.off")}</Label>
+          {line}
+          {t("server.software.onlyOnServer")} <code>{softwareOnLine(server.os_family)}</code>
+        </>
+      );
+    case "unsupported":
+      return (
+        <>
+          <Label tone="neutral">{t("server.software.notAvailable")}</Label>{" "}
+          {server.os_family === "windows" ? t("server.software.notYet") : t("server.software.oldSudo")}
+        </>
+      );
+    case "unknown":
+      return null;
+  }
+}
+
 /** "2026-10-19 02:14". */
 const minutes = (iso: string) => formatExact(new Date(iso)).slice(0, 16);
 
@@ -742,6 +822,10 @@ function ServerFacts({
           ? []
           : [
               { label: t("server.fact.aiCommands"), value: <AiCommandsFact server={server} onChanged={onChanged} /> },
+              // Only once the agent says: an older one updates by itself first.
+              ...(acceptance(server.command_kinds?.software) === "unknown"
+                ? []
+                : [{ label: t("server.fact.software"), value: <SoftwareFact server={server} onChanged={onChanged} /> }]),
               { label: t("server.fact.offlineAlerts"), value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> },
               // What a change gets first; the Proxmox mapping for administrators of the customer.
               // A limited rollback without a mapping to change is the header's badge alone.

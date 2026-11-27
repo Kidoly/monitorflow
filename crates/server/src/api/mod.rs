@@ -906,6 +906,7 @@ pub mod sites;
 pub mod snmp_checks;
 pub mod snmp_library;
 pub mod software;
+pub mod software_switch;
 pub mod sources;
 pub mod sso_login;
 pub mod third_party;
@@ -1686,6 +1687,7 @@ pub fn router(state: ApiState) -> Router {
             get(commands::list).post(commands::create),
         )
         .route("/api/servers/{id}/ai-commands", post(ai_commands::server))
+        .route("/api/servers/{id}/software", post(software_switch::server))
         .route(
             "/api/servers/{id}/remote-sessions",
             get(remote_sessions::list).post(remote_sessions::start),

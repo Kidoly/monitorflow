@@ -2720,6 +2720,7 @@
                         "succeeded": 0,
                         "total": 2
                       },
+                      "recurring": false,
                       "server_ids": [],
                       "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                       "software": null,
@@ -2914,6 +2915,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "recurring": false,
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "software": null,
@@ -3013,7 +3015,7 @@
             }
           },
           "400": {
-            "description": "`invalid`, with `error` saying why: not the expected JSON, no `site_id` nor `server_ids`, `unknown site <id>` or `unknown server <id>` (not of the customer), `server <id> is revoked`, a bad name, `command_ttl_s` outside 60 to 604800, a bad package name, batch, window, time zone, failure threshold or pinned snapshot, `agent_version` not like `0.2.0`, package options with `agent_version` or `software`, an unknown classification, a bad held update, or `unknown catalogue entry <id>`",
+            "description": "`invalid`, with `error` saying why: not the expected JSON, no `site_id` nor `server_ids`, `unknown site <id>` or `unknown server <id>` (not of the customer), `server <id> is revoked`, a bad name, `command_ttl_s` outside 60 to 604800, a bad package name, batch, window, time zone, failure threshold or pinned snapshot, `agent_version` not like `0.2.0`, package options with `agent_version` or `software`, an unknown classification, a bad held update, `unknown catalogue entry <id>`, a software campaign whose `sources` replace the servers' own, a mirror of its software without a published snapshot, or `recurring` without a weekly, monthly or yearly window or for a major upgrade",
             "content": {
               "application/json": {
                 "schema": {
@@ -3156,6 +3158,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "recurring": false,
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "software": null,
@@ -3419,6 +3422,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "recurring": false,
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "software": null,
@@ -3796,6 +3800,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "recurring": false,
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "software": null,
@@ -4062,6 +4067,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "recurring": false,
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "software": null,
@@ -4315,6 +4321,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "recurring": false,
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "software": null,
@@ -4788,6 +4795,7 @@
                     "succeeded": 0,
                     "total": 2
                   },
+                  "recurring": false,
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "software": null,
@@ -5041,6 +5049,7 @@
                     "succeeded": 1,
                     "total": 2
                   },
+                  "recurring": false,
                   "server_ids": [],
                   "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
                   "software": null,
@@ -39672,7 +39681,7 @@
           "servers"
         ],
         "summary": "Get a server",
-        "description": "One server: the fields of a listing row, plus the certificate MonitorFlow issued it last and the last time its AI commands were turned on or off from the web interface, and what the key's person may do with remote terminals there (ADR-0190). A removed server stays readable here, with `revoked_at` set, for its history.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "description": "One server: the fields of a listing row, plus the certificate MonitorFlow issued it last and the last time its AI commands were turned on or off from the web interface, the last time its software installs were turned off from it (ADR-0188), and what the key's person may do with remote terminals there (ADR-0190). A removed server stays readable here, with `revoked_at` set, for its history.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
         "operationId": "server",
         "parameters": [
           {
@@ -39737,6 +39746,7 @@
                   "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
                   "site_name": "paris",
                   "site_offline_alerts": true,
+                  "software_off_change": null,
                   "status": "online",
                   "via_relay": null
                 }
@@ -43879,6 +43889,170 @@
           },
           "404": {
             "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/software": {
+      "post": {
+        "tags": [
+          "software"
+        ],
+        "summary": "Turn software installs off on a server",
+        "description": "Queues the signed `software_off` command: the agent stops installing\nand removing software from the catalogue, and its root helper and\nupdate service refuse too, until the server's administrator turns it\non again there (`monitorflow-agent software on`). `{\"on\": true}` is\nalways refused: the central server can take the right away, never\ngive it. The command waits up to seven days for an offline server; a\nnewer request cancels one still queued. `GET /servers/{id}` shows the\nlast one as `software_off_change`.\n\nNeeds an administrator role on the server's site, its customer or\neverything, and the key area \"updates\". Audited as\n`server.software_off`.",
+        "operationId": "software_off",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SoftwareSwitchRequest"
+              },
+              "example": {
+                "on": false
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The queued command",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDetail"
+                },
+                "example": {
+                  "campaign_id": null,
+                  "error": null,
+                  "exit_code": null,
+                  "expires_at": "2026-11-21T10:00:00Z",
+                  "finished_at": null,
+                  "id": "c0ffee00-1234-4abc-8def-0123456789ab",
+                  "issued_at": "2026-11-14T10:00:00Z",
+                  "kind": "software_off",
+                  "parameters": {},
+                  "requested_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                  "sent_at": null,
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "started_at": null,
+                  "state": "queued",
+                  "stderr": null,
+                  "stdout": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: a malformed body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller does not administer the server's site. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such server, or one the caller does not see",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: `on` is true (the message gives the line to run on the server), software installs are already off there, the agent is too old, or the server is removed; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
             "content": {
               "application/json": {
                 "schema": {
@@ -52621,6 +52795,7 @@
                       "description": "File archiver",
                       "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
                       "manager": "winget",
+                      "mirror": null,
                       "name": "7-Zip",
                       "package_id": "7zip.7zip",
                       "source": "winget",
@@ -52706,7 +52881,7 @@
           "software"
         ],
         "summary": "Add software to the catalogue",
-        "description": "A winget package by its ID, and the source it installs from (`winget`,\nthe community source, by default; never the store's, `msstore`). A\npackage is listed once per customer, and once among shared entries.\n\nNeeds an administrator role on `customer_id` as a whole, or a global\none for a shared entry, and the key area \"updates\". Audited as\n`software.create`.",
+        "description": "A winget package by its ID, and the source it installs from (`winget`,\nthe community source, by default; never the store's, `msstore`). Or,\nwith `manager` `apt` or `dnf`, a package of the distribution by name,\nwithout a source, and optionally the `mirror` of the central server\nof the same family it installs from. A package is listed once per\ncustomer and manager, and once among shared entries.\n\nNeeds an administrator role on `customer_id` as a whole, or a global\none for a shared entry, and the key area \"updates\". Audited as\n`software.create`.",
         "operationId": "create_software",
         "parameters": [
           {
@@ -52752,6 +52927,7 @@
                   "description": "File archiver",
                   "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
                   "manager": "winget",
+                  "mirror": null,
                   "name": "7-Zip",
                   "package_id": "7zip.7zip",
                   "source": "winget",
@@ -52761,7 +52937,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: a bad name, manager, package ID, source or description",
+            "description": "`invalid`: a bad name, manager, package ID, source, mirror or description",
             "content": {
               "application/json": {
                 "schema": {
@@ -52913,6 +53089,7 @@
                   "description": "File archiver",
                   "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
                   "manager": "winget",
+                  "mirror": null,
                   "name": "7-Zip",
                   "package_id": "7zip.7zip",
                   "source": "winget",
@@ -57616,6 +57793,7 @@
           "command_ttl_s",
           "failure_threshold",
           "windows",
+          "recurring",
           "wave_count",
           "progress",
           "previous_runs",
@@ -57703,6 +57881,10 @@
           },
           "progress": {
             "$ref": "#/components/schemas/CampaignProgress"
+          },
+          "recurring": {
+            "type": "boolean",
+            "description": "Run again by itself at each window once a run completed (ADR-0188)."
           },
           "server_ids": {
             "type": [
@@ -58039,6 +58221,10 @@
             },
             "description": "Packages to upgrade, up to 1000; empty upgrades everything. Names\nare letters, digits and `.+_:-` not starting with `-`, or KB\nnumbers and update IDs for Windows servers."
           },
+          "recurring": {
+            "type": "boolean",
+            "description": "Run again by itself at the first window that opens after each run\ncompletes, as \"Run again\" does (ADR-0188). Needs a weekly, monthly\nor yearly window; not for major upgrades. A failed or stopped run\nends it until someone runs the campaign again."
+          },
           "security_only": {
             "type": "boolean",
             "description": "Only security updates."
@@ -58063,7 +58249,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/SoftwareRequest",
-                "description": "Install or remove software from the catalogue instead of updating\n(ADR-0188): Windows servers whose administrator allowed it, with\n`allow_reboot`; takes no other package option nor `sources`."
+                "description": "Install or remove software from the catalogue instead of updating\n(ADR-0188): each server gets the packages of its manager (winget,\napt or dnf), where its administrator allowed it, with\n`allow_reboot`; takes no other package option. `sources` may only\nadd mirrors; without it, the mirrors the entries install from are\nadded, pinned to their newest published snapshot."
               },
               {
                 "type": "null"
@@ -58200,6 +58386,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "recurring": {
+            "type": "boolean",
+            "description": "Whether it ran again by itself at each window (ADR-0188)."
           },
           "server_ids": {
             "type": "array",
@@ -59617,7 +59807,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/SoftwareRequest",
-                "description": "`software`: what to install or remove, from the catalogue\n(ADR-0188). `allow_reboot` applies to it too."
+                "description": "`software`: what to install or remove, from the catalogue\n(ADR-0188): the entries of the server's manager (winget, apt or\ndnf), none that installs from a mirror, which takes a campaign.\n`allow_reboot` applies to it too."
               },
               {
                 "type": "null"
@@ -74073,6 +74263,17 @@
               "remote_terminal": {
                 "$ref": "#/components/schemas/RemoteTerminalAccess",
                 "description": "What this person may do with remote terminals here (ADR-0190)."
+              },
+              "software_off_change": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SoftwareOffChange",
+                    "description": "The last time software installs were turned off from the web\ninterface, `null` if never (ADR-0188)."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             }
           }
@@ -76766,18 +76967,22 @@
           },
           "id": {
             "type": "string",
-            "description": "The package ID, like `7zip.7zip`."
+            "description": "The package ID, like `7zip.7zip`, or the distribution's package\nname, like `nginx`."
           },
           "manager": {
             "type": "string",
-            "description": "`winget`."
+            "description": "`winget` (Windows), `apt` (Debian family) or `dnf` (RHEL family)."
+          },
+          "mirror": {
+            "type": "string",
+            "description": "The mirror of the central server an apt or dnf package installs\nfrom, added to the server's sources for the campaign; absent when\nit comes from the server's own sources."
           },
           "name": {
             "type": "string"
           },
           "source": {
             "type": "string",
-            "description": "The winget source it installs from, like `winget`."
+            "description": "The winget source it installs from, like `winget`; empty for apt\nand dnf."
           }
         },
         "additionalProperties": false
@@ -76825,7 +77030,14 @@
           },
           "manager": {
             "type": "string",
-            "description": "`winget`, the only manager for now."
+            "description": "`winget` (Windows), `apt` (Debian and Ubuntu) or `dnf` (RHEL and\nits derivatives)."
+          },
+          "mirror": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "apt and dnf only: the mirror of the central server it installs\nfrom, which a campaign adds to the servers' sources first;\n`null` for the servers' own sources, or once the mirror is gone."
           },
           "name": {
             "type": "string",
@@ -76833,11 +77045,11 @@
           },
           "package_id": {
             "type": "string",
-            "description": "The manager's package ID, like `7zip.7zip`."
+            "description": "The manager's package ID, like `7zip.7zip`, or the distribution's\npackage name, like `nginx`."
           },
           "source": {
             "type": "string",
-            "description": "The winget source it installs from, like `winget`."
+            "description": "The winget source it installs from, like `winget`; empty for apt\nand dnf."
           },
           "updated_at": {
             "type": "string",
@@ -76867,7 +77079,14 @@
           },
           "manager": {
             "type": "string",
-            "description": "`winget`, the default."
+            "description": "`winget`, the default, `apt` or `dnf`."
+          },
+          "mirror": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "apt and dnf only: the name of a mirror of the central server of\nthe same family (ADR-0142) the package installs from. Absent for\nthe servers' own sources."
           },
           "name": {
             "type": "string",
@@ -76875,14 +77094,63 @@
           },
           "package_id": {
             "type": "string",
-            "description": "A winget package ID: 2 to 8 segments joined by `.`, like\n`7zip.7zip`."
+            "description": "For winget a package ID: 2 to 8 segments joined by `.`, like\n`7zip.7zip`. For apt and dnf a package name of the distribution:\nletters, digits and `.+_:-`, like `nginx`; never an option, a\npath, a glob or a group."
           },
           "source": {
-            "type": "string",
-            "description": "The winget source, `winget` by default; never `msstore`."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "winget only: the source, `winget` by default; never `msstore`.\nAbsent or empty for apt and dnf."
           }
         },
         "additionalProperties": false
+      },
+      "SoftwareOffChange": {
+        "type": "object",
+        "description": "The last `software_off` command of a server, in `GET\n/api/servers/{id}`.",
+        "required": [
+          "command_id",
+          "state",
+          "issued_at"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The `software_off` command."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, in plain words; `null` otherwise."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` until it ends."
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was queued."
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The username, `null` when the account is gone."
+          },
+          "state": {
+            "$ref": "#/components/schemas/CommandState"
+          }
+        }
       },
       "SoftwareRequest": {
         "type": "object",
@@ -76903,6 +77171,20 @@
               "format": "uuid"
             },
             "description": "Entries of the catalogue shared or of the customer, 1 to 100."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SoftwareSwitchRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/software`.",
+        "required": [
+          "on"
+        ],
+        "properties": {
+          "on": {
+            "type": "boolean",
+            "description": "`false` turns software installs off. `true` is always refused:\nonly the server's administrator turns them on, on the server."
           }
         },
         "additionalProperties": false
@@ -79280,11 +79562,11 @@
     },
     {
       "name": "campaigns",
-      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. A campaign is edited at any time: fully before its first batch, only its name, windows and failure threshold while a run is under way, and fully once finished, for its next run. A finished campaign runs again, all its servers or only those that failed, and keeps each past run under `/campaigns/{id}/runs`. It is deleted as a draft or once finished. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign, or `software` for a software campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. On Windows servers an update approves Windows Update classifications (`classifications`) and holds updates (`hold`) and apps (`third_party[].hold`). A software campaign (`software`) installs or removes software of the catalogue (`/software`) on Windows servers whose administrator allowed it (`monitorflow-agent.exe software on`); the others are skipped with why. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\".\n\nA major upgrade campaign (`major_upgrade`, ADR-0182) moves servers to the next release of their distribution, Debian 12 to 13 for now: each server gets a Proxmox or local snapshot first (or none, only with `accept_limited_rollback`), then a signed `major_upgrade` command, which its agent runs only where the server allowed major upgrades from the web interface. A server is `upgrading` until it rebooted, its agent reports the new release and its checks are back to what they were. `/major-upgrades` shows the checks of each server beforehand."
+      "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. A campaign is edited at any time: fully before its first batch, only its name, windows and failure threshold while a run is under way, and fully once finished, for its next run. A finished campaign runs again, all its servers or only those that failed, and keeps each past run under `/campaigns/{id}/runs`. It is deleted as a draft or once finished. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign, or `software` for a software campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. On Windows servers an update approves Windows Update classifications (`classifications`) and holds updates (`hold`) and apps (`third_party[].hold`). A software campaign (`software`) installs or removes software of the catalogue (`/software`): each server gets the packages of its own manager (winget on Windows, apt on Debian and Ubuntu, dnf on RHEL and its derivatives), where its administrator allowed it (`monitorflow-agent software on`); the others are skipped with why. Packages that install from a mirror of the central server get it added to the servers' sources first and removed after (`sources` in `add` mode, pinned to the mirror's newest published snapshot when the campaign is saved). A `recurring` campaign runs again by itself at the first window that opens after each completed run, as \"run again\" does; a failed or stopped run ends the recurrence. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\".\n\nA major upgrade campaign (`major_upgrade`, ADR-0182) moves servers to the next release of their distribution, Debian 12 to 13 for now: each server gets a Proxmox or local snapshot first (or none, only with `accept_limited_rollback`), then a signed `major_upgrade` command, which its agent runs only where the server allowed major upgrades from the web interface. A server is `upgrading` until it rebooted, its agent reports the new release and its checks are back to what they were. `/major-upgrades` shows the checks of each server beforehand."
     },
     {
       "name": "software",
-      "description": "The software catalogue: what campaigns and commands install on servers or remove from them (`software` of `POST /campaigns` and of `POST /servers/{id}/commands`). An entry names a winget package and the source it installs from; Windows servers only for now. An entry is shared by every customer (`customer_id` null), which only global administrators change, or belongs to one customer, whose administrators change it. A server takes software only where its administrator allowed it at install (`SOFTWARE_FROM_WEB=1` or `monitorflow-agent.exe software on`): the central server cannot grant itself that right. Needs the key area \"updates\"."
+      "description": "The software catalogue: what campaigns and commands install on servers or remove from them (`software` of `POST /campaigns` and of `POST /servers/{id}/commands`). An entry names a winget package and the source it installs from (Windows), or a package of the distribution for apt (Debian and Ubuntu) or dnf (RHEL and its derivatives), optionally from a mirror of the central server that a campaign adds to the servers' sources first. Each server takes the entries of its own manager. An entry is shared by every customer (`customer_id` null), which only global administrators change, or belongs to one customer, whose administrators change it. A server takes software only where its administrator allowed it at install (`SOFTWARE_FROM_WEB=1` on Windows, `MF_SOFTWARE_FROM_WEB=1` on Linux, or `monitorflow-agent software on`): the central server cannot grant itself that right. It can only take it away, with `POST /servers/{id}/software`. Needs the key area \"updates\"."
     },
     {
       "name": "automatic updates",

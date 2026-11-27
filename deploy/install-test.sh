@@ -292,6 +292,15 @@ check "MF_MAJOR_UPGRADES_FROM_WEB=1 allows major upgrades" sudo grep -q "major_u
 check "the sudo rules know the helper" sudo -u monitorflow sudo -n -l /usr/bin/monitorflow-agent major-upgrade
 installer MF_DOWNLOAD_URL="$base" MF_MAJOR_UPGRADES_FROM_WEB=0
 check "MF_MAJOR_UPGRADES_FROM_WEB=0 takes it back" sudo grep -q "major_upgrades = false" /etc/monitorflow/agent.toml
+installer MF_DOWNLOAD_URL="$base" MF_SOFTWARE_FROM_WEB=1
+check "MF_SOFTWARE_FROM_WEB=1 allows software installs" sudo grep -qx 'software = true' /etc/monitorflow/agent.toml
+check "the sudo rules know the software helper" sudo -u monitorflow sudo -n -l /usr/bin/monitorflow-agent packages software
+echo off | sudo tee /var/lib/monitorflow/agent/software-off >/dev/null
+installer MF_DOWNLOAD_URL="$base" MF_SOFTWARE_FROM_WEB=1
+check "a choice on the host forgets the web interface's off" absent /var/lib/monitorflow/agent/software-off
+installer MF_DOWNLOAD_URL="$base" MF_SOFTWARE_FROM_WEB=0
+check "MF_SOFTWARE_FROM_WEB=0 takes it back" sudo grep -qx 'software = false' /etc/monitorflow/agent.toml
+sudo systemctl reset-failed monitorflow-agent
 # These runs came quickly: systemd allows 5 starts in 10 seconds.
 sudo systemctl reset-failed monitorflow-agent
 installer MF_DOWNLOAD_URL="$base" MF_AI_ROOT_ACTIONS=0

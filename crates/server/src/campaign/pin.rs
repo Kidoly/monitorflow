@@ -375,7 +375,8 @@ pub enum PinError {
 }
 
 /// Writes `.pinned` in the served directory of every mirror that has one:
-/// the snapshots that campaigns not yet finished pin.
+/// the snapshots that campaigns not yet finished pin, and completed
+/// recurring ones, which run again with them (ADR-0188).
 pub async fn write_pins(pool: &PgPool, layout: &Layout) -> Result<(), PinError> {
     let mirrors: Vec<(Family, String, Vec<String>)> = sqlx::query_as(
         "SELECT m.family, m.name,
@@ -383,7 +384,9 @@ pub async fn write_pins(pool: &PgPool, layout: &Layout) -> Result<(), PinError> 
          FROM mirrors m
          LEFT JOIN campaign_snapshots cs ON cs.mirror_id = m.id
          LEFT JOIN campaigns c
-             ON c.id = cs.campaign_id AND c.state NOT IN ('stopped', 'completed', 'failed')
+             ON c.id = cs.campaign_id
+                AND (c.state NOT IN ('stopped', 'completed', 'failed')
+                     OR (c.recurring AND c.state = 'completed'))
          LEFT JOIN mirror_snapshots s ON s.id = cs.snapshot_id
          GROUP BY m.id, m.family, m.name",
     )

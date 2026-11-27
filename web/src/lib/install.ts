@@ -117,18 +117,23 @@ export function linuxInstallCommand(
   scripts = false,
   majorFromWeb = false,
   remoteTerminal = false,
+  softwareFromWeb = false,
 ): Command {
   const vars = [
     aiFromWeb && FROM_WEB,
     scripts && ALLOW_SCRIPTS,
     majorFromWeb && MAJOR_FROM_WEB,
     remoteTerminal && REMOTE_TERMINAL,
+    softwareFromWeb && SOFTWARE_FROM_WEB,
   ].filter((v): v is string => Boolean(v));
   return installerCommand(target, source, origin, relay, vars);
 }
 
 /** Allows major upgrades of the distribution from the web interface, Linux only (ADR-0182). */
 const MAJOR_FROM_WEB = "MF_MAJOR_UPGRADES_FROM_WEB=1";
+
+/** Lets the central server install and remove software of its catalogue with apt or dnf (ADR-0188). */
+const SOFTWARE_FROM_WEB = "MF_SOFTWARE_FROM_WEB=1";
 
 /** Lets the web interface turn the agent's AI commands on and off (ADR-0098). */
 const FROM_WEB = "MF_AI_COMMANDS_FROM_WEB=1";
@@ -318,7 +323,7 @@ export function windowsInstallCommand(
     remoteTerminal && "REMOTE_TERMINAL=1",
     // Remote desktops (ADR-0190): a consent of their own, Windows only.
     remoteDesktop && "REMOTE_DESKTOP=1",
-    // Software from the catalogue (ADR-0188): Windows only for now.
+    // Software from the catalogue with winget (ADR-0188).
     softwareFromWeb && "SOFTWARE_FROM_WEB=1",
   ].filter(Boolean);
   const msiexec = `msiexec /i monitorflow-agent.msi /qn /l*v install.log \``;

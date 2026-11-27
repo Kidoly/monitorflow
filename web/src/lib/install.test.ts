@@ -195,6 +195,13 @@ describe("install commands", () => {
     expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", true))).not.toContain("SOFTWARE");
   });
 
+  it("lets the web interface install software on Linux when asked (ADR-0188)", () => {
+    expect(
+      text(linuxInstallCommand(target(), "github", ORIGIN, "", false, false, false, false, true)),
+    ).toBe(`curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_SOFTWARE_FROM_WEB=1 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`);
+    expect(text(linuxInstallCommand(target(), "github", ORIGIN, "", true))).not.toContain("SOFTWARE");
+  });
+
   it("accepts only addresses and URLs that are safe in a shell command", () => {
     for (const ok of ["relay1", "relay1.paris.example:7443", "10.0.0.5", "[2001:db8::5]:7443"]) {
       expect(isServerAddress(ok), ok).toBe(true);

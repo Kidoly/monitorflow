@@ -89,6 +89,7 @@ fn campaign(t: &Tenant) -> NewCampaign {
         agent_version: None,
         major_upgrade: None,
         software: None,
+        recurring: false,
         created_by: None,
     }
 }
