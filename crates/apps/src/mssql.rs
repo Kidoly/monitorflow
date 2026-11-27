@@ -137,7 +137,7 @@ impl Mssql {
         let login = Login {
             host: &t.host,
             user: t.user.as_deref().unwrap_or("monitorflow"),
-            password: t.password.as_deref().unwrap_or(""),
+            password: t.password.as_deref().unwrap_or_default(),
             encryption: match t.tls {
                 Tls::Off => Encryption::Off,
                 Tls::Prefer => Encryption::Unverified,
