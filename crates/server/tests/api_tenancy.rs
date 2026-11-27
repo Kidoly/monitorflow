@@ -1703,7 +1703,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::OK);
             assert_eq!(
                 body["templates"].as_array().map(Vec::len),
-                Some(5),
+                Some(7),
                 "{body}"
             );
         }
