@@ -256,11 +256,13 @@ impl Mssql {
             } else {
                 t.user.as_deref().unwrap_or("monitorflow")
             },
-            password: if windows {
-                ""
-            } else {
-                t.password.as_deref().unwrap_or_default()
-            },
+            // A Windows sign-in sends no password in LOGIN7: SSPI carries
+            // the account's, or none for the agent's own account.
+            password: t
+                .password
+                .as_deref()
+                .filter(|_| !windows)
+                .unwrap_or_default(),
             encryption: match t.tls {
                 Tls::Off => Encryption::Off,
                 Tls::Prefer => Encryption::Unverified,
