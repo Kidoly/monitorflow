@@ -96,6 +96,8 @@ ironrdp-tokio = "0.12"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 rcgen = "0.14"
 ring = "0.17"
+# Reads the Property table of uploaded MSI packages (ADR-0188).
+msi = "0.11"
 time = { version = "0.3", features = ["std"] }
 pem = "4"
 base64 = "0.23"

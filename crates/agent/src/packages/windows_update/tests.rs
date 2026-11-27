@@ -64,6 +64,23 @@ fn requests_round_trip_as_json() {
             r#"{"op":"signed","command":"CgA=","step":"software"}"#,
         ),
         (
+            Request::signed(&Command::default(), Step::SoftwareMsi, None),
+            r#"{"op":"signed","command":"CgA=","step":"software_msi"}"#,
+        ),
+        (
+            Request::MsiRemove {
+                packages: vec![crate::packages::msi::MsiPackage {
+                    product_code: "{0D3D4C9E-6C7B-4F5B-9F65-2B8F1E4A7C11}".into(),
+                    name: String::new(),
+                    sha256: String::new(),
+                    size: 0,
+                    urls: vec![],
+                    properties: vec![],
+                }],
+            },
+            r#"{"op":"msi_remove","packages":[{"product_code":"{0D3D4C9E-6C7B-4F5B-9F65-2B8F1E4A7C11}"}]}"#,
+        ),
+        (
             Request::signed(&Command::default(), Step::InstallApproved, None),
             r#"{"op":"signed","command":"CgA=","step":"install_approved"}"#,
         ),
@@ -393,6 +410,7 @@ fn software_requests_follow_the_command() {
         packages: vec![SoftwarePackage {
             id: "Example.App".into(),
             source: source.into(),
+            msi: None,
         }],
         allow_reboot: false,
     };
@@ -759,6 +777,7 @@ mod signed {
             packages: vec![monitorflow_common::proto::v1::SoftwarePackage {
                 id: "Example.App".into(),
                 source: "winget".into(),
+                msi: None,
             }],
             allow_reboot,
         }
@@ -798,6 +817,85 @@ mod signed {
         // An update is no software command.
         let update = command(&ca, "s-3", APPLY_UPDATES, &apply(&[], false));
         assert!(check(&Request::signed(&update, Step::Software, None)).is_err());
+    }
+
+    #[test]
+    fn msi_packages_take_their_own_step_of_the_signed_command() {
+        use crate::packages::msi::MsiPackage;
+        use monitorflow_common::proto::v1::{MsiFile, SoftwarePackage};
+
+        let ca = Ca::new();
+        let host = Host::pinned(&ca);
+        let check = |request: &Request| authorized(request, &host.place, &configured(), unix_ms());
+        let code = "{0D3D4C9E-6C7B-4F5B-9F65-2B8F1E4A7C11}";
+        let mut change =
+            SoftwareChange::decode(software(Action::Install, false).as_slice()).unwrap();
+        change.packages.push(SoftwarePackage {
+            id: code.into(),
+            source: String::new(),
+            msi: Some(MsiFile {
+                sha256: "ab".repeat(32),
+                size: 10,
+                urls: vec!["http://relay.example:7480/software/x.msi".into()],
+                name: "Tiny".into(),
+                ..MsiFile::default()
+            }),
+        });
+        let signed = command(&ca, "m-1", SOFTWARE, &change.encode_to_vec());
+        let step = |step| Request::signed(&signed, step, None);
+        // Each step takes its own packages.
+        assert_eq!(
+            check(&step(Step::Software)),
+            Ok(Request::WingetInstall {
+                packages: vec![WingetPackage {
+                    id: "Example.App".into(),
+                    source: "winget".into(),
+                }],
+            })
+        );
+        let msi = MsiPackage::of(&change.packages[1]).unwrap();
+        assert_eq!(
+            check(&step(Step::SoftwareMsi)),
+            Ok(Request::MsiInstall {
+                packages: vec![msi.clone()]
+            })
+        );
+        assert!(check(&step(Step::SoftwareMsi))
+            .unwrap_err()
+            .contains("already run"));
+        // Never from the pipe alone, and only with the host's consent.
+        let bare = Request::MsiInstall {
+            packages: vec![msi],
+        };
+        assert!(check(&bare).unwrap_err().contains("signed"));
+        assert_eq!(consented(&bare, false), Err(SOFTWARE_NOT_ALLOWED.into()));
+        assert_eq!(consented(&bare, true), Ok(()));
+        // A command without MSI packages has no such step.
+        let winget = command(&ca, "m-2", SOFTWARE, &software(Action::Install, false));
+        let error = check(&Request::signed(&winget, Step::SoftwareMsi, None)).unwrap_err();
+        assert!(error.contains("no MSI package"), "{error}");
+        // A removal names the ProductCode only.
+        let mut remove = change.clone();
+        remove.action = Action::Remove.into();
+        remove.packages[0].source.clear();
+        remove.packages[1].msi = Some(MsiFile {
+            name: "Tiny".into(),
+            ..MsiFile::default()
+        });
+        let removal = command(&ca, "m-3", SOFTWARE, &remove.encode_to_vec());
+        assert!(matches!(
+            check(&Request::signed(&removal, Step::SoftwareMsi, None)),
+            Ok(Request::MsiRemove { packages }) if packages[0].product_code == code
+        ));
+        // A bad package fails the whole command, as winget's do.
+        let mut bad = change;
+        bad.packages[1].msi.as_mut().unwrap().properties =
+            vec![monitorflow_common::proto::v1::MsiProperty {
+                name: "REBOOT".into(),
+                value: "Force".into(),
+            }];
+        let bad = command(&ca, "m-4", SOFTWARE, &bad.encode_to_vec());
+        assert!(check(&Request::signed(&bad, Step::SoftwareMsi, None)).is_err());
     }
 
     #[test]

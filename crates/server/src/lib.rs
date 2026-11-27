@@ -44,6 +44,7 @@ pub mod server_history;
 pub mod server_inventory;
 pub mod snmp;
 pub mod snmp_custom;
+pub mod software_files;
 pub mod sso;
 pub mod storage_tls;
 pub mod virt;

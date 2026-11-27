@@ -9,8 +9,8 @@ use monitorflow_common::command::valid_package_name;
 use monitorflow_common::major_upgrade;
 use monitorflow_common::proto::v1::configure_sources::Mode;
 use monitorflow_common::proto::v1::{
-    ApplyUpdates, MajorUpgrade, PackageManager, SoftwareChange, SoftwarePackage,
-    ThirdPartySelection,
+    ApplyUpdates, MajorUpgrade, MsiFile, MsiProperty, PackageManager, SoftwareChange,
+    SoftwarePackage, ThirdPartySelection,
 };
 use monitorflow_common::{software, third_party};
 use prost::Message;
@@ -609,33 +609,139 @@ pub struct SoftwareItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     pub mirror: Option<String>,
+    /// `msi` only: the file and properties, as the catalogue held them;
+    /// `id` is then the ProductCode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub msi: Option<MsiItem>,
+}
+
+/// The file of an MSI package of a [`SoftwareSpec`] (ADR-0188).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = SoftwareDeploymentMsi)]
+#[serde(deny_unknown_fields)]
+pub struct MsiItem {
+    /// SHA-256 of the file, lower-case hex.
+    pub sha256: String,
+    pub size: u64,
+    /// Public properties passed to `msiexec`.
+    #[serde(default)]
+    pub properties: Vec<MsiPropertyItem>,
+}
+
+/// One public property of an MSI install, `NAME=value`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = MsiProperty)]
+#[serde(deny_unknown_fields)]
+pub struct MsiPropertyItem {
+    /// Upper-case letters, digits and `_`, starting with a letter.
+    pub name: String,
+    pub value: String,
+}
+
+/// Where a server downloads MSI files from, and whether its agent takes
+/// them (ADR-0188).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MsiSources {
+    /// Mirror listeners, in the order the agent tries them: its relay's,
+    /// then the central server's.
+    pub bases: Vec<String>,
+    /// The agent reports `software_msi`.
+    pub known: bool,
+}
+
+impl MsiSources {
+    /// `relay` (the server's relay's mirror URL) then `central` (the
+    /// central server's), each when set.
+    pub fn new(relay: Option<&str>, central: Option<&str>, known: bool) -> Self {
+        Self {
+            bases: relay
+                .into_iter()
+                .chain(central)
+                .map(|url| url.trim_end_matches('/').to_owned())
+                .collect(),
+            known,
+        }
+    }
 }
 
 /// Why a server gets no software command: nothing of the campaign is
 /// for its system.
 pub const NO_SOFTWARE_FOR: &str = "none of this software is for this server's system";
+/// Why a server whose agent predates MSI packages gets none.
+pub const MSI_TOO_OLD: &str =
+    "this server's agent is too old to install MSI packages; it updates by itself";
+/// Why a server that cannot reach any mirror listener gets no MSI package.
+pub const NO_MSI_URL: &str = "MSI packages download from a mirror listener; set the mirror URL \
+     of the central server";
+
+/// The catalogue manager of MSI packages, for Windows servers.
+pub const MSI: &str = "msi";
 
 impl SoftwareSpec {
     /// The payload of the `software` command of a server of `os_family`:
     /// the packages of its manager only (ADR-0188).
+    /// MSI packages, Windows only, download from `msi`.
     pub fn change_for(
         &self,
         os_family: &str,
         allow_reboot: bool,
+        msi: &MsiSources,
     ) -> Result<SoftwareChange, String> {
         let manager = software::manager_for(os_family).ok_or_else(|| {
             format!("software deployment is not available on {os_family} servers yet")
         })?;
         let key = third_party::key(manager).unwrap_or_default();
-        let packages: Vec<SoftwarePackage> = self
-            .packages
-            .iter()
-            .filter(|p| p.manager == key)
-            .map(|p| SoftwarePackage {
+        let install = self.action == "install";
+        let mut packages = Vec::new();
+        for p in &self.packages {
+            if p.manager == key {
+                packages.push(SoftwarePackage {
+                    id: p.id.clone(),
+                    source: p.source.clone(),
+                    msi: None,
+                });
+                continue;
+            }
+            if p.manager != MSI || manager != PackageManager::Winget {
+                continue;
+            }
+            if !msi.known {
+                return Err(MSI_TOO_OLD.into());
+            }
+            let file = p.msi.as_ref().ok_or("an MSI package without its file")?;
+            let mut item = MsiFile {
+                name: p.name.clone(),
+                ..MsiFile::default()
+            };
+            if install {
+                if msi.bases.is_empty() {
+                    return Err(NO_MSI_URL.into());
+                }
+                item.sha256 = file.sha256.clone();
+                item.size = file.size;
+                item.urls = msi
+                    .bases
+                    .iter()
+                    .map(|base| {
+                        format!("{base}/{}/{}.msi", crate::software_files::DIR, file.sha256)
+                    })
+                    .collect();
+                item.properties = file
+                    .properties
+                    .iter()
+                    .map(|p| MsiProperty {
+                        name: p.name.clone(),
+                        value: p.value.clone(),
+                    })
+                    .collect();
+            }
+            packages.push(SoftwarePackage {
                 id: p.id.clone(),
-                source: p.source.clone(),
-            })
-            .collect();
+                source: String::new(),
+                msi: Some(item),
+            });
+        }
         if packages.is_empty() {
             return Err(NO_SOFTWARE_FOR.into());
         }
@@ -651,7 +757,13 @@ impl SoftwareSpec {
     pub fn managers(&self) -> Vec<PackageManager> {
         let mut managers = Vec::new();
         for item in &self.packages {
-            if let Some(manager) = third_party::parse(&item.manager) {
+            // MSI packages are for Windows, which winget serves too.
+            let manager = if item.manager == MSI {
+                Some(PackageManager::Winget)
+            } else {
+                third_party::parse(&item.manager)
+            };
+            if let Some(manager) = manager {
                 if !managers.contains(&manager) {
                     managers.push(manager);
                 }
@@ -689,18 +801,23 @@ impl SoftwareSpec {
         for item in &self.packages {
             let known =
                 third_party::parse(&item.manager).filter(|m| software::is_software_manager(*m));
-            if known.is_none() {
+            if known.is_none() && item.manager != MSI {
                 return Err(format!(
-                    "unknown software manager `{}`: winget, apt or dnf",
+                    "unknown software manager `{}`: winget, msi, apt or dnf",
                     item.manager.escape_debug()
                 ));
             }
-            if item.mirror.is_some() && item.manager == "winget" {
-                return Err("winget packages install from a winget source, not a mirror".into());
+            if item.mirror.is_some() && matches!(item.manager.as_str(), "winget" | MSI) {
+                return Err("winget and MSI packages do not install from a mirror".into());
+            }
+            if item.msi.is_some() != (item.manager == MSI) {
+                return Err("only MSI packages have a file".into());
             }
         }
+        // Any URL does to check what the commands will carry.
+        let sources = MsiSources::new(Some("http://mirror.invalid"), None, true);
         for family in ["windows", "debian", "rhel"] {
-            match self.change_for(family, false) {
+            match self.change_for(family, false, &sources) {
                 Ok(change) => {
                     software::check_change(&change, Some(family)).map_err(|e| e.to_string())?
                 }
@@ -1050,13 +1167,15 @@ mod tests {
         }))
         .unwrap();
         spec.validate().unwrap();
-        let change = spec.change_for("windows", true).unwrap();
+        let change = spec
+            .change_for("windows", true, &MsiSources::default())
+            .unwrap();
         assert_eq!(change.action, i32::from(software_change::Action::Install));
         assert_eq!(change.manager(), PackageManager::Winget);
         assert_eq!(change.packages[0].id, "7zip.7zip");
         assert!(change.allow_reboot);
         assert_eq!(
-            spec.change_for("debian", false),
+            spec.change_for("debian", false, &MsiSources::default()),
             Err(NO_SOFTWARE_FOR.into())
         );
         let remove = SoftwareSpec {
@@ -1064,7 +1183,10 @@ mod tests {
             ..spec.clone()
         };
         assert_eq!(
-            remove.change_for("windows", false).unwrap().action,
+            remove
+                .change_for("windows", false, &MsiSources::default())
+                .unwrap()
+                .action,
             i32::from(software_change::Action::Remove)
         );
         for bad in [
@@ -1090,6 +1212,81 @@ mod tests {
     }
 
     #[test]
+    fn msi_packages_download_from_the_relay_then_the_central_server() {
+        let code = "{6F1C2E7A-3B9D-4C55-A0E2-8D4F7B1A9C30}";
+        let spec: SoftwareSpec = serde_json::from_value(json!({
+            "action": "install",
+            "packages": [
+                {"catalog_id": Uuid::nil(), "name": "7-Zip", "manager": "winget",
+                 "id": "7zip.7zip", "source": "winget"},
+                {"catalog_id": Uuid::nil(), "name": "Tiny", "manager": "msi", "id": code,
+                 "source": "", "msi": {"sha256": "ab".repeat(32), "size": 4096,
+                 "properties": [{"name": "MARKER", "value": "x"}]}},
+            ]
+        }))
+        .unwrap();
+        spec.validate().unwrap();
+        assert_eq!(spec.managers(), [PackageManager::Winget]);
+        let sources = MsiSources::new(
+            Some("http://relay.example:7480/"),
+            Some("http://mf.example:7480"),
+            true,
+        );
+        let change = spec.change_for("windows", false, &sources).unwrap();
+        assert_eq!(change.packages[0].msi, None);
+        let file = change.packages[1].msi.as_ref().unwrap();
+        assert_eq!(change.packages[1].id, code);
+        assert_eq!(
+            file.urls,
+            [
+                format!("http://relay.example:7480/software/{}.msi", "ab".repeat(32)),
+                format!("http://mf.example:7480/software/{}.msi", "ab".repeat(32)),
+            ]
+        );
+        assert_eq!((file.size, file.name.as_str()), (4096, "Tiny"));
+        assert_eq!(file.properties[0].name, "MARKER");
+        software::check_change(&change, Some("windows")).unwrap();
+        // Linux servers take none of it.
+        assert_eq!(
+            spec.change_for("debian", false, &sources),
+            Err(NO_SOFTWARE_FOR.into())
+        );
+        // An agent that predates MSI packages, or nowhere to download from.
+        let old = MsiSources {
+            known: false,
+            ..sources.clone()
+        };
+        assert_eq!(
+            spec.change_for("windows", false, &old),
+            Err(MSI_TOO_OLD.into())
+        );
+        let nowhere = MsiSources::new(None, None, true);
+        assert_eq!(
+            spec.change_for("windows", false, &nowhere),
+            Err(NO_MSI_URL.into())
+        );
+        // A removal needs no URL and carries the ProductCode only.
+        let remove = SoftwareSpec {
+            action: "remove".into(),
+            ..spec.clone()
+        };
+        let change = remove.change_for("windows", false, &nowhere).unwrap();
+        let file = change.packages[1].msi.as_ref().unwrap();
+        assert!(file.sha256.is_empty() && file.urls.is_empty() && file.properties.is_empty());
+        software::check_change(&change, Some("windows")).unwrap();
+        // Only MSI packages have a file, and they have one.
+        let mut bad = spec.clone();
+        bad.packages[1].msi = None;
+        assert!(bad.validate().is_err());
+        let mut bad = spec.clone();
+        bad.packages[0].msi = spec.packages[1].msi.clone();
+        assert!(bad.validate().is_err());
+        let mut bad = spec;
+        bad.packages[1].msi.as_mut().unwrap().properties[0].name = "REBOOT".into();
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
     fn each_server_gets_the_packages_of_its_manager() {
         let item = |manager: &str, id: &str, source: &str, mirror: Option<&str>| SoftwareItem {
             catalog_id: Uuid::new_v4(),
@@ -1098,6 +1295,7 @@ mod tests {
             id: id.into(),
             source: source.into(),
             mirror: mirror.map(Into::into),
+            msi: None,
         };
         let spec = SoftwareSpec {
             action: "install".into(),
@@ -1118,12 +1316,22 @@ mod tests {
             ]
         );
         assert_eq!(spec.mirrors(), ["nginx-debian"]);
-        let debian = spec.change_for("debian", false).unwrap();
+        let debian = spec
+            .change_for("debian", false, &MsiSources::default())
+            .unwrap();
         assert_eq!(debian.manager(), PackageManager::Apt);
         let names: Vec<&str> = debian.packages.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(names, ["nginx", "git"]);
-        assert_eq!(spec.change_for("rhel", false).unwrap().packages.len(), 1);
-        assert!(spec.change_for("linux", false).is_err());
+        assert_eq!(
+            spec.change_for("rhel", false, &MsiSources::default())
+                .unwrap()
+                .packages
+                .len(),
+            1
+        );
+        assert!(spec
+            .change_for("linux", false, &MsiSources::default())
+            .is_err());
         // Never a source for apt, a mirror for winget or an unknown manager.
         for bad in [
             item("apt", "nginx", "winget", None),

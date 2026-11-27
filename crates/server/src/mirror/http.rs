@@ -21,6 +21,7 @@ pub fn served(layout: &Layout) -> Served {
         dnf: layout.served(Family::Dnf),
         public_key: layout.public_key(),
         agent: layout.root().join(crate::agent_releases::DIR),
+        software: layout.root().join(crate::software_files::DIR),
     }
 }
 

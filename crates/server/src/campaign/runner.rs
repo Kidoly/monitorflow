@@ -39,7 +39,7 @@ use sqlx::{PgConnection, PgPool};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use super::model::{software_refusal, MajorUpgradeSpec, SourcesMode};
+use super::model::{software_refusal, MajorUpgradeSpec, MsiSources, SourcesMode};
 use super::pin::{self, Configurer, Next, Pending, PinSources};
 use super::store::{
     cancel_queued, close_waves, Actor, CampaignError, CampaignRow, CampaignStore, COLUMNS,
@@ -520,7 +520,8 @@ async fn queue(
              EXISTS (SELECT 1 FROM server_package_managers m WHERE m.server_id = t.server_id)
                  AS reports_third_party,
              t.vm_snapshot_state, t.vm_snapshot_at, t.vm_snapshot_error,
-             s.command_kinds->>'software' AS software_state
+             s.command_kinds->>'software' AS software_state,
+             coalesce(s.command_kinds ? 'software_msi', false) AS msi_known
          FROM campaign_targets t JOIN servers s ON s.id = t.server_id
          LEFT JOIN commands cfg ON cfg.id = t.sources_command_id
          LEFT JOIN commands r ON r.id = t.restore_command_id
@@ -630,9 +631,18 @@ async fn queue(
                 (None, Some(software)) => {
                     match software_refusal(target.software_state.as_deref(), &target.os_family) {
                         Some(error) => Err(error.to_owned()),
-                        None => software
-                            .change_for(&target.os_family, spec.allow_reboot)
-                            .map(|change| (SOFTWARE, change.encode_to_vec())),
+                        None => {
+                            let relay =
+                                relays::url_for_server(&mut *conn, target.server_id).await?;
+                            let msi = MsiSources::new(
+                                relay.as_deref(),
+                                agents.live.mirror_public_url().as_deref(),
+                                target.msi_known,
+                            );
+                            software
+                                .change_for(&target.os_family, spec.allow_reboot, &msi)
+                                .map(|change| (SOFTWARE, change.encode_to_vec()))
+                        }
                     }
                 }
                 (None, None) => spec

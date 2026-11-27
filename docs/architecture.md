@@ -188,8 +188,9 @@ A plain HTTP listener (`mirror_listen_addr`, default `0.0.0.0:7480`) serves `mir
 | `/apt/<mirror>/<snapshot>/`, `/apt/<mirror>/current/` | aptly publish of a snapshot; `current` is the newest |
 | `/dnf/<mirror>/<snapshot>/`, `/dnf/<mirror>/current/` | dnf repository of a snapshot; `current` is the newest |
 | `/keys/monitorflow-archive.asc` | public key signing apt `Release` files and dnf `repomd.xml` |
+| `/software/<sha256>.msi` | MSI files of the software catalogue, under `<mirror_dir>/software/`; relays fetch them on a miss (ADR-0188) |
 
-Integrity comes from the signatures, not the transport.
+Integrity comes from the signatures, not the transport; for MSI files, from the SHA-256 in the signed `software` command. Anyone who reaches a listener and knows an MSI file's digest can download it.
 
 In the production compose the tools run in the `mirror` sidecar, which shares `mirror_dir` with the server and takes commands over a Unix socket in it (ADR-0067). Administrators add a distribution from a list in the web interface, which shows its size and the free space and refuses what does not fit; the signing key and the upstream archive keys need no step. On a host without the sidecar, or for a mirror outside the list:
 

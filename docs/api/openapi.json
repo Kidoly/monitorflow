@@ -54906,11 +54906,13 @@
                       "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
                       "customer_id": null,
                       "description": "File archiver",
+                      "file": null,
                       "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
                       "manager": "winget",
                       "mirror": null,
                       "name": "7-Zip",
                       "package_id": "7zip.7zip",
+                      "properties": [],
                       "source": "winget",
                       "updated_at": "2026-11-20T09:00:00Z"
                     }
@@ -54994,7 +54996,7 @@
           "software"
         ],
         "summary": "Add software to the catalogue",
-        "description": "A winget package by its ID, and the source it installs from (`winget`,\nthe community source, by default; never the store's, `msstore`). Or,\nwith `manager` `apt` or `dnf`, a package of the distribution by name,\nwithout a source, and optionally the `mirror` of the central server\nof the same family it installs from. A package is listed once per\ncustomer and manager, and once among shared entries.\n\nNeeds an administrator role on `customer_id` as a whole, or a global\none for a shared entry, and the key area \"updates\". Audited as\n`software.create`.",
+        "description": "A winget package by its ID, and the source it installs from (`winget`,\nthe community source, by default; never the store's, `msstore`). Or,\nwith `manager` `apt` or `dnf`, a package of the distribution by name,\nwithout a source, and optionally the `mirror` of the central server\nof the same family it installs from. Or, with `manager` `msi`, a file\nuploaded with `POST /software/files` by its `file_sha256`, which the\ncaller uploaded or an entry they see names, its ProductCode\n(`package_id`, the file's own when absent) and public `properties`\npassed to `msiexec` at every install. A package is listed once per\ncustomer and manager, and once among shared entries.\n\nNeeds an administrator role on `customer_id` as a whole, or a global\none for a shared entry, and the key area \"updates\". Audited as\n`software.create`.",
         "operationId": "create_software",
         "parameters": [
           {
@@ -55038,11 +55040,13 @@
                   "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
                   "customer_id": null,
                   "description": "File archiver",
+                  "file": null,
                   "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
                   "manager": "winget",
                   "mirror": null,
                   "name": "7-Zip",
                   "package_id": "7zip.7zip",
+                  "properties": [],
                   "source": "winget",
                   "updated_at": "2026-11-20T09:00:00Z"
                 }
@@ -55050,7 +55054,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: a bad name, manager, package ID, source, mirror or description",
+            "description": "`invalid`: a bad name, manager, package ID, source, mirror, file, property or description, or a file without a ProductCode and none given",
             "content": {
               "application/json": {
                 "schema": {
@@ -55098,6 +55102,160 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/software/files": {
+      "post": {
+        "tags": [
+          "software"
+        ],
+        "summary": "Upload an MSI file",
+        "description": "The body is the file itself, at most 2 GiB, Windows Installer's own\nlimit. The central server reads its Property table (ProductCode,\nProductName, ProductVersion, Manufacturer) and keeps it once by\nSHA-256, whoever uploads it; then `POST /software` with `manager`\n`msi` and `file_sha256` adds it to the catalogue. It keeps at most 20\nGiB of MSI files in all. A file no entry or campaign names goes 8\ndays later. The file is readable by anyone who reaches a mirror\nlistener and knows its SHA-256: it must hold no license key or\npassword.\n\nNeeds an administrator role on a customer or everything, and the key\narea \"updates\". Audited as `software.upload`.",
+        "operationId": "upload_software_file",
+        "parameters": [
+          {
+            "name": "file_name",
+            "in": "query",
+            "description": "The file's name, for people only, like `tool-1.2.msi`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "$ref": "#/components/schemas/MsiFileBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The file, stored or already there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoftwareFile"
+                },
+                "example": {
+                  "file_name": "tool-1.2.msi",
+                  "manufacturer": "Example",
+                  "product_code": "{6F1C2E7A-3B9D-4C55-A0E2-8D4F7B1A9C30}",
+                  "product_name": "Example Tool",
+                  "product_version": "1.2.0",
+                  "sha256": "3f0c4d9a1b2e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a",
+                  "size": 2457600
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: an empty file, or one that is not a Windows Installer package",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller administers no customer. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: the central server keeps 20 GiB of MSI files already; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The file is over 2 GiB"
           },
           "422": {
             "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
@@ -55200,11 +55358,13 @@
                   "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
                   "customer_id": null,
                   "description": "File archiver",
+                  "file": null,
                   "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
                   "manager": "winget",
                   "mirror": null,
                   "name": "7-Zip",
                   "package_id": "7zip.7zip",
+                  "properties": [],
                   "source": "winget",
                   "updated_at": "2026-11-20T09:00:00Z"
                 }
@@ -69098,6 +69258,29 @@
           }
         }
       },
+      "MsiFileBody": {
+        "type": "string",
+        "format": "binary",
+        "description": "The MSI file itself, as `application/octet-stream`."
+      },
+      "MsiProperty": {
+        "type": "object",
+        "description": "One public property of an MSI install, `NAME=value`.",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Upper-case letters, digits and `_`, starting with a letter."
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "NameRequest": {
         "type": "object",
         "description": "Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.",
@@ -79741,6 +79924,33 @@
         },
         "additionalProperties": false
       },
+      "SoftwareDeploymentMsi": {
+        "type": "object",
+        "description": "The file of an MSI package of a [`SoftwareSpec`] (ADR-0188).",
+        "required": [
+          "sha256",
+          "size"
+        ],
+        "properties": {
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MsiProperty"
+            },
+            "description": "Public properties passed to `msiexec`."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "SHA-256 of the file, lower-case hex."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "SoftwareDeploymentPackage": {
         "type": "object",
         "description": "One package of a [`SoftwareSpec`], as the catalogue held it.",
@@ -79769,6 +79979,10 @@
             "type": "string",
             "description": "The mirror of the central server an apt or dnf package installs\nfrom, added to the server's sources for the campaign; absent when\nit comes from the server's own sources."
           },
+          "msi": {
+            "$ref": "#/components/schemas/SoftwareDeploymentMsi",
+            "description": "`msi` only: the file and properties, as the catalogue held them;\n`id` is then the ProductCode."
+          },
           "name": {
             "type": "string"
           },
@@ -79788,6 +80002,7 @@
           "manager",
           "package_id",
           "source",
+          "properties",
           "description",
           "created_at",
           "updated_at"
@@ -79816,13 +80031,24 @@
           "description": {
             "type": "string"
           },
+          "file": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SoftwareFile",
+                "description": "`msi` only: the uploaded file; `null` for the other managers."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "format": "uuid"
           },
           "manager": {
             "type": "string",
-            "description": "`winget` (Windows), `apt` (Debian and Ubuntu) or `dnf` (RHEL and\nits derivatives)."
+            "description": "`winget` or `msi` (Windows), `apt` (Debian and Ubuntu) or `dnf`\n(RHEL and its derivatives)."
           },
           "mirror": {
             "type": [
@@ -79837,7 +80063,14 @@
           },
           "package_id": {
             "type": "string",
-            "description": "The manager's package ID, like `7zip.7zip`, or the distribution's\npackage name, like `nginx`."
+            "description": "The manager's package ID, like `7zip.7zip`, the distribution's\npackage name, like `nginx`, or for `msi` the ProductCode, like\n`{6F1C2E7A-3B9D-4C55-A0E2-8D4F7B1A9C30}`."
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MsiProperty"
+            },
+            "description": "`msi` only: public properties passed to `msiexec` at every\ninstall; empty for the other managers."
           },
           "source": {
             "type": "string",
@@ -79853,8 +80086,7 @@
         "type": "object",
         "description": "Body of `POST /api/software` and `PUT /api/software/{id}`.",
         "required": [
-          "name",
-          "package_id"
+          "name"
         ],
         "properties": {
           "customer_id": {
@@ -79869,9 +80101,16 @@
             "type": "string",
             "description": "Up to 500 characters."
           },
+          "file_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "msi only: the SHA-256 of a file uploaded with `POST\n/api/software/files`, by the caller or named by an entry they see."
+          },
           "manager": {
             "type": "string",
-            "description": "`winget`, the default, `apt` or `dnf`."
+            "description": "`winget`, the default, `msi`, `apt` or `dnf`."
           },
           "mirror": {
             "type": [
@@ -79886,7 +80125,14 @@
           },
           "package_id": {
             "type": "string",
-            "description": "For winget a package ID: 2 to 8 segments joined by `.`, like\n`7zip.7zip`. For apt and dnf a package name of the distribution:\nletters, digits and `.+_:-`, like `nginx`; never an option, a\npath, a glob or a group."
+            "description": "For winget a package ID: 2 to 8 segments joined by `.`, like\n`7zip.7zip`. For apt and dnf a package name of the distribution:\nletters, digits and `.+_:-`, like `nginx`; never an option, a\npath, a glob or a group. For msi the ProductCode, an upper-case\nGUID between braces; absent or empty for the one read from the\nfile."
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MsiProperty"
+            },
+            "description": "msi only: up to 32 public properties passed to `msiexec`, each\nname once. Names are upper-case letters, digits and `_`, starting\nwith a letter, never one that changes what msiexec does (`REBOOT`,\n`REMOVE`, `TRANSFORMS`, `PATCH`...); values are up to 256\nprintable ASCII characters but `\"` and `;`. They travel in the\nsigned command, not on the mirror listeners."
           },
           "source": {
             "type": [
@@ -79897,6 +80143,50 @@
           }
         },
         "additionalProperties": false
+      },
+      "SoftwareFile": {
+        "type": "object",
+        "description": "An uploaded MSI file (ADR-0188), as `POST /api/software/files`\nanswers and an `msi` entry shows it.",
+        "required": [
+          "sha256",
+          "size",
+          "file_name",
+          "product_name",
+          "product_version",
+          "manufacturer"
+        ],
+        "properties": {
+          "file_name": {
+            "type": "string",
+            "description": "As the uploader named it; may be empty."
+          },
+          "manufacturer": {
+            "type": "string"
+          },
+          "product_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Read from its Property table, upper case; `null` when it has none."
+          },
+          "product_name": {
+            "type": "string"
+          },
+          "product_version": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "SHA-256 of the file, lower-case hex: what entries name it by."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "In bytes.",
+            "minimum": 0
+          }
+        }
       },
       "SoftwareOffChange": {
         "type": "object",
@@ -82358,7 +82648,7 @@
     },
     {
       "name": "software",
-      "description": "The software catalogue: what campaigns and commands install on servers or remove from them (`software` of `POST /campaigns` and of `POST /servers/{id}/commands`). An entry names a winget package and the source it installs from (Windows), or a package of the distribution for apt (Debian and Ubuntu) or dnf (RHEL and its derivatives), optionally from a mirror of the central server that a campaign adds to the servers' sources first. Each server takes the entries of its own manager. An entry is shared by every customer (`customer_id` null), which only global administrators change, or belongs to one customer, whose administrators change it. A server takes software only where its administrator allowed it at install (`SOFTWARE_FROM_WEB=1` on Windows, `MF_SOFTWARE_FROM_WEB=1` on Linux, or `monitorflow-agent software on`): the central server cannot grant itself that right. It can only take it away, with `POST /servers/{id}/software`. Needs the key area \"updates\"."
+      "description": "The software catalogue: what campaigns and commands install on servers or remove from them (`software` of `POST /campaigns` and of `POST /servers/{id}/commands`). An entry names a winget package and the source it installs from (Windows), or a package of the distribution for apt (Debian and Ubuntu) or dnf (RHEL and its derivatives), optionally from a mirror of the central server that a campaign adds to the servers' sources first, or an MSI file uploaded with `POST /software/files` (Windows), by its ProductCode. MSI files are served to agents by the mirror listeners of relays and of the central server, plain HTTP, at `/software/<sha256>.msi`, and checked against the SHA-256 in the signed command: anyone who reaches a mirror listener and knows a file's SHA-256 can download it, so an MSI file must hold no license key or password. Each server takes the entries of its own manager. An entry is shared by every customer (`customer_id` null), which only global administrators change, or belongs to one customer, whose administrators change it. A server takes software only where its administrator allowed it at install (`SOFTWARE_FROM_WEB=1` on Windows, `MF_SOFTWARE_FROM_WEB=1` on Linux, or `monitorflow-agent software on`): the central server cannot grant itself that right. It can only take it away, with `POST /servers/{id}/software`. Needs the key area \"updates\"."
     },
     {
       "name": "automatic updates",

@@ -523,6 +523,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cfb"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fef29b910ef2b9dbecc60168d1568d643c633b0518af970c17e83bd5f6e2c94f"
+dependencies = [
+ "fnv",
+ "uuid",
+ "web-time",
+]
+
+[[package]]
 name = "cfb-mode"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2815,6 +2826,7 @@ dependencies = [
  "monitorflow-snmp",
  "monitorflow-vmware",
  "monitorflow-webcheck",
+ "msi",
  "pdf-writer",
  "pem",
  "percent-encoding",
@@ -2946,6 +2958,18 @@ dependencies = [
  "url",
  "webpki-roots",
  "x509-parser",
+]
+
+[[package]]
+name = "msi"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d152e3015f63c656d51617047e0516ffa055874fc11e7bdbda83b7a96cb84354"
+dependencies = [
+ "byteorder",
+ "cfb",
+ "encoding_rs",
+ "uuid",
 ]
 
 [[package]]

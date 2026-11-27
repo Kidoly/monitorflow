@@ -246,3 +246,85 @@ async fn a_package_gone_upstream_comes_from_the_archive() {
         StatusCode::NOT_FOUND
     );
 }
+
+fn sha256(body: &[u8]) -> String {
+    let mut hasher = Algorithm::Sha256.hasher();
+    hasher.update(body);
+    hasher.finish().hex().to_owned()
+}
+
+/// Serves `served` with `ondemand` on a new listener; returns its URL.
+async fn listen(served: Served, ondemand: OnDemand) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(serve::serve_with(
+        listener,
+        served,
+        Some(ondemand),
+        std::future::pending(),
+    ));
+    base
+}
+
+#[tokio::test]
+async fn msi_files_are_served_by_digest_and_relays_fetch_them_checked() {
+    let fx = fixture().await;
+    let body = b"an MSI file".as_slice();
+    let digest = sha256(body);
+    let path = format!("/software/{digest}.msi");
+
+    // The server serves uploaded files and fetches none.
+    let server_dir = tempfile::tempdir().unwrap();
+    let served = Served::under(server_dir.path());
+    std::fs::create_dir_all(&served.software).unwrap();
+    std::fs::write(served.software.join(format!("{digest}.msi")), body).unwrap();
+    let client = Fetcher::with_agent("http://unused", Duration::from_secs(5), "test").unwrap();
+    let server = listen(
+        served,
+        OnDemand::new(Store::under(server_dir.path()), Source::Origin(client)),
+    )
+    .await;
+    assert_eq!(get(&server, &path).await, (StatusCode::OK, body.to_vec()));
+    let other = sha256(b"other");
+    assert_eq!(
+        get(&server, &format!("/software/{other}.msi")).await.0,
+        StatusCode::NOT_FOUND
+    );
+    for bad in [
+        "/software/x.msi",
+        "/software/../keys/x",
+        &format!("/software/{}.msi", digest.to_uppercase()),
+    ] {
+        assert_eq!(get(&server, bad).await.0, StatusCode::NOT_FOUND, "{bad}");
+    }
+
+    // A relay fetches from its upstream once, keeps the file and serves it.
+    fx.up.put(&path, body);
+    let liar = sha256(b"what the name says");
+    fx.up
+        .put(&format!("/software/{liar}.msi"), b"something else");
+    let relay_dir = tempfile::tempdir().unwrap();
+    let store = Store::under(relay_dir.path());
+    store.prepare().unwrap();
+    let upstream = Fetcher::new(&fx.up_base, Duration::from_secs(5)).unwrap();
+    let relay = listen(
+        Served::under(relay_dir.path()),
+        OnDemand::new(store.clone(), Source::Listener(upstream)),
+    )
+    .await;
+    let before = fx.up.hits();
+    assert_eq!(get(&relay, &path).await, (StatusCode::OK, body.to_vec()));
+    assert_eq!(get(&relay, &path).await, (StatusCode::OK, body.to_vec()));
+    assert_eq!(fx.up.hits(), before + 1);
+    assert!(stored(&store, body));
+    // A file whose digest is not its name is neither served nor kept.
+    assert_eq!(
+        get(&relay, &format!("/software/{liar}.msi")).await.0,
+        StatusCode::BAD_GATEWAY
+    );
+    assert!(!stored(&store, b"something else"));
+    assert_eq!(
+        get(&relay, &format!("/software/{other}.msi")).await.0,
+        StatusCode::NOT_FOUND
+    );
+}

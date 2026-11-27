@@ -37,6 +37,10 @@ pub const MAJOR_UPGRADE: &str = "major_upgrade";
 pub const SOFTWARE: &str = "software";
 /// Kind of [`crate::proto::v1::SoftwareOff`] commands (ADR-0188).
 pub const SOFTWARE_OFF: &str = "software_off";
+/// Reported in `Hello`, with the acceptance of [`SOFTWARE`], by Windows
+/// agents whose `software` commands may carry MSI packages (ADR-0188).
+/// Never sent as a command.
+pub const SOFTWARE_MSI: &str = "software_msi";
 
 /// Package names in an `ApplyUpdates` reach a command line on the agent:
 /// letters, digits and `.+_:-`, at most 128 bytes, not starting with `-` so

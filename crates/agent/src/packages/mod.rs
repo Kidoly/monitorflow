@@ -22,6 +22,7 @@ pub mod dnf;
 pub mod exec;
 #[cfg(unix)]
 pub mod flatpak;
+pub mod msi;
 #[cfg(unix)]
 pub mod snap;
 #[cfg(unix)]
