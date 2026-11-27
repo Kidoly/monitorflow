@@ -51,7 +51,7 @@ describe("remote terminals", () => {
 });
 
 describe("remote desktops", () => {
-  const access = { can_open: true, can_review: true, recorded: true, idle_timeout_minutes: 15 };
+  const access = { can_open: true, can_review: true, recorded: true, idle_timeout_minutes: 15, desktop_clipboard: true, desktop_files: false };
 
   it("have a tab on Windows servers only, for those who may open or review sessions", () => {
     expect(hasDesktopTab({ kind: "agent", os_family: "windows", remote_terminal: access })).toBe(true);

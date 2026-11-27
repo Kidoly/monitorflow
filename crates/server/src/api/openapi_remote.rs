@@ -31,13 +31,13 @@ fn session() -> Value {
         "requested_by": "alice", "created_at": "2026-11-23T09:30:00Z",
         "opened_at": "2026-11-23T09:30:02Z", "closed_at": "2026-11-23T09:41:15Z",
         "close_reason": "closed by alice", "duration_seconds": 673, "recorded": true,
-        "bytes_in": 412, "bytes_out": 18734
+        "bytes_in": 412, "bytes_out": 18734, "clipboard": false, "file_transfer": false
     })
 }
 
 fn settings() -> Value {
     json!({"min_role": "administrator", "record": true, "idle_timeout_minutes": 15,
-           "retention_days": 90})
+           "retention_days": 90, "desktop_clipboard": true, "desktop_files": false})
 }
 
 #[utoipa::path(post, path = "/api/v1/servers/{id}/remote-sessions", tag = "servers",
@@ -58,7 +58,10 @@ IronRDP's web client, the `token` as its `proxy_auth` (see the socket). The host
 apart: `command_kinds.remote_desktop` is `accepted` where its administrator installed with \
 `REMOTE_DESKTOP=1` or ran `monitorflow-agent.exe remote-access desktop on`. The person signs in to Windows as \
 usual; MonitorFlow neither asks for nor keeps Windows passwords. Where `record` is on, the central server \
-records the desktop's screen from the RDP it carries (see the recording).\n\n\
+records the desktop's screen from the RDP it carries (see the recording). The session keeps whether its \
+clipboard and its file transfers pass (`clipboard`, `file_transfer`), as the settings say when it starts; the \
+central server lets through only that, and audits each copy as `remote_session.clipboard` and each file as \
+`remote_session.file`, with their direction, kind or name and size, never what they hold.\n\n\
 **Who**: the role `GET /api/v1/settings/remote-access` names, or above, on the server's site. **Area**: \
 `servers`. Audited as `remote_session.start`, then `remote_session.open` and `remote_session.close` with \
 its duration. **Not safe to repeat**: each call starts another session.",
@@ -194,7 +197,9 @@ only: the first is a DER `RDCleanPathPdu` request whose `proxy_auth` is the toke
 server answers with the RDCleanPath response (the service's X.224 confirm and its TLS certificates, for \
 network level authentication) or an error, then carries RDP both ways, the TLS with the host's service done \
 on the central server's side. The WebSocket closes with why the session ended as its reason. The idle time \
-counts from the last bytes the browser sent.",
+counts from the last bytes the browser sent. The central server passes whole RDP PDUs only, and drops what the \
+session does not allow on the `cliprdr` channel (the clipboard, file contents) and, without file transfers, the \
+`rdpdr` channel.",
     params(("id" = uuid::Uuid, Path, description = "The session")),
     responses(
         (status = 101, description = "Switching to the WebSocket protocol"),
@@ -207,7 +212,9 @@ fn socket() {}
 #[utoipa::path(get, path = "/api/v1/settings/remote-access", tag = "settings",
     summary = "Get the remote access settings",
     description = "Who may open remote terminals and desktops, whether they are recorded, when an \
-idle session closes and how long recordings are kept. Each host must also allow terminals and desktops \
+idle session closes, how long recordings are kept, and whether desktops share the clipboard \
+(`desktop_clipboard`, on by default) and copy files (`desktop_files`, off by default) with the browser, both \
+ways. Each host must also allow terminals and desktops \
 itself, each apart, which no setting here can change.\n\n\
 **Who**: global administrators. **Area**: `administration`.",
     responses(
@@ -221,7 +228,8 @@ fn get_settings() {}
     summary = "Change the remote access settings",
     description = "Replaces the settings. `min_role` is the lowest role, on a server's site, that may open \
 a terminal or a desktop there: `operator`, `approver` or `administrator`; `null` lets nobody. `record` keeps \
-what terminals print and the screen of desktops. New sessions follow the new values; open ones keep theirs.\n\n\
+what terminals print and the screen of desktops. `desktop_clipboard` and `desktop_files` take their defaults when \
+left out. New sessions follow the new values; open ones keep theirs.\n\n\
 **Who**: global administrators. **Area**: `administration`. Audited as `settings.remote_access`.",
     request_body(content = remote_sessions::RemoteAccessSettings, example = json!(settings())),
     responses(

@@ -12,6 +12,7 @@
 //! may carry the person's password, is read for its compression flags and
 //! dropped.
 
+pub mod clipboard;
 pub mod recorder;
 #[doc(hidden)]
 pub mod sample;

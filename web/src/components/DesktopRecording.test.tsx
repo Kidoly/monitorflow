@@ -36,6 +36,8 @@ function recording(frames: DesktopFrame[]): RemoteRecording {
       recorded: true,
       bytes_in: 10,
       bytes_out: 100,
+      clipboard: true,
+      file_transfer: false,
     },
     chunks: [],
     frames,

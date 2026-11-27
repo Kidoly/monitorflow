@@ -1905,6 +1905,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f69800329d37810d4d9e493d254646fd8d5ce8e63435cdc7593dd994cde3fa01"
 
 [[package]]
+name = "ironrdp-cliprdr"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56772c18e4bceb03aa81157cd663080f5b88bc0983c8a4eae6a5784fbce33e85"
+dependencies = [
+ "bitflags 2.13.2",
+ "ironrdp-core",
+ "ironrdp-pdu",
+ "ironrdp-svc",
+ "tracing",
+]
+
+[[package]]
 name = "ironrdp-connector"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2781,6 +2794,7 @@ dependencies = [
  "futures-util",
  "hyper",
  "ironrdp-bulk",
+ "ironrdp-cliprdr",
  "ironrdp-core",
  "ironrdp-graphics",
  "ironrdp-pdu",

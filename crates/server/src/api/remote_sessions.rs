@@ -60,6 +60,18 @@ pub struct RemoteAccessSettings {
     pub idle_timeout_minutes: i32,
     /// Recordings older than this many days are deleted, 1 to 3650.
     pub retention_days: i32,
+    /// Whether desktops share the clipboard with the browser, both ways:
+    /// text, pictures and the rest but files. On when left out.
+    #[serde(default = "yes")]
+    pub desktop_clipboard: bool,
+    /// Whether files are copied between the browser and desktops, both
+    /// ways. Off when left out.
+    #[serde(default)]
+    pub desktop_files: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(sqlx::FromRow)]
@@ -68,11 +80,15 @@ struct SettingsRow {
     record: bool,
     idle_timeout_minutes: i32,
     retention_days: i32,
+    desktop_clipboard: bool,
+    desktop_files: bool,
 }
 
 pub(super) async fn settings(pool: &sqlx::PgPool) -> Result<RemoteAccessSettings, ApiError> {
     let row: Option<SettingsRow> = sqlx::query_as(
-        "SELECT min_role, record, idle_timeout_minutes, retention_days FROM remote_access_settings",
+        "SELECT min_role, record, idle_timeout_minutes, retention_days, desktop_clipboard,
+                desktop_files
+         FROM remote_access_settings",
     )
     .fetch_optional(pool)
     .await?;
@@ -82,12 +98,16 @@ pub(super) async fn settings(pool: &sqlx::PgPool) -> Result<RemoteAccessSettings
             record: row.record,
             idle_timeout_minutes: row.idle_timeout_minutes,
             retention_days: row.retention_days,
+            desktop_clipboard: row.desktop_clipboard,
+            desktop_files: row.desktop_files,
         },
         None => RemoteAccessSettings {
             min_role: None,
             record: true,
             idle_timeout_minutes: 15,
             retention_days: 90,
+            desktop_clipboard: true,
+            desktop_files: false,
         },
     })
 }
@@ -139,15 +159,18 @@ pub async fn set_settings(
     }
     let mut tx = state.pool.begin().await?;
     sqlx::query(
-        "INSERT INTO remote_access_settings (id, min_role, record, idle_timeout_minutes, retention_days)
-         VALUES (true, $1, $2, $3, $4)
+        "INSERT INTO remote_access_settings (id, min_role, record, idle_timeout_minutes, retention_days,
+             desktop_clipboard, desktop_files)
+         VALUES (true, $1, $2, $3, $4, $5, $6)
          ON CONFLICT (id) DO UPDATE SET min_role = $1, record = $2, idle_timeout_minutes = $3,
-             retention_days = $4, updated_at = now()",
+             retention_days = $4, desktop_clipboard = $5, desktop_files = $6, updated_at = now()",
     )
     .bind(request.min_role.map(Role::as_str))
     .bind(request.record)
     .bind(request.idle_timeout_minutes)
     .bind(request.retention_days)
+    .bind(request.desktop_clipboard)
+    .bind(request.desktop_files)
     .execute(&mut *tx)
     .await?;
     let actor = user.id.to_string();
@@ -163,6 +186,8 @@ pub async fn set_settings(
                 "record": request.record,
                 "idle_timeout_minutes": request.idle_timeout_minutes,
                 "retention_days": request.retention_days,
+                "desktop_clipboard": request.desktop_clipboard,
+                "desktop_files": request.desktop_files,
             }),
         },
     )
@@ -184,6 +209,10 @@ pub struct RemoteTerminalAccess {
     /// Whether new terminals and desktops are recorded.
     pub recorded: bool,
     pub idle_timeout_minutes: i32,
+    /// Whether new desktops share the clipboard (ADR-0192).
+    pub desktop_clipboard: bool,
+    /// Whether new desktops copy files.
+    pub desktop_files: bool,
 }
 
 pub(super) async fn access(
@@ -197,6 +226,8 @@ pub(super) async fn access(
         can_review: may_review(user, site, &settings),
         recorded: settings.record,
         idle_timeout_minutes: settings.idle_timeout_minutes,
+        desktop_clipboard: settings.desktop_clipboard,
+        desktop_files: settings.desktop_files,
     })
 }
 
@@ -226,6 +257,11 @@ pub struct RemoteSession {
     pub bytes_in: i64,
     /// Bytes the terminal printed, or the RDP service sent.
     pub bytes_out: i64,
+    /// A desktop's clipboard passes, as the settings said when it started
+    /// (ADR-0192); always false for a terminal.
+    pub clipboard: bool,
+    /// A desktop's file transfers pass; always false for a terminal.
+    pub file_transfer: bool,
 }
 
 const SESSION_COLUMNS: &str = "r.id, r.server_id, s.hostname, r.kind, r.username AS requested_by,
@@ -233,7 +269,7 @@ const SESSION_COLUMNS: &str = "r.id, r.server_id, s.hostname, r.kind, r.username
      CASE WHEN r.opened_at IS NULL THEN NULL
           ELSE extract(epoch FROM coalesce(r.closed_at, now()) - r.opened_at)::bigint END
          AS duration_seconds,
-     r.recorded, r.bytes_in, r.bytes_out";
+     r.recorded, r.bytes_in, r.bytes_out, r.clipboard, r.file_transfer";
 
 /// Body of `POST /api/servers/{id}/remote-sessions`.
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
@@ -381,8 +417,8 @@ pub async fn start(
     let mut tx = state.pool.begin().await?;
     sqlx::query(
         "INSERT INTO remote_sessions (id, server_id, kind, requested_by, username, token_sha256,
-             token_expires_at, recorded, idle_timeout_seconds)
-         VALUES ($1, $2, $9, $3, $4, $5, $6, $7, $8)",
+             token_expires_at, recorded, idle_timeout_seconds, clipboard, file_transfer)
+         VALUES ($1, $2, $9, $3, $4, $5, $6, $7, $8, $10, $11)",
     )
     .bind(session)
     .bind(host.id)
@@ -393,6 +429,8 @@ pub async fn start(
     .bind(recorded)
     .bind(settings.idle_timeout_minutes * 60)
     .bind(&kind)
+    .bind(desktop && settings.desktop_clipboard)
+    .bind(desktop && settings.desktop_files)
     .execute(&mut *tx)
     .await?;
     let actor = user.id.to_string();
@@ -409,6 +447,8 @@ pub async fn start(
                 "peer_id": host.peer_id,
                 "kind": kind,
                 "recorded": recorded,
+                "clipboard": desktop && settings.desktop_clipboard,
+                "file_transfer": desktop && settings.desktop_files,
             }),
         },
     )

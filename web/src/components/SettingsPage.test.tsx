@@ -230,6 +230,34 @@ describe("SettingsPage", () => {
 });
 
 describe("retentionDays", () => {
+  it("switches the clipboard and files of remote desktops", async () => {
+    const remote = {
+      min_role: "administrator",
+      record: true,
+      idle_timeout_minutes: 15,
+      retention_days: 90,
+      desktop_clipboard: true,
+      desktop_files: false,
+    };
+    const fetchMock = stub(settings(), {
+      "GET /api/settings/remote-access": { status: 200, body: remote },
+      "PUT /api/settings/remote-access": { status: 200, body: remote },
+    });
+    open();
+    const section = await screen.findByRole("region", { name: "Remote terminals and desktops" });
+    const clipboard = await within(section).findByRole("switch", { name: /Share the clipboard with desktops/ });
+    expect(clipboard).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(clipboard);
+    await userEvent.click(within(section).getByRole("switch", { name: /Copy files with desktops/ }));
+    await userEvent.click(within(section).getByRole("button", { name: "Save" }));
+    expect(await within(section).findByText("Saved.")).toBeInTheDocument();
+    expect(sent(fetchMock, "PUT", "/api/settings/remote-access")).toEqual({
+      ...remote,
+      desktop_clipboard: false,
+      desktop_files: true,
+    });
+  });
+
   it("reads days only", () => {
     expect(retentionDays("90d")).toBe(90);
     expect(retentionDays("1y")).toBeNull();

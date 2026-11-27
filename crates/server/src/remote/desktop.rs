@@ -30,6 +30,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
+use super::rdp::clipboard::{self, Allow, Clipboard, Event, Side};
 use super::rdp::recorder::{self, Feed};
 use super::rdp::{self, Connection, Framer, FromClient, FromService};
 use super::{FromBrowser, RemoteHub, ToBrowser, COMMAND_TTL};
@@ -46,6 +47,8 @@ const MAX_X224: usize = 1024;
 const PIPE: usize = 64 * 1024;
 /// PDUs waiting for the recorder.
 const FEED: usize = 64;
+/// Clipboard events waiting for the audit log.
+const EVENTS: usize = 256;
 /// Why a recorded desktop refuses a client asking for the graphics
 /// pipeline: its screen would reach the recording as nothing it decodes.
 const GRAPHICS_PIPELINE: &str =
@@ -219,13 +222,28 @@ pub async fn run(
             (None, None)
         };
         let mut recording = recording;
+        // What passes on the clipboard, audited as it passes.
+        let (events, mut audited) = mpsc::channel::<Event>(EVENTS);
+        let pool = hub.pool().clone();
+        let audited_session = attached.clone();
+        let auditor = tokio::spawn(async move {
+            while let Some(event) = audited.recv().await {
+                audit(&pool, &audited_session, event).await;
+            }
+        });
+        let allow = Allow {
+            clipboard: attached.clipboard,
+            files: attached.file_transfer,
+        };
         let proxying = proxy(
             tls,
             protocol,
             attached.recorded,
+            allow,
             &mut from_browser,
             &to_browser,
             feed,
+            events,
         );
         // The recorder failing ends the session: a recorded desktop must be
         // recorded.
@@ -255,22 +273,76 @@ pub async fn run(
                 tracing::warn!(%session, %error, "a desktop recording ended early");
             }
         }
+        let _ = auditor.await;
     }
     drop(session_tx);
     Ok(task.await.unwrap_or_else(|_| "the session stopped".into()))
 }
 
+/// Writes what passed on a desktop's clipboard to the audit log.
+async fn audit(pool: &sqlx::PgPool, attached: &super::Attached, event: Event) {
+    let (action, details) = match event {
+        Event::Copy { from, kind, bytes } => (
+            "remote_session.clipboard",
+            serde_json::json!({"direction": from.direction(), "format": kind, "bytes": bytes}),
+        ),
+        Event::File { from, name, size } => (
+            "remote_session.file",
+            serde_json::json!({"direction": from.direction(), "name": name, "size": size}),
+        ),
+    };
+    let result = async {
+        let mut connection = pool.acquire().await?;
+        super::session::audit(&mut connection, attached, action, details).await
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::error!(session = %attached.id, %error, "cannot audit a desktop's clipboard");
+    }
+}
+
+/// What a static virtual channel PDU of `name` from `side` becomes: the
+/// frames to pass on (none, itself, or a whole clipboard message held
+/// until its last chunk).
+fn channel(
+    clipboard: &std::sync::Mutex<Clipboard>,
+    allow: Allow,
+    side: Side,
+    name: &str,
+    pdu: Vec<u8>,
+    events: &mut Vec<Event>,
+) -> Vec<Vec<u8>> {
+    match name {
+        clipboard::CHANNEL => {
+            let mut clipboard = clipboard
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let (frames, said) = clipboard.pdu(side, pdu);
+            events.extend(said);
+            frames
+        }
+        // Device redirection, printers included, carries files: never
+        // without file transfers.
+        "rdpdr" if !allow.files => Vec::new(),
+        _ => vec![pdu],
+    }
+}
+
 /// Carries RDP between the browser and the service's TLS, whole PDUs
-/// only, reading them as they pass and feeding the recorder `feed` with
-/// the service's screen. Returns why it had to stop, if it did; when
-/// either side closes, `None`.
+/// only, reading them as they pass, letting through the clipboard and
+/// files as `allow` says, sending what passed to `audited`, and feeding
+/// the recorder `feed` with the service's screen. Returns why it had to
+/// stop, if it did; when either side closes, `None`.
+#[allow(clippy::too_many_arguments)]
 async fn proxy<S>(
     tls: tokio_rustls::client::TlsStream<S>,
     protocol: u32,
     recorded: bool,
+    allow: Allow,
     from_browser: &mut mpsc::Receiver<Vec<u8>>,
     to_browser: &mpsc::Sender<Vec<u8>>,
     feed: Option<mpsc::Sender<Feed>>,
+    audited: mpsc::Sender<Event>,
 ) -> Option<String>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -280,6 +352,15 @@ where
         connection
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
+    let clipboard = std::sync::Mutex::new(Clipboard::new(allow));
+    let audit = |events: Vec<Event>| {
+        let audited = audited.clone();
+        async move {
+            for event in events {
+                let _ = audited.send(event).await;
+            }
+        }
     };
     let (mut reader, mut writer) = tokio::io::split(tls);
     let up = async {
@@ -291,18 +372,32 @@ where
             };
             let mut out = Vec::with_capacity(bytes.len());
             let mut feeds = Vec::new();
+            let mut events = Vec::new();
             for pdu in pdus {
-                let mut connection = read();
-                match connection.from_client(&pdu) {
+                let what = read().from_client(&pdu);
+                match what {
                     FromClient::Pointer { x, y } => feeds.push(Feed::Pointer { x, y }),
                     FromClient::Compression(c) => feeds.push(Feed::Compression(c)),
-                    FromClient::Channel { .. } | FromClient::Other => {}
+                    FromClient::Channel { name } => {
+                        let frames = channel(
+                            &clipboard,
+                            allow,
+                            Side::Client,
+                            &name,
+                            pdu.bytes,
+                            &mut events,
+                        );
+                        frames.iter().for_each(|f| out.extend_from_slice(f));
+                        continue;
+                    }
+                    FromClient::Other => {}
                 }
-                if recorded && connection.wants_graphics_pipeline {
+                if recorded && read().wants_graphics_pipeline {
                     return Some(GRAPHICS_PIPELINE.to_owned());
                 }
                 out.extend_from_slice(&pdu.bytes);
             }
+            audit(events).await;
             if let Some(feed) = &feed {
                 for next in feeds {
                     // Gone: the recorder failed, and says why.
@@ -331,8 +426,21 @@ where
                 Err(error) => return Some(error.to_string()),
             };
             let mut out = Vec::with_capacity(n);
+            let mut events = Vec::new();
             for pdu in pdus {
                 let what = read().from_service(&pdu);
+                if let FromService::Channel { name } = &what {
+                    let frames = channel(
+                        &clipboard,
+                        allow,
+                        Side::Service,
+                        name,
+                        pdu.bytes,
+                        &mut events,
+                    );
+                    frames.iter().for_each(|f| out.extend_from_slice(f));
+                    continue;
+                }
                 if let Some(feed) = &feed {
                     let next = match what {
                         FromService::Screen => Some(Feed::Screen(pdu.bytes.clone())),
@@ -349,6 +457,7 @@ where
                 }
                 out.extend_from_slice(&pdu.bytes);
             }
+            audit(events).await;
             if !out.is_empty() && to_browser.send(out).await.is_err() {
                 return None;
             }

@@ -490,6 +490,8 @@ function RemoteAccessSection() {
 function RemoteAccessForm({ settings, onSaved }: { settings: RemoteAccessSettings; onSaved: () => void }) {
   const [role, setRole] = useState(settings.min_role);
   const [record, setRecord] = useState(settings.record);
+  const [clipboard, setClipboard] = useState(settings.desktop_clipboard);
+  const [files, setFiles] = useState(settings.desktop_files);
   const [idle, setIdle] = useState(String(settings.idle_timeout_minutes));
   const [days, setDays] = useState(String(settings.retention_days));
   const [busy, setBusy] = useState(false);
@@ -512,6 +514,8 @@ function RemoteAccessForm({ settings, onSaved }: { settings: RemoteAccessSetting
         record,
         idle_timeout_minutes: idleValue,
         retention_days: daysValue,
+        desktop_clipboard: clipboard,
+        desktop_files: files,
       });
       onSaved();
       setSaved(true);
@@ -567,6 +571,18 @@ function RemoteAccessForm({ settings, onSaved }: { settings: RemoteAccessSetting
         onChange={setRecord}
         label={t("remote.settings.record")}
         note={t("remote.settings.recordNote")}
+      />
+      <Switch
+        checked={clipboard}
+        onChange={setClipboard}
+        label={t("remote.settings.clipboard")}
+        note={t("remote.settings.clipboardNote")}
+      />
+      <Switch
+        checked={files}
+        onChange={setFiles}
+        label={t("remote.settings.files")}
+        note={t("remote.settings.filesNote")}
       />
       {!valid && <p className={styles.formError}>{t("remote.settings.invalid")}</p>}
       <SaveLine busy={busy} disabled={!valid} saved={saved} />

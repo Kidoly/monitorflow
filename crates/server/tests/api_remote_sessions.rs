@@ -230,10 +230,11 @@ db_tests! {
         let (status, settings) = h.send("GET", uri, &global, None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(settings, json!({"min_role": "administrator", "record": true,
-                                    "idle_timeout_minutes": 15, "retention_days": 90}));
+                                    "idle_timeout_minutes": 15, "retention_days": 90,
+                                    "desktop_clipboard": true, "desktop_files": false}));
         assert_eq!(h.send("GET", uri, &customer_admin, None).await.0, StatusCode::FORBIDDEN);
         let wider = json!({"min_role": "operator", "record": false, "idle_timeout_minutes": 30,
-                           "retention_days": 7});
+                           "retention_days": 7, "desktop_clipboard": false, "desktop_files": true});
         assert_eq!(h.send("PUT", uri, &customer_admin, Some(wider.clone())).await.0, StatusCode::FORBIDDEN);
         assert_eq!(h.send("PUT", uri, &global, Some(wider.clone())).await, (StatusCode::OK, wider.clone()));
         assert_eq!(h.send("GET", uri, &global, None).await.1, wider);
@@ -244,7 +245,13 @@ db_tests! {
         ] {
             assert_eq!(h.send("PUT", uri, &global, Some(bad)).await.0, StatusCode::BAD_REQUEST);
         }
-        assert_eq!(h.audit("settings.remote_access").await, 1);
+        // Left out, the desktop switches take their defaults.
+        let older = json!({"min_role": "operator", "record": false, "idle_timeout_minutes": 30,
+                           "retention_days": 7});
+        let (status, back) = h.send("PUT", uri, &global, Some(older)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!((&back["desktop_clipboard"], &back["desktop_files"]), (&json!(true), &json!(false)));
+        assert_eq!(h.audit("settings.remote_access").await, 2);
     }
 
     #[sqlx::test]
@@ -259,7 +266,8 @@ db_tests! {
         let detail = format!("/api/servers/{}", h.server);
         let (_, page) = h.send("GET", &detail, &operator, None).await;
         assert_eq!(page["remote_terminal"], json!({"can_open": false, "can_review": false,
-                                                   "recorded": true, "idle_timeout_minutes": 15}));
+                                                   "recorded": true, "idle_timeout_minutes": 15,
+                                                   "desktop_clipboard": true, "desktop_files": false}));
         assert_eq!(h.send("GET", &detail, &admin, None).await.1["remote_terminal"]["can_open"], true);
 
         // Administrators only, by default.
@@ -471,6 +479,9 @@ db_tests! {
         assert_eq!(started["session"]["kind"], "desktop");
         // Recording is on: the desktop's screen is recorded (ADR-0192).
         assert_eq!(started["session"]["recorded"], true);
+        // The clipboard by default, not files: kept with the session.
+        assert_eq!((&started["session"]["clipboard"], &started["session"]["file_transfer"]),
+                   (&json!(true), &json!(false)));
         let details: Value = sqlx::query_scalar(
             "SELECT details FROM audit_log WHERE action = 'remote_session.start'",
         )
@@ -489,6 +500,7 @@ db_tests! {
         assert_eq!(h.hub.attach(id, &token, 80, 24).await.unwrap_err(), AttachError::Refused);
         let attached = h.hub.attach_desktop(id, &token).await.unwrap();
         assert_eq!((attached.kind.as_str(), attached.recorded), ("desktop", true));
+        assert_eq!((attached.clipboard, attached.file_transfer), (true, false));
         assert_eq!(h.hub.attach_desktop(id, &token).await.unwrap_err(), AttachError::Refused);
         let (_, list) = h.send("GET", &uri, &admin, None).await;
         assert_eq!(list[0]["kind"], "desktop");

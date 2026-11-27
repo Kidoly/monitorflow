@@ -88,6 +88,7 @@ ironrdp-core = "0.3"
 ironrdp-bulk = "0.2"
 ironrdp-graphics = "0.11"
 ironrdp-session = "0.13"
+ironrdp-cliprdr = "0.9"
 png = "0.18"
 # The tests against a real RDP service: IronRDP's client.
 ironrdp-connector = "0.12"

@@ -310,6 +310,10 @@ export interface RemoteTerminalAccess {
   /** New terminals and desktops are recorded (ADR-0192). */
   recorded: boolean;
   idle_timeout_minutes: number;
+  /** New desktops share the clipboard with the browser (ADR-0192). */
+  desktop_clipboard: boolean;
+  /** New desktops copy files with the browser. */
+  desktop_files: boolean;
 }
 
 /** A remote terminal or desktop session (ADR-0190). */
@@ -330,6 +334,10 @@ export interface RemoteSession {
   recorded: boolean;
   bytes_in: number;
   bytes_out: number;
+  /** A desktop's clipboard passes, as the settings said when it started (ADR-0192). */
+  clipboard: boolean;
+  /** A desktop's file transfers pass. */
+  file_transfer: boolean;
 }
 
 /** Answer of `POST /api/servers/{id}/remote-sessions`. */
@@ -373,6 +381,10 @@ export interface RemoteAccessSettings {
   record: boolean;
   idle_timeout_minutes: number;
   retention_days: number;
+  /** Desktops share the clipboard with the browser, both ways (ADR-0192). */
+  desktop_clipboard: boolean;
+  /** Desktops copy files with the browser, both ways. */
+  desktop_files: boolean;
 }
 
 /** An `ai_commands` command: who asked to turn AI commands on or off, and what came of it (ADR-0098). */

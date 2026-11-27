@@ -14,7 +14,7 @@ import { Banner } from "@/components/ui/PageState";
 import { CopyButton } from "@/components/ui/SecretField";
 
 import adminStyles from "./AdminPages.module.css";
-import type { DesktopControls, DesktopCredentials, DesktopState } from "./RemoteDesktop";
+import type { DesktopControls, DesktopCredentials, DesktopState, FilesEvent } from "./RemoteDesktop";
 import desktopStyles from "./RemoteDesktop.module.css";
 import terminalStyles from "./RemoteTerminal.module.css";
 import styles from "./ServerPage.module.css";
@@ -25,6 +25,19 @@ const RemoteDesktop = dynamic(() => import("./RemoteDesktop").then((m) => m.Remo
 const DesktopRecordingView = dynamic(() => import("./DesktopRecording").then((m) => m.DesktopRecordingView), {
   ssr: false,
 });
+
+function filesLine(event: FilesEvent): string {
+  switch (event.kind) {
+    case "offered":
+      return t("remote.desktop.filesOffered", { names: event.names.join(", ") });
+    case "sent":
+      return t("remote.desktop.filesSent");
+    case "received":
+      return t("remote.desktop.filesReceived", { count: event.count });
+    case "error":
+      return t("remote.desktop.filesError", { message: event.message });
+  }
+}
 
 function statusLine(state: DesktopState | null): string {
   switch (state?.step) {
@@ -59,6 +72,7 @@ export function ServerDesktopTab({ server }: { server: ServerDetail }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [controls, setControls] = useState<DesktopControls | null>(null);
   const [replay, setReplay] = useState<string | null>(null);
+  const [files, setFiles] = useState<FilesEvent | null>(null);
   const fetcher = useCallback((signal: AbortSignal) => api.remoteSessions(server.id, signal), [server.id]);
   const sessions = usePolledData(fetcher, { enabled: access?.can_review ?? false });
   const refreshSessions = sessions.refresh;
@@ -87,6 +101,7 @@ export function ServerDesktopTab({ server }: { server: ServerDetail }) {
     event.preventDefault();
     setState(null);
     setSessionId(null);
+    setFiles(null);
     setRun((previous) => ({ key: (previous?.key ?? 0) + 1, credentials: form }));
     // The password stays with the client only, for the time it signs in.
     setForm({ ...form, password: "" });
@@ -101,9 +116,17 @@ export function ServerDesktopTab({ server }: { server: ServerDetail }) {
             <span className={terminalStyles.status} role="status">
               {run === null ? t("remote.desktop.intro", { minutes: access.idle_timeout_minutes }) : statusLine(state)}
               {run === null && access.recorded && ` ${t("remote.terminal.recordedNote")}`}
+              {run === null &&
+                ` ${t(access.desktop_clipboard ? "remote.desktop.clipboardOn" : "remote.desktop.clipboardOff")}`}
+              {run === null && access.desktop_files && ` ${t("remote.desktop.filesOn")}`}
             </span>
             {live && (
               <span className={adminStyles.buttonRow}>
+                {controls?.sendFiles && (
+                  <Button size="small" onClick={() => void controls.sendFiles?.()}>
+                    {t("remote.desktop.sendFiles")}
+                  </Button>
+                )}
                 {controls && (
                   <Button size="small" onClick={controls.ctrlAltDel}>
                     {t("remote.desktop.ctrlAltDel")}
@@ -122,6 +145,18 @@ export function ServerDesktopTab({ server }: { server: ServerDetail }) {
               </span>
             )}
           </div>
+          {live && files && (
+            <div className={terminalStyles.bar}>
+              <span className={terminalStyles.status} role="status">
+                {filesLine(files)}
+              </span>
+              {files.kind === "offered" && controls?.downloadFiles && (
+                <Button size="small" onClick={() => void controls.downloadFiles?.()}>
+                  {t("remote.desktop.downloadFiles")}
+                </Button>
+              )}
+            </div>
+          )}
           {!live && (
             <form className={desktopStyles.signIn} onSubmit={connect}>
               <label>
@@ -173,6 +208,7 @@ export function ServerDesktopTab({ server }: { server: ServerDetail }) {
               credentials={run.credentials}
               onState={onState}
               onControls={setControls}
+              onFiles={setFiles}
             />
           )}
         </div>

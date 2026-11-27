@@ -204,3 +204,46 @@ pub fn bitmap(x: u16, y: u16, width: u16, height: u16, rgb: [u8; 3]) -> Vec<u8> 
     out.extend_from_slice(&pdu);
     out
 }
+
+/// A whole `cliprdr` message on the channel [`FIRST_CHANNEL`], from the
+/// client when `from_client`, from the service otherwise.
+fn clipboard(from_client: bool, pdu: &ironrdp_cliprdr::pdu::ClipboardPdu<'_>) -> Vec<u8> {
+    let data = encode_vec(pdu).expect("encodes");
+    let mut user_data = (data.len() as u32).to_le_bytes().to_vec();
+    // CHANNEL_FLAG_FIRST | CHANNEL_FLAG_LAST.
+    user_data.extend_from_slice(&3u32.to_le_bytes());
+    user_data.extend_from_slice(&data);
+    if from_client {
+        request(FIRST_CHANNEL, user_data)
+    } else {
+        indication(FIRST_CHANNEL, user_data)
+    }
+}
+
+/// The service's clipboard offers text.
+pub fn clipboard_offers_text() -> Vec<u8> {
+    use ironrdp_cliprdr::pdu::{ClipboardFormat, ClipboardFormatId, ClipboardPdu, FormatList};
+    let list = FormatList::new_unicode(&[ClipboardFormat::new(ClipboardFormatId(13))], true)
+        .expect("encodes");
+    clipboard(false, &ClipboardPdu::FormatList(list))
+}
+
+/// The client asks for the text.
+pub fn clipboard_asks_text() -> Vec<u8> {
+    use ironrdp_cliprdr::pdu::{ClipboardFormatId, ClipboardPdu, FormatDataRequest};
+    clipboard(
+        true,
+        &ClipboardPdu::FormatDataRequest(FormatDataRequest {
+            format: ClipboardFormatId(13),
+        }),
+    )
+}
+
+/// The service answers with `value`, in UTF-16.
+pub fn clipboard_text(value: &str) -> Vec<u8> {
+    use ironrdp_cliprdr::pdu::{ClipboardPdu, FormatDataResponse};
+    clipboard(
+        false,
+        &ClipboardPdu::FormatDataResponse(FormatDataResponse::new_unicode_string(value)),
+    )
+}

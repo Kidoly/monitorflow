@@ -29,6 +29,7 @@ use monitorflow_server::remote::desktop::{
 };
 use monitorflow_server::remote::rdp::sample;
 use monitorflow_server::remote::{token_hash, FromBrowser, RemoteHub, ToBrowser};
+use serde_json::{json, Value};
 use sqlx::PgPool;
 use support::{agent_config, record, Pki};
 use tempfile::TempDir;
@@ -350,6 +351,12 @@ mod rdp {
     /// Answers the client's first PDU with `answer`, then keeps the
     /// connection open.
     pub async fn start(answer: Vec<u8>) -> Service {
+        start_with(vec![answer]).await
+    }
+
+    /// Answers the client's `n`-th PDU with `answers[n]`, then keeps the
+    /// connection open.
+    pub async fn start_with(answers: Vec<Vec<u8>>) -> Service {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let key = rcgen::KeyPair::generate().unwrap();
@@ -377,14 +384,21 @@ mod rdp {
             socket.write_all(&CONFIRM).await.unwrap();
             let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
             let mut tls = acceptor.accept(socket).await.unwrap();
-            // One TPKT: its header gives its length.
-            let mut first = vec![0u8; 4];
-            tls.read_exact(&mut first).await.unwrap();
-            first.resize(usize::from(u16::from_be_bytes([first[2], first[3]])), 0);
-            tls.read_exact(&mut first[4..]).await.unwrap();
-            let _ = seen_tx.send((request, first));
-            tls.write_all(&answer).await.unwrap();
-            tls.flush().await.unwrap();
+            let mut seen_tx = Some(seen_tx);
+            for answer in answers {
+                // One TPKT: its header gives its length.
+                let mut pdu = vec![0u8; 4];
+                if tls.read_exact(&mut pdu).await.is_err() {
+                    return;
+                }
+                pdu.resize(usize::from(u16::from_be_bytes([pdu[2], pdu[3]])), 0);
+                tls.read_exact(&mut pdu[4..]).await.unwrap();
+                if let Some(seen) = seen_tx.take() {
+                    let _ = seen.send((request.clone(), pdu));
+                }
+                tls.write_all(&answer).await.unwrap();
+                tls.flush().await.unwrap();
+            }
             // Until the client goes.
             let mut rest = Vec::new();
             let _ = tls.read_to_end(&mut rest).await;
@@ -559,6 +573,68 @@ db_tests! {
             "{parts:?}"
         );
         assert!(frames.iter().all(|f| f.5.starts_with(b"\x89PNG")));
+    }
+
+    #[sqlx::test(migrations = "../server/migrations")]
+    async fn the_clipboard_passes_where_allowed_and_is_audited(pool: PgPool) {
+        let mut first = sample::connect_response(1);
+        first.extend(sample::clipboard_offers_text());
+        let second = sample::clipboard_text("hello");
+        let allowed = Allowed { terminal: false, desktop: true };
+        // A service per session, in turn.
+        let mut services = Vec::new();
+        for _ in 0..2 {
+            services.push(rdp::start_with(vec![first.clone(), second.clone()]).await.address);
+        }
+        let next = Arc::new(Mutex::new(services));
+        let spawner: remote::Spawner = Arc::new(move |spec| {
+            let address = next.lock().unwrap().remove(0);
+            remote::desktop::connector(address)(spec)
+        });
+        let s = Setup::start_with(&pool, allowed, spawner).await;
+        for clipboard in [true, false] {
+            let id = s.session_of("desktop").await;
+            sqlx::query("UPDATE remote_sessions SET clipboard = $2 WHERE id = $1")
+                .bind(id)
+                .bind(clipboard)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let mut browser = s.desktop(id);
+            received(&mut browser).await;
+            browser.to_server.send(sample::connect_initial(&["cliprdr"], false)).await.unwrap();
+            // Without the clipboard, the offer does not reach the browser.
+            let expected = if clipboard { first.clone() } else { sample::connect_response(1) };
+            let mut got = Vec::new();
+            while got.len() < expected.len() {
+                got.extend(received(&mut browser).await);
+            }
+            assert!(got == expected, "clipboard {clipboard}");
+            browser.to_server.send(sample::clipboard_asks_text()).await.unwrap();
+            if clipboard {
+                assert_eq!(received(&mut browser).await, second);
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            drop(browser.to_server);
+            tokio::time::timeout(TIMEOUT, browser.task).await.unwrap().unwrap().unwrap();
+            let audited: Vec<Value> = sqlx::query_scalar(
+                "SELECT details FROM audit_log WHERE action = 'remote_session.clipboard'
+                 AND details->>'session_id' = $1",
+            )
+            .bind(id.to_string())
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            if clipboard {
+                assert_eq!(audited.len(), 1);
+                assert_eq!(
+                    (&audited[0]["direction"], &audited[0]["format"], &audited[0]["bytes"]),
+                    (&json!("from_server"), &json!("text"), &json!(12))
+                );
+            } else {
+                assert!(audited.is_empty());
+            }
+        }
     }
 
     #[sqlx::test(migrations = "../server/migrations")]
