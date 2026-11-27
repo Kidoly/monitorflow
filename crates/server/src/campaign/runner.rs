@@ -967,6 +967,7 @@ mod tests {
                         .then(|| "apt-get full-upgrade exited with 100".into()),
                     sources_restored: false,
                     disabled_sources: vec![],
+                    report: None,
                     started_at: None,
                     updated_at: None,
                 })

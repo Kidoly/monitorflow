@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use monitorflow_common::config::{self, AgentConfig, Env};
-use monitorflow_common::major_upgrade::{self, Phase, Upgrade};
+use monitorflow_common::major_upgrade::{self, Method, Phase, Upgrade};
 use monitorflow_common::proto::v1::MajorUpgrade;
 use prost::Message;
 
@@ -116,7 +116,7 @@ pub fn start(
         }
     }
     let plan = sources::plan(Path::new("/"), upgrade);
-    let checks = checks::evaluate(probe, upgradable, &plan);
+    let checks = checks::evaluate(probe, upgrade, upgradable, &plan);
     let mut started = Started::default();
     for check in &checks {
         started.lines.push(format!(
@@ -257,22 +257,69 @@ pub fn run(paths: &Paths, exec: &mut dyn Exec, now: impl Fn() -> i64) -> Result<
         state::write(&paths.state_dir, state).map_err(|e| e.to_string())
     };
 
-    set(&mut state, Phase::Sources, None)?;
+    let finished = match upgrade.method {
+        Method::Apt => apt_steps(paths, upgrade, exec, &mut state, &set)?,
+        Method::ReleaseUpgrade => release_upgrade_steps(paths, upgrade, exec, &mut state, &set)?,
+        Method::Leapp => leapp_steps(paths, upgrade, exec, &mut state, &set)?,
+    };
+    if !finished {
+        return Ok(state);
+    }
+
+    state.boot_id = state::boot_id();
+    set(&mut state, Phase::Rebooting, None)?;
+    match exec.run("/usr/bin/systemctl", &["reboot"], &[]) {
+        Ok((0, _)) => Ok(state),
+        Ok((code, output)) => {
+            set(
+                &mut state,
+                Phase::Failed,
+                Some(format!(
+                    "the upgrade is done but `systemctl reboot` exited with {code}: {}; reboot the server",
+                    last_error(&output)
+                )),
+            )?;
+            Ok(state)
+        }
+        Err(e) => {
+            set(
+                &mut state,
+                Phase::Failed,
+                Some(format!("cannot reboot: {e}; reboot the server")),
+            )?;
+            Ok(state)
+        }
+    }
+}
+
+/// What `run` hands each method's steps to record a phase.
+type Set<'a> = dyn Fn(&mut State, Phase, Option<String>) -> Result<(), String> + 'a;
+
+/// Debian: the sources, `apt-get update`, `upgrade --without-new-pkgs`
+/// and `full-upgrade`. `Ok(false)` once failed, the state written.
+fn apt_steps(
+    paths: &Paths,
+    upgrade: &Upgrade,
+    exec: &mut dyn Exec,
+    state: &mut State,
+    set: &Set<'_>,
+) -> Result<bool, String> {
+    set(state, Phase::Sources, None)?;
     let plan = sources::plan(&paths.root, upgrade);
     if let Some(refusal) = &plan.refusal {
-        set(&mut state, Phase::Failed, Some(refusal.clone()))?;
-        return Ok(state);
+        set(state, Phase::Failed, Some(refusal.clone()))?;
+        return Ok(false);
     }
     let changed: Vec<&FilePlan> = plan.files.iter().filter(|f| f.changed()).collect();
     if let Err(error) = save_and_write(paths, &changed) {
         let restored = restore(paths, &changed).is_ok();
         state.sources_restored = restored;
         set(
-            &mut state,
+            state,
             Phase::Failed,
             Some(format!("cannot rewrite the sources: {error}")),
         )?;
-        return Ok(state);
+        return Ok(false);
     }
     state.disabled_sources = plan.third_party.clone();
     exec.note(&format!(
@@ -282,7 +329,7 @@ pub fn run(paths: &Paths, exec: &mut dyn Exec, now: impl Fn() -> i64) -> Result<
         plan.third_party.len()
     ));
 
-    set(&mut state, Phase::Refreshing, None)?;
+    set(state, Phase::Refreshing, None)?;
     if let Err(error) = refresh(exec) {
         let restored = restore(paths, &changed).is_ok();
         if restored {
@@ -294,8 +341,8 @@ pub fn run(paths: &Paths, exec: &mut dyn Exec, now: impl Fn() -> i64) -> Result<
         } else {
             format!("{error}; putting the sources back failed too")
         };
-        set(&mut state, Phase::Failed, Some(error))?;
-        return Ok(state);
+        set(state, Phase::Failed, Some(error))?;
+        return Ok(false);
     }
 
     for (phase, verb) in [
@@ -305,7 +352,7 @@ pub fn run(paths: &Paths, exec: &mut dyn Exec, now: impl Fn() -> i64) -> Result<
         ),
         (Phase::FullUpgrade, ["full-upgrade"].as_slice()),
     ] {
-        set(&mut state, phase, None)?;
+        set(state, phase, None)?;
         let mut args: Vec<&str> = APT_OPTIONS.to_vec();
         args.extend_from_slice(verb);
         match exec.run("/usr/bin/apt-get", &args, APT_ENV) {
@@ -316,16 +363,16 @@ pub fn run(paths: &Paths, exec: &mut dyn Exec, now: impl Fn() -> i64) -> Result<
                     verb.join(" "),
                     last_error(&output)
                 );
-                set(&mut state, Phase::Failed, Some(error))?;
-                return Ok(state);
+                set(state, Phase::Failed, Some(error))?;
+                return Ok(false);
             }
             Err(e) => {
                 set(
-                    &mut state,
+                    state,
                     Phase::Failed,
                     Some(format!("cannot run apt-get: {e}")),
                 )?;
-                return Ok(state);
+                return Ok(false);
             }
         }
     }
@@ -355,31 +402,168 @@ pub fn run(paths: &Paths, exec: &mut dyn Exec, now: impl Fn() -> i64) -> Result<
         Ok(_) => {}
         Err(error) => exec.note(&format!("warning: cannot move the saved sources: {error}")),
     }
+    Ok(true)
+}
 
-    state.boot_id = state::boot_id();
-    set(&mut state, Phase::Rebooting, None)?;
-    match exec.run("/usr/bin/systemctl", &["reboot"], &[]) {
-        Ok((0, _)) => Ok(state),
+/// Ubuntu: `do-release-upgrade` in non-interactive mode, which rewrites
+/// the sources, switches the third-party ones off and upgrades; the
+/// reboot is MonitorFlow's, as the non-interactive mode does not reboot.
+fn release_upgrade_steps(
+    paths: &Paths,
+    upgrade: &Upgrade,
+    exec: &mut dyn Exec,
+    state: &mut State,
+    set: &Set<'_>,
+) -> Result<bool, String> {
+    let plan = sources::plan(&paths.root, upgrade);
+    if let Some(refusal) = &plan.refusal {
+        set(state, Phase::Failed, Some(refusal.clone()))?;
+        return Ok(false);
+    }
+    state.disabled_sources = plan.third_party.clone();
+    set(state, Phase::Upgrading, None)?;
+    let tool = "/usr/bin/do-release-upgrade";
+    match exec.run(tool, &["-f", "DistUpgradeViewNonInteractive"], APT_ENV) {
+        Ok((0, _)) => {}
         Ok((code, output)) => {
-            set(
-                &mut state,
-                Phase::Failed,
-                Some(format!(
-                    "the upgrade is done but `systemctl reboot` exited with {code}: {}; reboot the server",
-                    last_error(&output)
-                )),
-            )?;
-            Ok(state)
+            let error = format!(
+                "`do-release-upgrade` exited with {code}: {}; its logs are in /var/log/dist-upgrade/, and if it stopped after changing packages, only the snapshot goes back",
+                last_error(&output)
+            );
+            set(state, Phase::Failed, Some(error))?;
+            return Ok(false);
         }
         Err(e) => {
             set(
-                &mut state,
+                state,
                 Phase::Failed,
-                Some(format!("cannot reboot: {e}; reboot the server")),
+                Some(format!("cannot run {tool}: {e}")),
             )?;
-            Ok(state)
+            return Ok(false);
         }
     }
+    // It exits 0 when it found nothing to upgrade to, too.
+    let running = running_release(&paths.root);
+    if !major_upgrade::runs(&running, &upgrade.to_release()) {
+        let error = format!(
+            "do-release-upgrade finished but the server still runs {running}, not {}; see /var/log/dist-upgrade/",
+            upgrade.to_release()
+        );
+        set(state, Phase::Failed, Some(error))?;
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// leapp's reports, under the root.
+const LEAPP_REPORT_TXT: &str = "var/log/leapp/leapp-report.txt";
+const LEAPP_REPORT_JSON: &str = "var/log/leapp/leapp-report.json";
+/// The longest report kept in the state file.
+pub const MAX_REPORT: usize = 64 << 10;
+
+/// The titles of the inhibitors in leapp's JSON report: the entries
+/// flagged (older leapp) or grouped (newer) `inhibitor`.
+pub fn inhibitors(json: &str) -> Vec<String> {
+    let Ok(report) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let has = |entry: &serde_json::Value, key: &str| {
+        entry[key]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|v| v == "inhibitor"))
+    };
+    report["entries"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|e| has(e, "flags") || has(e, "groups"))
+                .map(|e| e["title"].as_str().unwrap_or("untitled").to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The report as it is, cut at [`MAX_REPORT`] on a character boundary.
+fn bounded_report(text: &str) -> String {
+    if text.len() <= MAX_REPORT {
+        return text.to_owned();
+    }
+    let end = (0..=MAX_REPORT)
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0);
+    format!("{}\n[cut at {} KiB]\n", &text[..end], MAX_REPORT >> 10)
+}
+
+/// Runs `leapp verb`, keeps its report in the state, and fails on any
+/// inhibitor or a failed exit. `Ok(false)` once failed.
+fn leapp(
+    paths: &Paths,
+    verb: &str,
+    after: &str,
+    exec: &mut dyn Exec,
+    state: &mut State,
+    set: &Set<'_>,
+) -> Result<bool, String> {
+    let tool = "/usr/bin/leapp";
+    let run = exec.run(tool, &[verb], &[("LC_ALL", "C")]);
+    let report = fs::read_to_string(paths.root.join(LEAPP_REPORT_TXT)).unwrap_or_default();
+    state.report = bounded_report(&report);
+    let json = fs::read_to_string(paths.root.join(LEAPP_REPORT_JSON)).unwrap_or_default();
+    let blocked = inhibitors(&json);
+    let error = match run {
+        Err(e) => Some(format!("cannot run {tool}: {e}")),
+        Ok(_) if !blocked.is_empty() => Some(format!(
+            "`leapp {verb}` found {} inhibitors: {}; {after}, see leapp's report",
+            blocked.len(),
+            blocked.join("; ")
+        )),
+        Ok((0, _)) => None,
+        Ok((code, output)) => Some(format!(
+            "`leapp {verb}` exited with {code}: {}; {after}, see leapp's report",
+            last_error(&output)
+        )),
+    };
+    match error {
+        Some(error) => {
+            set(state, Phase::Failed, Some(error))?;
+            Ok(false)
+        }
+        None => Ok(true),
+    }
+}
+
+/// The RHEL family: `leapp preupgrade`, whose report blocks the upgrade on
+/// any inhibitor, then `leapp upgrade`, which prepares the upgrade
+/// environment the reboot goes into.
+fn leapp_steps(
+    paths: &Paths,
+    upgrade: &Upgrade,
+    exec: &mut dyn Exec,
+    state: &mut State,
+    set: &Set<'_>,
+) -> Result<bool, String> {
+    let plan = sources::plan(&paths.root, upgrade);
+    if let Some(refusal) = &plan.refusal {
+        set(state, Phase::Failed, Some(refusal.clone()))?;
+        return Ok(false);
+    }
+    set(state, Phase::Preupgrade, None)?;
+    if !leapp(paths, "preupgrade", "nothing was changed", exec, state, set)? {
+        return Ok(false);
+    }
+    set(state, Phase::Upgrading, None)?;
+    let unchanged = format!("the server still runs {}", upgrade.from_label());
+    leapp(paths, "upgrade", &unchanged, exec, state, set)
+}
+
+/// The release `/etc/os-release` under `root` names, like "ubuntu 24.04".
+fn running_release(root: &Path) -> String {
+    let text = fs::read_to_string(root.join("etc/os-release"))
+        .or_else(|_| fs::read_to_string(root.join("usr/lib/os-release")))
+        .unwrap_or_default();
+    crate::os::parse_os_release(&text).1
 }
 
 /// `apt-get update`, failing on any warning or error line, as apt before

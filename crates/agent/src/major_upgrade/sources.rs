@@ -1,7 +1,12 @@
 //! Pointing apt's sources at the next release (ADR-0182), in both formats:
 //! the one-line entries of `sources.list` and `*.list`, and the deb822
 //! stanzas of `*.sources`. Pure text in, text out, so every case is a unit
-//! test; [`plan`] reads the files under a root and [`apply`] writes them.
+//! test; [`plan`] reads the files under a root and the helper writes them.
+//!
+//! On Ubuntu, `do-release-upgrade` rewrites the sources itself: the same
+//! reading finds its archive's entries and lists the third-party ones it
+//! switches off, and nothing here writes. On the RHEL family, [`plan`]
+//! lists the third-party repositories leapp leaves alone (`repos`).
 //!
 //! An entry is the release's when its suite is the codename, or the
 //! codename and `-updates`, `-security`, `-backports` or
@@ -16,7 +21,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use monitorflow_common::major_upgrade::Upgrade;
+use monitorflow_common::major_upgrade::{Method, Upgrade};
 
 const SOURCES_LIST: &str = "etc/apt/sources.list";
 const PARTS: &str = "etc/apt/sources.list.d";
@@ -31,6 +36,7 @@ const SUFFIXES: &[&str] = &[
     "-proposed-updates",
 ];
 const DEBIAN_COMPONENTS: &[&str] = &["main", "contrib", "non-free", "non-free-firmware"];
+const UBUNTU_COMPONENTS: &[&str] = &["main", "restricted", "universe", "multiverse"];
 
 /// One source file and what the upgrade makes of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +100,14 @@ impl Context<'_> {
             .then(|| format!("{}{rest}", self.upgrade.to_codename))
     }
 
-    fn debian_uri(&self, uri: &str) -> bool {
+    fn ubuntu(&self) -> bool {
+        self.upgrade.method == Method::ReleaseUpgrade
+    }
+
+    /// The distribution's archive: `debian.org` or `ubuntu.com` hosts, or
+    /// a path ending in the archive's name, as local mirrors and caches
+    /// keep it.
+    fn archive_uri(&self, uri: &str) -> bool {
         if self.monitorflow {
             return true;
         }
@@ -108,15 +121,30 @@ impl Context<'_> {
         let host = host.rsplit('@').next().unwrap_or(host);
         let host = host.split(':').next().unwrap_or(host).to_ascii_lowercase();
         let last = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+        if self.ubuntu() {
+            // PPAs end in `ubuntu` too.
+            let ppa = host == "launchpad.net"
+                || host.ends_with(".launchpad.net")
+                || host.ends_with(".launchpadcontent.net");
+            return !ppa
+                && (host == "ubuntu.com"
+                    || host.ends_with(".ubuntu.com")
+                    || matches!(last, "ubuntu" | "ubuntu-ports"));
+        }
         host == "debian.org"
             || host.ends_with(".debian.org")
             || matches!(last, "debian" | "debian-security")
     }
 
     fn classify(&self, uris: &[&str], suites: &[&str], components: &[&str]) -> Class {
+        let known = if self.ubuntu() {
+            UBUNTU_COMPONENTS
+        } else {
+            DEBIAN_COMPONENTS
+        };
         let debian = !uris.is_empty()
-            && uris.iter().all(|u| self.debian_uri(u))
-            && components.iter().all(|c| DEBIAN_COMPONENTS.contains(c));
+            && uris.iter().all(|u| self.archive_uri(u))
+            && components.iter().all(|c| known.contains(c));
         if !debian {
             return Class::ThirdParty;
         }
@@ -156,7 +184,7 @@ impl Context<'_> {
         let mut out = Vec::with_capacity(components.len() + 1);
         for c in components {
             out.push((*c).to_owned());
-            if *c == "non-free" && !components.contains(&"non-free-firmware") {
+            if *c == "non-free" && !self.ubuntu() && !components.contains(&"non-free-firmware") {
                 out.push("non-free-firmware".into());
             }
         }
@@ -409,8 +437,29 @@ fn stanza(lines: &[&str], context: &Context<'_>, out: &mut Rewritten) {
     }
 }
 
-/// Reads every source file under `root` and works out the rewrite.
+/// Reads every source file under `root` and works out the rewrite: apt's
+/// for Debian and Ubuntu, the repositories for the RHEL family.
 pub fn plan(root: &Path, upgrade: &Upgrade) -> Plan {
+    match upgrade.method {
+        Method::Apt => apt_plan(root, upgrade),
+        Method::ReleaseUpgrade => {
+            let mut plan = apt_plan(root, upgrade);
+            let mirrored = plan.files.iter().any(|f| {
+                f.path.file_name().and_then(|n| n.to_str()) == Some(MONITORFLOW_FILE) && f.changed()
+            });
+            if plan.refusal.is_none() && mirrored {
+                plan.refusal = Some(MIRROR_REFUSAL.replace("{tool}", "do-release-upgrade"));
+            }
+            plan
+        }
+        Method::Leapp => super::repos::plan(root, upgrade),
+    }
+}
+
+/// Why Ubuntu and the RHEL family refuse a server on the mirrors.
+pub const MIRROR_REFUSAL: &str = "the server takes its packages from the MonitorFlow mirrors, which {tool} does not use; put its own sources back first (Revert package sources on its page)";
+
+fn apt_plan(root: &Path, upgrade: &Upgrade) -> Plan {
     let mut plan = Plan::default();
     let mut paths = vec![PathBuf::from("/").join(SOURCES_LIST)];
     match fs::read_dir(root.join(PARTS)) {

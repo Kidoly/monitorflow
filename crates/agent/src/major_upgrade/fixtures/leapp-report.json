@@ -1,0 +1,49 @@
+{
+  "entries": [
+    {
+      "audience": "sysadmin",
+      "detail": {
+        "external": [
+          {
+            "title": "How to re-create the missing \"/etc/default/grub\" file in Red Hat Enterprise Linux 7?",
+            "url": "https://access.redhat.com/solutions/3185891"
+          }
+        ],
+        "related_resources": [
+          {
+            "scheme": "file",
+            "title": "/etc/default/grub"
+          }
+        ]
+      },
+      "flags": [
+        "inhibitor"
+      ],
+      "key": "79e80bfe4eb74a797f62b24d3f057168d612da30",
+      "severity": "high",
+      "summary": "Leapp detected \"/etc/default/grub\" does not exist. The file is essential for the in-place upgrade to finish successfully. This scenario might have occurred if the system was already upgraded from RHEL 6. Please re-create the file manually.",
+      "title": "File \"/etc/default/grub\" does not exist!",
+      "timeStamp": "2026-11-24T22:56:34.571277Z",
+      "hostname": "5c9cb5e6c911",
+      "actor": "system_facts",
+      "id": "d5f8a23cd917cb7fd0636d58acc7229d2c6c7076d8865c53b49fe2fca8cc0df4",
+      "tags": [
+        "boot"
+      ]
+    },
+    {
+      "audience": "sysadmin",
+      "flags": [],
+      "key": "8fb4a12b3549ee4efa3a8dd51a59049f7f812ac3",
+      "severity": "high",
+      "summary": "Traceback (most recent call last):\n  File \"/usr/lib/python3.9/site-packages/leapp/repository/actor_definition.py\", line 75, in _do_run\n    actor_instance.run(*args, **kwargs)\n  File \"/usr/lib/python3.9/site-packages/leapp/actors/__init__.py\", line 319, in run\n    self.process(*args)\n  File \"/etc/leapp/repos.d/system_upgrade/common/actors/systemfacts/actor.py\", line 65, in process\n    bios_grubcfg_details = systemfacts.get_bios_grubcfg_details()\n  File \"/etc/leapp/repos.d/system_upgrade/common/actors/systemfacts/libraries/systemfacts.py\", line 431, in get_bios_grubcfg_details\n    with open('/boot/grub2/grub.cfg') as fo:\nFileNotFoundError: [Errno 2] No such file or directory: '/boot/grub2/grub.cfg'\n",
+      "title": "Actor system_facts unexpectedly terminated with exit code: 1",
+      "timeStamp": "2026-11-24T22:56:34.598585Z",
+      "hostname": "5c9cb5e6c911",
+      "actor": "system_facts",
+      "id": "70f1bf2f1f592d146e959eb4fe1e18e9c889fe0fbb63a73136a227b657381349",
+      "tags": []
+    }
+  ],
+  "leapp_run_id": "a4e76e24-adf1-411a-b78f-0819efb8dce3"
+}

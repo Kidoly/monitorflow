@@ -1,0 +1,22 @@
+Risk Factor: high (error)
+Title: Actor system_facts unexpectedly terminated with exit code: 1
+Summary: Traceback (most recent call last):
+  File "/usr/lib/python3.9/site-packages/leapp/repository/actor_definition.py", line 75, in _do_run
+    actor_instance.run(*args, **kwargs)
+  File "/usr/lib/python3.9/site-packages/leapp/actors/__init__.py", line 319, in run
+    self.process(*args)
+  File "/etc/leapp/repos.d/system_upgrade/common/actors/systemfacts/actor.py", line 65, in process
+    bios_grubcfg_details = systemfacts.get_bios_grubcfg_details()
+  File "/etc/leapp/repos.d/system_upgrade/common/actors/systemfacts/libraries/systemfacts.py", line 431, in get_bios_grubcfg_details
+    with open('/boot/grub2/grub.cfg') as fo:
+FileNotFoundError: [Errno 2] No such file or directory: '/boot/grub2/grub.cfg'
+
+Key: 8fb4a12b3549ee4efa3a8dd51a59049f7f812ac3
+----------------------------------------
+Risk Factor: high (inhibitor)
+Title: File "/etc/default/grub" does not exist!
+Summary: Leapp detected "/etc/default/grub" does not exist. The file is essential for the in-place upgrade to finish successfully. This scenario might have occurred if the system was already upgraded from RHEL 6. Please re-create the file manually.
+Related links:
+    - How to re-create the missing "/etc/default/grub" file in Red Hat Enterprise Linux 7?: https://access.redhat.com/solutions/3185891
+Key: 79e80bfe4eb74a797f62b24d3f057168d612da30
+----------------------------------------

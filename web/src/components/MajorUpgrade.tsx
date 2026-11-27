@@ -28,6 +28,8 @@ const CHECKS = [
   "free_space",
   "reboot_pending",
   "sources",
+  "release_offered",
+  "leapp",
   "third_party_sources",
 ] as const;
 
@@ -130,6 +132,12 @@ function LastUpgrade({ server }: { server: ServerUpgrade }) {
       {progress.sources_restored && <p className={styles.note}>{t("campaigns.major.lastRestored")}</p>}
       {progress.disabled_sources.length > 0 && (
         <p className={styles.note}>{t("campaigns.major.disabled", { sources: progress.disabled_sources.join(", ") })}</p>
+      )}
+      {progress.report && (
+        <details className={styles.report}>
+          <summary>{t("campaigns.major.report")}</summary>
+          <pre>{progress.report}</pre>
+        </details>
       )}
     </div>
   );

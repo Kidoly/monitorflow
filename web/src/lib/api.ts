@@ -3427,10 +3427,12 @@ export interface MajorUpgradeProgress {
   command_id: string;
   from: string;
   to: string;
-  phase: "starting" | "sources" | "refreshing" | "upgrading" | "full_upgrade" | "rebooting" | "done" | "failed";
+  phase: "starting" | "preupgrade" | "sources" | "refreshing" | "upgrading" | "full_upgrade" | "rebooting" | "done" | "failed";
   error: string | null;
   sources_restored: boolean;
   disabled_sources: string[];
+  /** leapp's report as it wrote it, inhibitors included; null outside the RHEL family. */
+  report?: string | null;
   started_at: string | null;
   updated_at: string | null;
 }

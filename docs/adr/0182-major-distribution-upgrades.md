@@ -1,7 +1,7 @@
 # ADR-0182: Major distribution upgrades
 
 Date: 2026-11-23
-Status: accepted; Debian 12 to 13 implemented, Ubuntu and RHEL and its derivatives to come; extends ADR-0033 (campaigns), ADR-0094 (local snapshots) and ADR-0108 (root helpers verify signed commands)
+Status: accepted; Debian 12 to 13, Ubuntu LTS to the next LTS, RHEL 8 to 9 and 9 to 10, Rocky Linux 8 to 9 and AlmaLinux 8 to 9 and 9 to 10 implemented; extends ADR-0033 (campaigns), ADR-0094 (local snapshots) and ADR-0108 (root helpers verify signed commands)
 
 ## Context
 
@@ -20,9 +20,9 @@ The agent runs as an unprivileged user and reaches root only through exact sudo 
 3. `apt-get upgrade --without-new-pkgs`, then `apt-get full-upgrade`, as the release notes say: non-interactive (`DEBIAN_FRONTEND=noninteractive`, `APT_LISTCHANGES_FRONTEND=none`), keeping every changed configuration file (`--force-confdef --force-confold`).
 4. A reboot.
 
-**Ubuntu LTS to the next LTS**, not done yet: Ubuntu's own `do-release-upgrade -f DistUpgradeViewNonInteractive`, LTS to the next LTS only, and only once that LTS offers the upgrade (after its first point release, when `do-release-upgrade -c` finds it). Its tool handles sources, third-party entries and the reboot prompt itself; MonitorFlow then runs it the way the Debian steps run, in the same unit, with the same state file.
+**Ubuntu LTS to the next LTS** (22.04 to 24.04, 24.04 to 26.04): Ubuntu's own `do-release-upgrade -f DistUpgradeViewNonInteractive`, in the same unit, with the same state file and environment as apt (`DEBIAN_FRONTEND=noninteractive`, configuration files kept). LTS to the next LTS only, and only once that LTS offers the upgrade (after its first point release): the check `release_offered` needs `Prompt=lts` in `/etc/update-manager/release-upgrades`, so the tool can never pick an interim release, and `do-release-upgrade -c` to offer the target. The tool rewrites the sources and switches third-party entries off itself; MonitorFlow reads the same sources beforehand to list those entries and to make sure the archive's are there, and writes nothing. Its phases are `upgrading`, then `rebooting`: the non-interactive mode does not reboot, so the unit does. It exits 0 when it found nothing to upgrade to, so the unit reads `/etc/os-release` before the reboot and fails if the server is not on the target.
 
-**RHEL 8 to 9 and 9 to 10**, not done yet: `leapp preupgrade`, whose report blocks the upgrade on any inhibitor and is shown as it is on the server's page, then `leapp upgrade` and the reboot into its upgrade environment. Rocky Linux and AlmaLinux go through the ELevate data for leapp. The checks below apply, with `dnf` in place of apt.
+**RHEL 8 to 9 and 9 to 10, Rocky Linux 8 to 9, AlmaLinux 8 to 9 and 9 to 10**: `leapp preupgrade` (phase `preupgrade`), then `leapp upgrade` (`upgrading`), then the reboot into its upgrade environment (`rebooting`), which upgrades the packages and boots again into the new release; the agent then sees another boot ID and the target in `/etc/os-release`, as for Debian. After each leapp run the unit keeps `/var/log/leapp/leapp-report.txt` in the state file as it is (cut at 64 KiB), and any entry of `leapp-report.json` flagged or grouped `inhibitor` fails the upgrade with their titles; a failed exit fails it too. Neither run changes the installed system, so the error says the server still runs the old release. The report goes up with the progress (`MajorUpgradeProgress.report`) and the server's Updates tab shows it under "leapp's report". Rocky Linux and AlmaLinux go through the ELevate data for leapp (`leapp-data-rocky`, `leapp-data-almalinux`). **Rocky Linux 9 to 10 is left out**: ELevate publishes no `leapp-data-rocky` for el9 (checked 2026-11-24), so the agent's table does not have it and both sides refuse it until it does.
 
 **One release at a time**: bookworm to trixie, never bullseye to trixie in one step. The agent carries the table of upgrades it knows (`common::major_upgrade`); a pair it does not know is refused by the agent and by the server. Other distributions, and Windows feature updates, stay out until asked for.
 
@@ -36,7 +36,7 @@ The agent runs as an unprivileged user and reaches root only through exact sudo 
 
 ### Checks before
 
-The agent works them out with each package report, as its own user, and sends them in the report's new `major_upgrade` part, with the next release it knows. The page shows them per server before anything starts; the root helper runs the same code again just before the upgrade and refuses on any failed one.
+The agent works them out with each package report, as its own user, and sends them in the report's new `major_upgrade` part, with the next release it knows. The page shows them per server before anything starts; the root helper runs the same code again just before the upgrade, after `apt-get update` or `dnf check-update --refresh`, and refuses on any failed one. `monitorflow-agent major-upgrade checks` prints them on the server, as any user. The names are the same on every distribution, in the order of `major_upgrade::checks(method)`; what each reads differs:
 
 | Check | Fails when |
 | --- | --- |
@@ -48,13 +48,32 @@ The agent works them out with each package report, as its own user, and sends th
 | `sources` | no source of the release was found, a source file cannot be read, or a campaign pinned the mirror sources to a named snapshot |
 | `third_party_sources` | never: a warning listing the entries that will be switched off and left off |
 
+On Ubuntu, the same as Debian with the Ubuntu archive (`ubuntu.com` hosts, or a path ending in `ubuntu` or `ubuntu-ports`, but never a PPA on `launchpad.net` or `launchpadcontent.net`) and its components, and:
+
+| Check | Fails when |
+| --- | --- |
+| `sources` | also when the server is on the MonitorFlow mirrors: `do-release-upgrade` would switch `monitorflow.sources` off as third-party and find no archive, so the server's own sources must be put back first |
+| `release_offered` | `Prompt` is not `lts`, `do-release-upgrade` is missing, `do-release-upgrade -c` offers nothing (before the first point release) or another release |
+
+On the RHEL family:
+
+| Check | Fails when |
+| --- | --- |
+| `up_to_date` | `dnf check-update` lists updates |
+| `held_packages` | `/etc/dnf/plugins/versionlock.list` has entries |
+| `broken_packages` | `dnf check` reports problems |
+| `reboot_pending` | `dnf needs-restarting -r` says a reboot is needed |
+| `sources` | an enabled `monitorflow-*` repository: leapp takes the target's repositories from its own data and the mirror files would stay on the old release |
+| `leapp` | `leapp-upgrade-el<from>toel<to>` is not installed, or on a derivative its ELevate data; the detail gives the commands |
+| `third_party_sources` | never: a warning listing the enabled repositories that are not the distribution's (by host, `redhat.repo` and ELevate's own counting as the distribution's), which leapp does not use |
+
 The server adds its own, from what it knows:
 
 | Check | Fails when |
 | --- | --- |
 | `allowed` | the agent does not report `major_upgrade` accepted: no consent, or sudo rules without the helper's line (the page gives the line to run) |
 | `agent_version` | the agent sends no `major_upgrade` report or does not know the target: an older agent, which updates by itself |
-| `mirror` | the server uses the mirrors of its distribution (ADR-0074) and the target's (`debian-13` and its updates and security mirrors) are not added and published. Mirrors are on-demand (ADR-0142): packages are fetched on the first request and verified against the signed index, so the indexes being there is what makes the target available |
+| `mirror` | Debian only: the server uses the mirrors of its distribution (ADR-0074) and the target's (`debian-13` and its updates and security mirrors) are not added and published. Mirrors are on-demand (ADR-0142): packages are fetched on the first request and verified against the signed index, so the indexes being there is what makes the target available |
 
 ### Snapshot recommended
 
@@ -105,6 +124,9 @@ It **fails** when the command fails, the report says `failed` (with its error an
 - **Rewriting the sources from the server.** The server would need to read the host's source files and send them back, and the host's own helper is where the backup is.
 - **`sed s/bookworm/trixie/` on every file.** It also rewrites third-party entries, which then break `apt-get update`, and comments.
 - **Turning third-party sources back on after the upgrade.** Their packages were built for the old release; an administrator decides, once their vendor publishes for the new one.
+- **Installing leapp and the ELevate data from the helper.** It would add a repository and packages from outside the distribution as root on the strength of the upgrade's consent alone; the check gives the two commands instead, and an administrator runs them once.
+- **Running `leapp preupgrade` with each package report.** It needs root and minutes; the agent's checks read only what an unprivileged user can, and the report comes from the unit's first phase.
+- **Rewriting the Ubuntu sources ourselves, as for Debian.** `do-release-upgrade` also handles the packages that change name, the quirks of each release and its own rollback of the sources; doing it twice would fight it.
 - **Upgrading without a snapshot silently.** A major upgrade is the change most likely to leave a server that does not boot.
 
 ## Consequences
@@ -114,4 +136,6 @@ It **fails** when the command fails, the report says `failed` (with its error an
 - A Proxmox guest gets a Proxmox snapshot in a major upgrade campaign, which package campaigns still do not take.
 - A failure during the package step leaves a server half upgraded until someone rolls back the snapshot or finishes by hand; the log on the server says where it stopped.
 - The checks need an agent of this version; the table of known upgrades grows with agent releases, so a new pair needs an agent update first.
-- Ubuntu and RHEL use the same command, state file, unit, report and campaign kind; only the steps and the checks differ, and they are added when implemented.
+- Ubuntu and the RHEL family use the same command, sudo line, consent, state file, unit, report and campaign kind as Debian; only the steps and the checks differ. No new privilege: the helper still runs only the steps of the pair the signed command names.
+- Ubuntu and RHEL servers on the MonitorFlow mirrors must go back to their own sources before a major upgrade.
+- leapp and the ELevate data are installed by hand once per server before its first upgrade.
