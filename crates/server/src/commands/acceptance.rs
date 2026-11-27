@@ -18,11 +18,14 @@ const UNSUPPORTED: &str = "unsupported";
 
 /// The kinds stored. An agent names only what it runs, but its report
 /// passes through relays, so nothing else reaches the database.
-const KINDS: [&str; 11] = [
+const KINDS: [&str; 15] = [
     command::AI_COMMANDS,
     command::APPLY_UPDATES,
     command::CONFIGURE_SOURCES,
+    command::DELETE_SNAPSHOT,
     command::MAJOR_UPGRADE,
+    command::REMOTE_DESKTOP,
+    command::REMOTE_SESSION,
     command::REVERT_SOURCES,
     command::ROOT_ACTION,
     command::RUN_SCRIPT,
@@ -30,6 +33,7 @@ const KINDS: [&str; 11] = [
     command::SHELL,
     command::SOFTWARE,
     command::SOFTWARE_OFF,
+    command::TAKE_SNAPSHOT,
 ];
 
 /// `hello`'s report as stored, `None` when it holds none. Values this
@@ -276,6 +280,8 @@ mod tests {
                 state("reboot", CommandAcceptance::Accepted.into()),
                 state("ai_commands", CommandAcceptance::Disabled.into()),
                 state("root_action", CommandAcceptance::Unsupported.into()),
+                state("remote_session", CommandAcceptance::Accepted.into()),
+                state("remote_desktop", CommandAcceptance::Unsupported.into()),
             ],
             ..Hello::default()
         };
@@ -286,6 +292,8 @@ mod tests {
                 ("ai_commands", OFF),
                 ("apply_updates", ACCEPTED),
                 ("configure_sources", UNSUPPORTED),
+                ("remote_desktop", UNSUPPORTED),
+                ("remote_session", ACCEPTED),
                 ("root_action", UNSUPPORTED),
                 ("shell", OFF),
             ])

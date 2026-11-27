@@ -521,7 +521,7 @@ impl AgentService for AgentStreamService {
             invalid_logs_logged: None,
             pending_logs: ingest::journal::Pending::default(),
             last_discovery: None,
-            last_inventory: None,
+            last_inventory: [None, None],
             inventory_asked: Arc::new(AtomicBool::new(false)),
             writes: Arc::new(Semaphore::new(WRITES_PER_STREAM)),
         };
@@ -592,8 +592,11 @@ struct Connection {
     pending_logs: ingest::journal::Pending,
     /// When this stream's last discovery report was taken (ADR-0134).
     last_discovery: Option<Instant>,
-    /// When this stream's last inventory report was taken (ADR-0187).
-    last_inventory: Option<Instant>,
+    /// When this stream's last inventory reports were taken (ADR-0187):
+    /// one with only a hash, then one with a body. Each kind has its own
+    /// window, so the change an agent sends just after the hash of a new
+    /// stream is not lost: the agent counts it as delivered.
+    last_inventory: [Option<Instant>; 2],
     /// Set while the server waits for the inventory it asked for: the
     /// answer is taken even within [`INVENTORY_EVERY`].
     inventory_asked: Arc<AtomicBool>,
@@ -884,14 +887,13 @@ impl Connection {
         let body = report.body.is_some();
         tracing::debug!(agent_id = %id, sequence, body, "inventory report");
         let asked = self.inventory_asked.swap(false, Ordering::AcqRel);
-        let due = self
-            .last_inventory
-            .is_none_or(|at| at.elapsed() >= INVENTORY_EVERY);
+        let last = &mut self.last_inventory[usize::from(body)];
+        let due = last.is_none_or(|at| at.elapsed() >= INVENTORY_EVERY);
         if self.role != PeerRole::Agent || !(due || (asked && body)) {
             tracing::debug!(agent_id = %id, sequence, "ignoring the inventory report");
             return;
         }
-        self.last_inventory = Some(Instant::now());
+        *last = Some(Instant::now());
         let (inventory, registry, asked) = (
             self.inventory.clone(),
             self.registry.clone(),
