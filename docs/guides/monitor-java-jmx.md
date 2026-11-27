@@ -108,6 +108,10 @@ The password is kept sealed on the central server, encrypted like its other secr
 
 **The password goes over HTTPS only, or to the server itself.** Jolokia's Basic authentication sends it with every request; over plain HTTP from another machine, anyone on the network between could read it. So a check with a password and **"None (HTTP)"** must connect to `127.0.0.1` (or `::1`, `localhost`): from the central server or a relay, give Jolokia a certificate (its `protocol=https` and keystore options) and choose **"Required, certificate verified"**.
 
+**A self-signed certificate.** Jolokia's HTTPS certificate is often one it or its keystore made itself, which no authority signed. From the central server or a relay, such a certificate is trusted by its fingerprint, as a vCenter's is: with **"Required, certificate verified"** chosen, **"Test the certificate"** connects from the central server or relay that runs the check and shows the certificate's SHA-256 fingerprint. Compare it with the one the Java server shows (`keytool -list -v -keystore <keystore>`, or `openssl s_client -connect <address>:8778 </dev/null | openssl x509 -noout -fingerprint -sha256`), then switch on **"I compared it: trust this certificate"**. The fingerprint goes in **"Certificate fingerprint"**, under **"More options"**. The test reads Jolokia, with the password, only once the certificate is trusted; before that, it does a TLS handshake and sends nothing. A check whose agent runs it takes the fingerprint the same way, typed in **"Certificate fingerprint"**: the check's error shows it.
+
+When the certificate changes (a new keystore), the check fails with "the certificate changed: its fingerprint is now ..." and never sends the password to it. On the **Sensors** tab, the check's **"Certificate"** button tests it again; compare the new fingerprint, trust it, then **"Trust this certificate"** saves it. The password is kept.
+
 One check reads one JVM. A server running two (Tomcat and Kafka, say) needs two Jolokia agents on two ports, and two checks with two names.
 
 ### Where the check runs
@@ -133,7 +137,7 @@ The public API adds the same check: `POST /api/v1/servers/{id}/sensor_configs` w
 }
 ```
 
-`groups` is `tomcat,kafka` by default, or `tomcat`, `kafka` or `none`; `path` is `/jolokia/`; `tls` is `off` or `verify`.
+`groups` is `tomcat,kafka` by default, or `tomcat`, `kafka` or `none`; `path` is `/jolokia/`; `tls` is `off` or `verify`; `fingerprint`, with `verify`, is the SHA-256 of a certificate to trust that the machine's roots do not. `POST /api/v1/servers/{id}/jmx/test` shows a certificate as the central server or relay sees it, with the same settings and `probe`, and reads Jolokia only once it is trusted.
 
 ## Change the alert
 
@@ -163,7 +167,7 @@ When `jmx_up` is 0, its `reason` label says why, and its `error` label gives Jol
 | --- | --- |
 | `connect` | Nothing answers at that address and port: the application stopped, Jolokia is not loaded (check the `-javaagent` option), it listens elsewhere (`host`, `port`), or a firewall refuses the connection |
 | `timeout` | No answer in time: a firewall that drops packets, or a JVM so busy collecting garbage that it cannot answer, often the worst case |
-| `tls` | Jolokia's certificate is not trusted by the machine running the check, or not for that name |
+| `tls` | Jolokia's certificate is not trusted by the machine running the check, or not for that name, or it changed from the fingerprint trusted: the error gives its fingerprint |
 | `login` | Wrong user name or password, or Jolokia asks for one and none is set |
 | `permission` | Jolokia's policy refuses to read `java.lang:type=Memory`: allow `read` |
 | `protocol` | Something else answered on that port, or not at that path (HTTP 404): check **"Path"** |

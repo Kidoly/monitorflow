@@ -3068,6 +3068,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = path.replace("{id}", &b.site.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
         }
+        ("POST", "/api/servers/{id}/jmx/test") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = json!({ "probe": "central", "host": "192.0.2.9" });
+            assert_eq!(ctx.status(method, &uri, Some(body)).await, not_found);
+        }
         ("POST", "/api/servers/{id}/sensor_configs")
         | ("POST", "/api/sites/{id}/sensor_configs") => {
             for id in [b.server, b.site] {

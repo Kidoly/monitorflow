@@ -43091,6 +43091,172 @@
         }
       }
     },
+    "/api/v1/servers/{id}/jmx/test": {
+      "post": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Test a Java check's HTTPS certificate",
+        "description": "Connects once to Jolokia over HTTPS from the probe that would run the server's Java check (`jmx`, ADR-0183), or the one named, and shows its certificate: its SHA-256 fingerprint, subject and expiry, and whether the probe's roots trust it. Jolokia's certificates are often self-signed: compare the fingerprint with the one the JVM's machine shows (`keytool -list -v`, or `openssl x509 -fingerprint -sha256`), then test again with it, and add it to the check as its `fingerprint` param with `tls` `verify` (`POST /api/v1/servers/{id}/sensor_configs`, `PUT /api/v1/sensor_configs/{id}`). Jolokia is read, with the user and password given, only when the certificate is trusted, by the roots or by the `fingerprint` given: the password is never sent to a certificate that is not. Nothing is stored.\n\n**Who**: operator or above on the server's site. **Area**: `servers`.",
+        "operationId": "test_jmx",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server or device the check is for",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JmxTestRequest"
+              },
+              "example": {
+                "fingerprint": "5C:21:E0:7A:93:4B:D8:1F:66:A2:0C:BE:47:91:3D:F8:2A:C5:70:19:E4:8B:36:D2:0F:A7:5E:C1:98:43:B6:2D",
+                "host": "192.0.2.40",
+                "password": "a password",
+                "port": 8778,
+                "probe": "central",
+                "user": "monitorflow"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What answered; also when nothing did: `answers` and `error` say so",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JmxTested"
+                },
+                "example": {
+                  "answers": true,
+                  "certificate": {
+                    "by_roots": false,
+                    "fingerprint": "5C:21:E0:7A:93:4B:D8:1F:66:A2:0C:BE:47:91:3D:F8:2A:C5:70:19:E4:8B:36:D2:0F:A7:5E:C1:98:43:B6:2D",
+                    "not_after": "2028-03-01T12:00:00Z",
+                    "subject": "jvm.example.test",
+                    "trusted": true
+                  },
+                  "error": null,
+                  "probe": "central",
+                  "reads": true,
+                  "version": "21.0.5+11-LTS",
+                  "vm": "OpenJDK 64-Bit Server VM"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Settings that are not valid, or no probe to run the test: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator of the site, or outside the key's areas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The relay is not connected to this central server now: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/logs": {
       "get": {
         "tags": [
@@ -66875,6 +67041,118 @@
           }
         }
       },
+      "JmxTestRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/jmx/test`: the Java check's settings.",
+        "properties": {
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The SHA-256 fingerprint to trust, as a previous test showed it."
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Jolokia's address; absent: the server's."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sent only once the certificate is trusted."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`/jolokia/` when absent."
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "8778 when absent.",
+            "minimum": 0
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`central` or the ID of a relay of the server's site. Absent: a\ndevice's default probe; a server with an agent must name one, as\nthe test runs from a probe."
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "JmxTested": {
+        "type": "object",
+        "description": "What a Jolokia over HTTPS answered.",
+        "required": [
+          "answers",
+          "probe"
+        ],
+        "properties": {
+          "answers": {
+            "type": "boolean",
+            "description": "Whether a TLS handshake worked at the address."
+          },
+          "certificate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TestedCertificate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, or why Jolokia could not be read, in words; `null`\notherwise."
+          },
+          "probe": {
+            "type": "string",
+            "description": "`central` or the relay that asked."
+          },
+          "reads": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether Jolokia answered the check's reads; `null` when they were\nnot tried, as the certificate is not trusted yet and the password\nis never sent then."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "vm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The JVM's name and version, after a read."
+          }
+        }
+      },
       "KeyView": {
         "type": "object",
         "description": "One key of a dimension over the period.",
@@ -77114,7 +77392,7 @@
           },
           "params": {
             "type": "object",
-            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused.\n\nA website check (`http`, ADR-0150) takes `url` (required),\n`method` (`GET` or `HEAD`), `status` (`200-299` by default, like\n`200,301-302`), `contains`, `not_contains`, `follow_redirects`\n(`true` by default), `headers` (`Name: value` lines), `username`,\n`password` and `ip` (`any`, `4` or `6`). `password` is accepted\nwith an `https://` URL only, kept sealed and never returned: absent\nfrom an update, the stored one is kept; `\"\"` removes it.\n\nThe ready-made application checks (ADR-0183) take `host`\n(`127.0.0.1` from the agent; the device's address from a probe),\n`port`, `user` and `password` (kept sealed as above), and `tls`\n(`prefer`, `verify` or `off`): `postgresql` also `database` and\n`slow_after`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server)\nand `redis` nothing more.\n`jmx` (a Java virtual machine through Jolokia) takes `tls` `off` or\n`verify` only, its password over HTTPS or to the loopback only, and\nalso `path` (`/jolokia/`) and `groups` (`tomcat`, `kafka`, `none`).\n`docker`, run by the agent only, takes `engine` (`docker` or\n`podman`), `containers` (a regular expression on names) and\n`stats`. `kubernetes`, run from a probe only, takes `host` (the\ndevice's address by default), `port` (6443), `token` (a read-only\nservice account's) and `ca_certificate` (the cluster's CA in PEM,\nor a kubeconfig's `certificate-authority-data`), sealed together\nand never returned (an update without `token` keeps both; one\nwith it replaces both), and `namespaces` (a regular expression).\n`GET /api/check-templates` lists what each measures."
+            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused.\n\nA website check (`http`, ADR-0150) takes `url` (required),\n`method` (`GET` or `HEAD`), `status` (`200-299` by default, like\n`200,301-302`), `contains`, `not_contains`, `follow_redirects`\n(`true` by default), `headers` (`Name: value` lines), `username`,\n`password` and `ip` (`any`, `4` or `6`). `password` is accepted\nwith an `https://` URL only, kept sealed and never returned: absent\nfrom an update, the stored one is kept; `\"\"` removes it.\n\nThe ready-made application checks (ADR-0183) take `host`\n(`127.0.0.1` from the agent; the device's address from a probe),\n`port`, `user` and `password` (kept sealed as above), and `tls`\n(`prefer`, `verify` or `off`): `postgresql` also `database` and\n`slow_after`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server)\nand `redis` nothing more.\n`jmx` (a Java virtual machine through Jolokia) takes `tls` `off` or\n`verify` only, its password over HTTPS or to the loopback only, and\nalso `path` (`/jolokia/`), `groups` (`tomcat`, `kafka`, `none`) and,\nwith `verify`, `fingerprint`: the SHA-256 of a certificate the\nprobe's roots do not trust (often Jolokia's self-signed one), as\n`POST /api/servers/{id}/jmx/test` shows it.\n`docker`, run by the agent only, takes `engine` (`docker` or\n`podman`), `containers` (a regular expression on names) and\n`stats`. `kubernetes`, run from a probe only, takes `host` (the\ndevice's address by default), `port` (6443), `token` (a read-only\nservice account's) and `ca_certificate` (the cluster's CA in PEM,\nor a kubeconfig's `certificate-authority-data`), sealed together\nand never returned (an update without `token` keeps both; one\nwith it replaces both), and `namespaces` (a regular expression).\n`GET /api/check-templates` lists what each measures."
           },
           "probe": {
             "type": [
@@ -80815,7 +81093,7 @@
           },
           "fingerprint": {
             "type": "string",
-            "description": "`AB:CD:…`, to compare with the one the vCenter shows and send back\nas `fingerprint`."
+            "description": "`AB:CD:…`, to compare with the one the vCenter or Jolokia shows and\nsend back as `fingerprint`."
           },
           "not_after": {
             "type": [

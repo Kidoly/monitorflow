@@ -13,6 +13,9 @@ description = "Ready-made application checks: PostgreSQL, MySQL and MariaDB, SQL
 
 [dependencies]
 monitorflow-sensors.workspace = true
+# The certificate verifier pinned by fingerprint, shared with vCenter's
+# (Jolokia over HTTPS, ADR-0183).
+monitorflow-common.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 regex.workspace = true

@@ -50,6 +50,7 @@
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | POST | `/api/servers/{id}/jmx/test` | modify | body [`jmx_test::JmxTestRequest`]; 200 [`jmx_test::JmxTested`]: a Jolokia's HTTPS certificate from the probe, and its reads when it is trusted (ADR-0183) |
 //! | POST | `/api/devices` | modify | body [`devices::DeviceRequest`]; 201 [`servers::ServerView`]: a device, pinged from the site's default probe unless told otherwise; audited (ADR-0148) |
 //! | PUT | `/api/devices/{id}` | modify | body [`devices::DeviceUpdate`]; 200 [`servers::ServerView`]; audited |
 //! | GET | `/api/devices/templates` | read | [`devices::TemplateList`]: the kinds of SNMP devices, their checks and thresholds (ADR-0149) |
@@ -828,6 +829,7 @@ pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
 pub mod inventory;
+pub mod jmx_test;
 pub mod license;
 pub mod login_limit;
 pub mod logs;
@@ -1574,6 +1576,7 @@ pub fn router(state: ApiState) -> Router {
                 .delete(devices::delete_vmware),
         )
         .route("/api/servers/{id}/sensors", get(sensors::effective))
+        .route("/api/servers/{id}/jmx/test", post(jmx_test::test_jmx))
         .route(
             "/api/servers/{id}/recommendations",
             get(recommendations::list),

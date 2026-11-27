@@ -570,6 +570,15 @@ function appTypes(device: boolean): CheckType[] {
               { value: "verify", label: t("checks.field.tlsVerify") },
             ],
           },
+          {
+            key: "fingerprint",
+            label: t("checks.field.fingerprint"),
+            placeholder: "AB:CD:…",
+            hint: t("checks.field.fingerprintHint"),
+            optional: true,
+            advanced: true,
+            check: (v: string) => (/^[0-9a-f]{64}$/i.test(v.replace(/[:\s-]/g, "")) ? null : t("checks.error.fingerprint")),
+          },
         ];
       },
     },

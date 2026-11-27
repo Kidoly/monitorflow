@@ -9,6 +9,7 @@ import {
   type ConfigOwner,
   type EffectiveSensor,
   type EffectiveThreshold,
+  type JmxTested,
   type RecommendedThreshold,
   type SensorConfigEntry,
   api,
@@ -48,6 +49,7 @@ import { ProbeSelect, probeLabel, probeValue, useProbes } from "./AddDevice";
 import { CheckRecommendations } from "./CheckRecommendations";
 import { ConditionFields, KindFields, KindSelect, Recommendations, RulePreview } from "./RuleEditor";
 import { CheckCatalogue } from "./CheckCatalogue";
+import { JolokiaCertificate, NewJolokiaCertificate, jmxTestRequest, needsJolokiaTrust } from "./JolokiaCertificate";
 import { type Inherit, IntervalControl, IntervalSelect } from "./IntervalSelect";
 
 import admin from "./AdminPages.module.css";
@@ -534,6 +536,8 @@ export async function stopChecking(target: Target, sensor: EffectiveSensor, own:
 function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Data; canEdit: boolean; onChanged: () => void }) {
   const titleId = useId();
   const [adding, setAdding] = useState(false);
+  // The Java check whose certificate is looked at again (ADR-0183).
+  const [looking, setLooking] = useState<string | null>(null);
   const layer = target.kind === "server" ? "server" : "site";
   const off = data.rows.filter((r) => !r.enabled);
   const here = target.kind === "server" ? t("monitoring.thisServer") : t("monitoring.thisSite");
@@ -583,6 +587,8 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
           {data.sensors.map((sensor) => {
             const own = sensor.origin === layer;
             const title = checkTitle(sensor);
+            const row = own ? data.rows.find((r) => r.id === sensor.entry_id) : undefined;
+            const pinnable = target.kind === "server" && sensor.kind === "jmx" && sensor.params.tls === "verify" && Boolean(sensor.probe) && row;
             return (
               <li key={`${sensor.name}/${sensor.instance}`} className={cx(styles.item, styles.row)}>
                 <span className={styles.text}>
@@ -598,6 +604,15 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
                 <Origin target={target} origin={sensor.origin} />
                 {canEdit && (
                   <span className={styles.actions}>
+                    {pinnable && (
+                      <Button
+                        size="small"
+                        aria-label={t("checks.jolokia.actionName", { title })}
+                        onClick={() => setLooking(looking === row.id ? null : row.id)}
+                      >
+                        {t("checks.jolokia.action")}
+                      </Button>
+                    )}
                     <InlineConfirm
                       layout="row"
                       trigger={own ? t("monitoring.remove") : t("monitoring.turnOff")}
@@ -614,6 +629,9 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
                       describeError={(e) => t("monitoring.notChanged", { error: describeError(e) })}
                     />
                   </span>
+                )}
+                {pinnable && looking === row.id && (
+                  <NewJolokiaCertificate serverId={target.id} row={row} onClose={() => setLooking(null)} onSaved={onChanged} />
                 )}
               </li>
             );
@@ -888,6 +906,7 @@ function CheckForm({
   const [scope, setScope] = useState<"own" | "site">("own");
   const [alert, setAlert] = useState(true);
   const [probe, setProbe] = useState("");
+  const [tested, setTested] = useState<JmxTested | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -897,6 +916,7 @@ function CheckForm({
     const found = checkErrors(type, values);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
+    if (jolokia && needsJolokiaTrust(tested, values.fingerprint)) return setFailure(t("checks.jolokia.needTrust"));
     const owner = scope === "site" ? siteOwner(target) : ownerOf(target);
     const { sensor, threshold, more } = checkRequests(type, values, intervalMs);
     if ((type.probe || type.anyRunner) && probe) sensor.probe = probe;
@@ -918,6 +938,9 @@ function CheckForm({
       setBusy(false);
     }
   }
+
+  // A Java check over HTTPS from a probe: its certificate is tested there (ADR-0183).
+  const jolokia = type.kind === "jmx" && values.tls === "verify" && target.kind === "server" && (type.probe || probe !== "");
 
   return (
     <form className={styles.form} onSubmit={(e) => void submit(e)} noValidate aria-label={t("monitoring.addCheckForm")}>
@@ -957,6 +980,15 @@ function CheckForm({
               ))}
           </div>
         </details>
+      )}
+      {jolokia && (
+        <JolokiaCertificate
+          serverId={target.id}
+          request={jmxTestRequest(values, probe || undefined)}
+          pinned={values.fingerprint}
+          onTrust={(fingerprint) => setValues((v) => ({ ...v, fingerprint: fingerprint ?? "" }))}
+          onTested={setTested}
+        />
       )}
       <div className={admin.field}>
         <span>{t("monitoring.howOften")}</span>

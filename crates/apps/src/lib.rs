@@ -402,18 +402,7 @@ async fn within<T>(
 /// this crate's: the system's, or Mozilla's when the system has none (a
 /// minimal container). Loaded once per process.
 fn roots() -> Arc<rustls::RootCertStore> {
-    static ROOTS: std::sync::OnceLock<Arc<rustls::RootCertStore>> = std::sync::OnceLock::new();
-    ROOTS
-        .get_or_init(|| {
-            let mut store = rustls::RootCertStore::empty();
-            let native = rustls_native_certs::load_native_certs();
-            let (added, _) = store.add_parsable_certificates(native.certs);
-            if added == 0 {
-                store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            }
-            Arc::new(store)
-        })
-        .clone()
+    monitorflow_common::tls::trust::roots()
 }
 
 /// A sample of `metric` at `value`, finite values only.

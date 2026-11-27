@@ -1,18 +1,18 @@
-//! Certificates of a vCenter or ESXi host, always verified (ADR-0156):
+//! Certificates of a machine a probe or an agent checks, always verified:
 //! by the machine's roots, or by the SHA-256 fingerprint a person
 //! confirmed. Every handshake records the certificate it met, so a test
-//! can show it and a failure can say what changed.
+//! can show it and a failure can say what changed. Used by vCenter and
+//! ESXi checks (ADR-0156) and Jolokia's (ADR-0183).
 
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::WebPkiServerVerifier;
-use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error, RootCertStore, SignatureScheme};
 
-/// A SHA-256 fingerprint.
-pub type Fingerprint = [u8; 32];
+pub use super::Fingerprint;
+use super::{fingerprint as of_der, provider};
 
 /// Reads a fingerprint written in hex, with or without colons or spaces.
 pub fn parse_fingerprint(text: &str) -> Option<Fingerprint> {
@@ -30,7 +30,7 @@ pub fn parse_fingerprint(text: &str) -> Option<Fingerprint> {
     Some(out)
 }
 
-/// `AB:CD:…`, as vCenter shows its thumbprints.
+/// `AB:CD:...`, as vCenter and browsers show fingerprints.
 pub fn show_fingerprint(fingerprint: &Fingerprint) -> String {
     fingerprint
         .iter()
@@ -39,11 +39,9 @@ pub fn show_fingerprint(fingerprint: &Fingerprint) -> String {
         .join(":")
 }
 
+/// The SHA-256 fingerprint of a DER certificate.
 pub fn fingerprint(der: &[u8]) -> Fingerprint {
-    let digest = ring::digest::digest(&ring::digest::SHA256, der);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(digest.as_ref());
-    out
+    of_der(&CertificateDer::from(der))
 }
 
 /// The certificate a handshake met.
@@ -71,10 +69,6 @@ pub fn roots() -> Arc<RootCertStore> {
             Arc::new(store)
         })
         .clone()
-}
-
-fn provider() -> Arc<CryptoProvider> {
-    Arc::new(rustls::crypto::ring::default_provider())
 }
 
 /// What a connection accepts.
@@ -108,6 +102,26 @@ impl Verifier {
     /// The certificate of the last handshake.
     pub fn seen(&self) -> Option<Seen> {
         self.seen.lock().ok()?.clone()
+    }
+
+    /// Why the last handshake failed on its certificate, if it did: it
+    /// changed from the one pinned, or nothing trusts it yet.
+    pub fn failure(&self) -> Option<String> {
+        let seen = self.seen()?;
+        let pin = match self.trust {
+            Trust::Look => return None,
+            Trust::Verify(pin) => pin,
+        };
+        if seen.trusted || pin == Some(seen.fingerprint) {
+            return None;
+        }
+        let shown = show_fingerprint(&seen.fingerprint);
+        Some(match pin {
+            Some(_) => format!("the certificate changed: its fingerprint is now {shown}"),
+            None => format!(
+                "the certificate is not trusted; its fingerprint is {shown}, confirm it to trust it"
+            ),
+        })
     }
 
     /// A client configuration that verifies with `self`.
@@ -214,5 +228,41 @@ mod tests {
         assert!(parse_fingerprint("ab").is_none());
         assert!(parse_fingerprint(&"zz".repeat(32)).is_none());
         assert_eq!(fingerprint(b"").len(), 32);
+    }
+
+    #[test]
+    fn a_handshake_says_what_it_met() {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["jvm.example.test".to_owned()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        let print = fingerprint(cert.der());
+        let shown = show_fingerprint(&print);
+        let name = ServerName::try_from("jvm.example.test").unwrap();
+        let meet = |trust: Trust| {
+            let verifier = Verifier::new(roots(), trust).unwrap();
+            let verdict = verifier.verify_server_cert(cert.der(), &[], &name, &[], UnixTime::now());
+            (
+                verdict.is_ok(),
+                verifier.failure(),
+                verifier.seen().unwrap(),
+            )
+        };
+        let (ok, failure, seen) = meet(Trust::Verify(Some(print)));
+        assert!(ok && failure.is_none());
+        assert!(!seen.trusted);
+        assert_eq!(seen.fingerprint, print);
+        assert!(seen.not_after > 0);
+        let (ok, failure, _) = meet(Trust::Verify(Some([0; 32])));
+        assert!(!ok);
+        assert_eq!(
+            failure.unwrap(),
+            format!("the certificate changed: its fingerprint is now {shown}")
+        );
+        let (ok, failure, _) = meet(Trust::Verify(None));
+        assert!(!ok && failure.unwrap().contains("not trusted"));
+        let (ok, failure, _) = meet(Trust::Look);
+        assert!(ok && failure.is_none());
     }
 }
