@@ -47660,7 +47660,7 @@
           "virtualization"
         ],
         "summary": "Read a server's virtualization",
-        "description": "For a vCenter, ESXi or Hyper-V source, whether its last collection worked and its hosts, clusters, virtual machines and datastores, with their numbers of that collection. For any server, the virtual machines it is (`guest_of`), from sources the caller can read. An object the source stopped listing is `stale` after 15 minutes and removed after a day. A matched server the caller cannot read is shown as `null`.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "description": "For a vCenter, ESXi or Hyper-V source, whether its last collection worked and its hosts, clusters, virtual machines and datastores, with their numbers of that collection. For a Kubernetes cluster, its nodes, namespaces, workloads (deployments, stateful sets, daemon sets) and the jobs that failed, with what metrics-server measures of their use when it runs; `source.details.unread` says what the service account could not read. For any server, the virtual machines and Kubernetes nodes it is (`guest_of`), from sources the caller can read. An object the source stopped listing is `stale` after 15 minutes and removed after a day. A matched server the caller cannot read is shown as `null`.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
         "operationId": "server_virtualization",
         "parameters": [
           {
@@ -47682,59 +47682,123 @@
                 "schema": {
                   "$ref": "#/components/schemas/Virtualization"
                 },
-                "example": {
-                  "guest_of": [],
-                  "objects": [
-                    {
-                      "collected_at": "2026-11-18T10:20:00Z",
-                      "details": {
-                        "addresses": "192.0.2.21",
-                        "guest_hostname": "web-1.example.test",
-                        "guest_os": "Debian GNU/Linux 12 (64-bit)",
-                        "host": "esx-02",
-                        "macs": "00:50:56:aa:bb:01",
-                        "power_state": "poweredOn",
-                        "uuid": "4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"
-                      },
-                      "id": "8a1f3c52-6b7d-4e9f-a0b1-c2d3e4f5a6b7",
-                      "key": "vm-42",
-                      "kind": "vm",
-                      "link_fixed": false,
-                      "matched_by": "uuid",
-                      "metrics": {
-                        "alarms_critical": 0.0,
-                        "alarms_warning": 0.0,
-                        "cpu_count": 2.0,
-                        "cpu_usage_ratio": 0.12,
-                        "memory_bytes": 4294967296.0,
-                        "memory_usage_ratio": 0.4,
-                        "powered_on": 1.0,
-                        "snapshot_age_seconds": 864000.0,
-                        "snapshots": 1.0,
-                        "status": 0.0,
-                        "storage_used_bytes": 21474836480.0
-                      },
-                      "name": "web-1",
-                      "seen_at": "2026-11-18T10:20:03Z",
-                      "server": {
-                        "awaiting_agent": false,
-                        "hostname": "web-1",
-                        "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
-                        "kind": "agent"
-                      },
-                      "stale": false
+                "examples": {
+                  "kubernetes": {
+                    "summary": "A Kubernetes cluster without metrics-server's pod measures",
+                    "value": {
+                      "guest_of": [],
+                      "objects": [
+                        {
+                          "collected_at": "2026-11-27T10:20:00Z",
+                          "details": {
+                            "addresses": "192.0.2.31",
+                            "architecture": "amd64",
+                            "hostname": "worker-1",
+                            "kernel": "6.8.0-49-generic",
+                            "kubelet_version": "v1.31.4",
+                            "os_image": "Ubuntu 24.04.1 LTS",
+                            "roles": "worker",
+                            "runtime": "containerd://1.7.23",
+                            "uuid": "4c4c4544-0042-3510-8051-b4c04f4a3032"
+                          },
+                          "id": "5c2e8b14-3a9f-4d6e-b7c1-0f2a3b4c5d6e",
+                          "key": "0b7e3d2c-9a41-4f5e-8c6d-1e2f3a4b5c6d",
+                          "kind": "node",
+                          "link_fixed": false,
+                          "matched_by": "uuid",
+                          "metrics": {
+                            "cpu_cores": 4.0,
+                            "cpu_usage_cores": 0.61,
+                            "cpu_usage_ratio": 0.15,
+                            "memory_bytes": 8221999104.0,
+                            "memory_usage_bytes": 3170893824.0,
+                            "memory_usage_ratio": 0.39,
+                            "pods": 23.0,
+                            "pods_capacity": 110.0,
+                            "ready": 1.0,
+                            "unschedulable": 0.0
+                          },
+                          "name": "worker-1",
+                          "seen_at": "2026-11-27T10:20:03Z",
+                          "server": {
+                            "awaiting_agent": false,
+                            "hostname": "worker-1",
+                            "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                            "kind": "agent"
+                          },
+                          "stale": false
+                        }
+                      ],
+                      "source": {
+                        "details": {
+                          "product": "Kubernetes",
+                          "unread": "metrics-server pods (not allowed)",
+                          "version": "v1.31.4"
+                        },
+                        "error": null,
+                        "reason": null,
+                        "seen_at": "2026-11-27T10:20:03Z",
+                        "up": true
+                      }
                     }
-                  ],
-                  "source": {
-                    "details": {
-                      "api_type": "VirtualCenter",
-                      "product": "VMware vCenter Server 8.0.2",
-                      "version": "8.0.2"
-                    },
-                    "error": null,
-                    "reason": null,
-                    "seen_at": "2026-11-18T10:20:03Z",
-                    "up": true
+                  },
+                  "vcenter": {
+                    "summary": "A vCenter",
+                    "value": {
+                      "guest_of": [],
+                      "objects": [
+                        {
+                          "collected_at": "2026-11-18T10:20:00Z",
+                          "details": {
+                            "addresses": "192.0.2.21",
+                            "guest_hostname": "web-1.example.test",
+                            "guest_os": "Debian GNU/Linux 12 (64-bit)",
+                            "host": "esx-02",
+                            "macs": "00:50:56:aa:bb:01",
+                            "power_state": "poweredOn",
+                            "uuid": "4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"
+                          },
+                          "id": "8a1f3c52-6b7d-4e9f-a0b1-c2d3e4f5a6b7",
+                          "key": "vm-42",
+                          "kind": "vm",
+                          "link_fixed": false,
+                          "matched_by": "uuid",
+                          "metrics": {
+                            "alarms_critical": 0.0,
+                            "alarms_warning": 0.0,
+                            "cpu_count": 2.0,
+                            "cpu_usage_ratio": 0.12,
+                            "memory_bytes": 4294967296.0,
+                            "memory_usage_ratio": 0.4,
+                            "powered_on": 1.0,
+                            "snapshot_age_seconds": 864000.0,
+                            "snapshots": 1.0,
+                            "status": 0.0,
+                            "storage_used_bytes": 21474836480.0
+                          },
+                          "name": "web-1",
+                          "seen_at": "2026-11-18T10:20:03Z",
+                          "server": {
+                            "awaiting_agent": false,
+                            "hostname": "web-1",
+                            "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                            "kind": "agent"
+                          },
+                          "stale": false
+                        }
+                      ],
+                      "source": {
+                        "details": {
+                          "api_type": "VirtualCenter",
+                          "product": "VMware vCenter Server 8.0.2",
+                          "version": "8.0.2"
+                        },
+                        "error": null,
+                        "reason": null,
+                        "seen_at": "2026-11-18T10:20:03Z",
+                        "up": true
+                      }
+                    }
                   }
                 }
               }
@@ -56843,14 +56907,14 @@
         "tags": [
           "virtualization"
         ],
-        "summary": "Install the agent on a virtual machine",
-        "description": "Adds a server waiting for its agent in the source's site, named after the virtual machine's guest host name (else its name), a Windows server when its guest system says so, and ties the virtual machine to it. Its page then shows the install command; the agent takes it over when it enrolls with that name (ADR-0146).\n\n**Who**: administrator of the source's customer, as for install keys. **Area**: `servers`. Audited as `virt.install_agent`.",
+        "summary": "Install the agent on a virtual machine or a Kubernetes node",
+        "description": "Adds a server waiting for its agent in the source's site, named after the virtual machine's guest host name or the node's host name (else its name), a Windows server when its system says so, and ties the virtual machine or node to it. Its page then shows the install command; the agent takes it over when it enrolls with that name (ADR-0146).\n\n**Who**: administrator of the source's customer, as for install keys. **Area**: `servers`. Audited as `virt.install_agent`.",
         "operationId": "install_agent",
         "parameters": [
           {
             "name": "id",
             "in": "path",
-            "description": "The virtual machine",
+            "description": "The virtual machine or node",
             "required": true,
             "schema": {
               "type": "string",
@@ -56912,7 +56976,7 @@
             }
           },
           "400": {
-            "description": "Not a virtual machine: `invalid`",
+            "description": "Not a virtual machine or node: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -57007,14 +57071,14 @@
         "tags": [
           "virtualization"
         ],
-        "summary": "Tie a virtual machine to a server by hand",
-        "description": "Says which server or device of the source's customer a virtual machine is, or that it is none (`\"server_id\": null`); matching then never changes it. `\"automatic\": true` hands it back to matching, which runs at once.\n\n**Who**: operator or above on the source's site, for a server they can read. **Area**: `servers`. Audited as `virt.link`, with the server before and after.",
+        "summary": "Tie a virtual machine or a Kubernetes node to a server by hand",
+        "description": "Says which server or device of the source's customer a virtual machine or node is, or that it is none (`\"server_id\": null`); matching then never changes it. `\"automatic\": true` hands it back to matching, which runs at once.\n\n**Who**: operator or above on the source's site, for a server they can read. **Area**: `servers`. Audited as `virt.link`, with the server before and after.",
         "operationId": "link_virtual_machine",
         "parameters": [
           {
             "name": "id",
             "in": "path",
-            "description": "The virtual machine, from `objects` or `guest_of`",
+            "description": "The virtual machine or node, from `objects` or `guest_of`",
             "required": true,
             "schema": {
               "type": "string",
@@ -57097,7 +57161,7 @@
             }
           },
           "400": {
-            "description": "Not a virtual machine, or a server of another customer: `invalid`",
+            "description": "Not a virtual machine or node, or a server of another customer: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -64131,7 +64195,7 @@
       },
       "GuestOf": {
         "type": "object",
-        "description": "A virtual machine a server is, with where it runs.",
+        "description": "A virtual machine or Kubernetes node a server is, with where it runs.",
         "required": [
           "object",
           "source_id",
@@ -64140,12 +64204,12 @@
         "properties": {
           "object": {
             "$ref": "#/components/schemas/ObjectView",
-            "description": "The virtual machine."
+            "description": "The virtual machine (`kind` `vm`) or node (`node`)."
           },
           "source_id": {
             "type": "string",
             "format": "uuid",
-            "description": "The vCenter, ESXi or Hyper-V host listing it."
+            "description": "The vCenter, ESXi or Hyper-V host, cloud account or Kubernetes\ncluster listing it."
           },
           "source_name": {
             "type": "string"
@@ -66781,14 +66845,14 @@
               "null"
             ],
             "format": "uuid",
-            "description": "The server or device the virtual machine is, of the source's\ncustomer; `null` for none. Kept until changed: matching leaves it."
+            "description": "The server or device the virtual machine or node is, of the\nsource's customer; `null` for none. Kept until changed: matching leaves it."
           }
         },
         "additionalProperties": false
       },
       "LinkedServer": {
         "type": "object",
-        "description": "The server or device a virtual machine is.",
+        "description": "The server or device a virtual machine or Kubernetes node is.",
         "required": [
           "id",
           "hostname",
@@ -69889,7 +69953,7 @@
       },
       "ObjectView": {
         "type": "object",
-        "description": "One host, cluster, virtual machine or datastore.",
+        "description": "One host, cluster, virtual machine or datastore; or one node,\nnamespace, workload or failed job of a Kubernetes cluster.",
         "required": [
           "id",
           "kind",
@@ -69909,7 +69973,7 @@
           },
           "details": {
             "type": "object",
-            "description": "What it says of itself: for a virtual machine `uuid`, `host`,\n`power_state`, `guest_hostname`, `guest_os`, `addresses`, `macs`,\n`replication_mode`, `replication_state`; for a host `cluster`,\n`connection_state`, `maintenance`, `product`, `vendor`, `model`;\nfor a datastore `type`."
+            "description": "What it says of itself: for a virtual machine `uuid`, `host`,\n`power_state`, `guest_hostname`, `guest_os`, `addresses`, `macs`,\n`replication_mode`, `replication_state`; for a host `cluster`,\n`connection_state`, `maintenance`, `product`, `vendor`, `model`;\nfor a datastore `type`. For a node `uuid`, `hostname`,\n`addresses`, `roles`, `kubelet_version`, `os_image`, `kernel`,\n`runtime`, `architecture`; for a namespace `phase`; for a workload\n`namespace`, `workload` (`deployment`, `statefulset`,\n`daemonset`), `name`; for a job `namespace`, `cron_job`, `reason`,\n`message`, `failed_at`."
           },
           "id": {
             "type": "string",
@@ -69917,11 +69981,11 @@
           },
           "key": {
             "type": "string",
-            "description": "Its ID at the source: a managed object ID, or Hyper-V's VM ID."
+            "description": "Its ID at the source: a managed object ID, Hyper-V's VM ID, or a\nKubernetes object's UID."
           },
           "kind": {
             "type": "string",
-            "description": "`vm`, `host`, `cluster` or `datastore`."
+            "description": "`vm`, `host`, `cluster` or `datastore`; for a Kubernetes cluster\n`node`, `namespace`, `workload` or `job` (a job that failed, listed\nwhile it does: an older row than the source's last reading no\nlonger fails)."
           },
           "link_fixed": {
             "type": "boolean",
@@ -69936,11 +70000,11 @@
           },
           "metrics": {
             "type": "object",
-            "description": "Its numbers at the last collection, by measure without the check's\nand kind's prefix: `powered_on`, `cpu_usage_ratio`,\n`memory_bytes`, `snapshots`, `snapshot_age_seconds`,\n`free_ratio`, `alarms_critical`, and so on."
+            "description": "Its numbers at the last collection, by measure without the check's\nand kind's prefix: `powered_on`, `cpu_usage_ratio`,\n`memory_bytes`, `snapshots`, `snapshot_age_seconds`,\n`free_ratio`, `alarms_critical`, and so on. For a node `ready`,\n`cpu_cores`, `memory_bytes`, `pods`, `pods_capacity`,\n`cpu_usage_ratio`, `memory_usage_ratio` (the last two with\nmetrics-server); for a namespace `pods`, `pods_not_running`,\n`claims_pending`, `jobs_failed`, `cpu_usage_cores`,\n`memory_usage_bytes`; for a workload `replicas_desired`,\n`replicas_ready`, `cpu_usage_cores`, `memory_usage_bytes`."
           },
           "name": {
             "type": "string",
-            "description": "Its name, as its series' `instance`."
+            "description": "Its name, as its series' `instance`: for a workload\n`namespace/kind/name`, for a job `namespace/name`."
           },
           "seen_at": {
             "type": "string",
@@ -69950,7 +70014,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/LinkedServer",
-                "description": "For a virtual machine, the server or device it is; `null` when\nnone is known, or when the viewer cannot read it."
+                "description": "For a virtual machine or a node, the server or device it is;\n`null` when none is known, or when the viewer cannot read it."
               },
               {
                 "type": "null"
@@ -79766,7 +79830,7 @@
         "properties": {
           "details": {
             "type": "object",
-            "description": "What answered: `product`, `version`, `api_type`, `host`."
+            "description": "What answered: `product`, `version`, `api_type`, `host`; for a\ncloud account `provider`; for a Kubernetes cluster `product`\n(`Kubernetes`), `version`, and `unread`, what could not be read and\nwhy, such as `metrics-server (not installed)`."
           },
           "error": {
             "type": [
@@ -79780,7 +79844,7 @@
               "string",
               "null"
             ],
-            "description": "Why not: `connect`, `tls`, `certificate`, `login`, `api` for a\nvCenter; `not_installed`, `denied`, `failed` for Hyper-V."
+            "description": "Why not: `connect`, `tls`, `certificate`, `login`, `api` for a\nvCenter; `not_installed`, `denied`, `failed` for Hyper-V;\n`connect`, `timeout`, `tls`, `login`, `permission`, `protocol` for\na Kubernetes cluster."
           },
           "seen_at": {
             "type": "string",
@@ -81476,14 +81540,14 @@
             "items": {
               "$ref": "#/components/schemas/GuestOf"
             },
-            "description": "The virtual machines this server is, from sources the viewer can\nread: usually none or one."
+            "description": "The virtual machines and nodes this server is, from sources the\nviewer can read: usually none or one, two when a virtual machine\nis also a cluster's node."
           },
           "objects": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ObjectView"
             },
-            "description": "When the server is a source: its objects, hosts first, then\nclusters, virtual machines and datastores, by name."
+            "description": "When the server is a source: its objects, hosts first, then\nclusters, nodes, virtual machines, namespaces, workloads, jobs and\ndatastores, by name."
           },
           "source": {
             "oneOf": [
@@ -82152,7 +82216,7 @@
     },
     {
       "name": "virtualization",
-      "description": "VMware and Hyper-V: the hosts, clusters, virtual machines and datastores of a vCenter or ESXi host (a device with a `vmware` check, run from a probe) or of a Hyper-V host (a Windows server with a `hyperv` check), kept from what their checks last reported. Each virtual machine is matched to the server or device of the same customer it is, by its hardware ID, a network card, an address or its name. Area `servers`."
+      "description": "VMware and Hyper-V: the hosts, clusters, virtual machines and datastores of a vCenter or ESXi host (a device with a `vmware` check, run from a probe) or of a Hyper-V host (a Windows server with a `hyperv` check), kept from what their checks last reported. Each virtual machine is matched to the server or device of the same customer it is, by its hardware ID, a network card, an address or its name. A Kubernetes cluster (a device with a `kubernetes` check) lists its nodes, namespaces, workloads and failed jobs the same way, its nodes matched to servers by their SMBIOS UUID, an address or their host name. Area `servers`."
     },
     {
       "name": "cloud",

@@ -1,5 +1,6 @@
-//! VMware and Hyper-V in the OpenAPI document (ADR-0156): merged into it
-//! by [`super::openapi::build`].
+//! VMware and Hyper-V in the OpenAPI document (ADR-0156), and the
+//! inventory of Kubernetes clusters (ADR-0183): merged into it by
+//! [`super::openapi::build`].
 
 #![allow(dead_code)] // The functions exist for their `#[utoipa::path]`.
 
@@ -22,7 +23,7 @@ use crate::vmware;
 machines and datastores of a vCenter or ESXi host (a device with a `vmware` check, run from a probe) or of \
 a Hyper-V host (a Windows server with a `hyperv` check), kept from what their checks last reported. Each \
 virtual machine is matched to the server or device of the same customer it is, by its hardware ID, a \
-network card, an address or its name. Area `servers`."))
+network card, an address or its name. A Kubernetes cluster (a device with a `kubernetes` check) lists its nodes, namespaces, workloads and failed jobs the same way, its nodes matched to servers by their SMBIOS UUID, an address or their host name. Area `servers`."))
 )]
 pub(super) struct Doc;
 
@@ -42,20 +43,49 @@ pub(super) fn vm() -> serde_json::Value {
     })
 }
 
+/// A Kubernetes node as the API shows it.
+pub(super) fn node() -> serde_json::Value {
+    json!({
+        "id": "5c2e8b14-3a9f-4d6e-b7c1-0f2a3b4c5d6e", "kind": "node", "name": "worker-1",
+        "key": "0b7e3d2c-9a41-4f5e-8c6d-1e2f3a4b5c6d",
+        "details": {"uuid": "4c4c4544-0042-3510-8051-b4c04f4a3032", "hostname": "worker-1",
+                    "addresses": "192.0.2.31", "roles": "worker", "kubelet_version": "v1.31.4",
+                    "os_image": "Ubuntu 24.04.1 LTS", "kernel": "6.8.0-49-generic",
+                    "runtime": "containerd://1.7.23", "architecture": "amd64"},
+        "metrics": {"ready": 1.0, "unschedulable": 0.0, "cpu_cores": 4.0, "memory_bytes": 8221999104.0,
+                    "pods": 23.0, "pods_capacity": 110.0, "cpu_usage_cores": 0.61, "cpu_usage_ratio": 0.15,
+                    "memory_usage_bytes": 3170893824.0, "memory_usage_ratio": 0.39},
+        "collected_at": "2026-11-27T10:20:00Z", "seen_at": "2026-11-27T10:20:03Z", "stale": false,
+        "server": {"id": ex::SERVER, "hostname": "worker-1", "kind": "agent", "awaiting_agent": false},
+        "matched_by": "uuid", "link_fixed": false
+    })
+}
+
 #[utoipa::path(get, path = "/api/v1/servers/{id}/virtualization", tag = "virtualization",
     summary = "Read a server's virtualization",
     description = "For a vCenter, ESXi or Hyper-V source, whether its last collection worked and its hosts, \
-clusters, virtual machines and datastores, with their numbers of that collection. For any server, the \
-virtual machines it is (`guest_of`), from sources the caller can read. An object the source stopped \
+clusters, virtual machines and datastores, with their numbers of that collection. For a Kubernetes \
+cluster, its nodes, namespaces, workloads (deployments, stateful sets, daemon sets) and the jobs that \
+failed, with what metrics-server measures of their use when it runs; `source.details.unread` says what \
+the service account could not read. For any server, the virtual machines and Kubernetes nodes it is \
+(`guest_of`), from sources the caller can read. An object the source stopped \
 listing is `stale` after 15 minutes and removed after a day. A matched server the caller cannot read is \
 shown as `null`.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
     params(("id" = uuid::Uuid, Path, description = "The server or device")),
     responses(
-        (status = 200, description = "Its virtualization", body = virtualization::Virtualization,
-            example = json!({
-                "source": {"up": true, "reason": null, "error": null, "seen_at": "2026-11-18T10:20:03Z",
-                           "details": {"product": "VMware vCenter Server 8.0.2", "version": "8.0.2", "api_type": "VirtualCenter"}},
-                "objects": [vm()], "guest_of": []})),
+        (status = 200, description = "Its virtualization", body = virtualization::Virtualization, examples(
+            ("vcenter" = (summary = "A vCenter",
+                value = json!({
+                    "source": {"up": true, "reason": null, "error": null, "seen_at": "2026-11-18T10:20:03Z",
+                               "details": {"product": "VMware vCenter Server 8.0.2", "version": "8.0.2", "api_type": "VirtualCenter"}},
+                    "objects": [vm()], "guest_of": []}))),
+            ("kubernetes" = (summary = "A Kubernetes cluster without metrics-server's pod measures",
+                value = json!({
+                    "source": {"up": true, "reason": null, "error": null, "seen_at": "2026-11-27T10:20:03Z",
+                               "details": {"product": "Kubernetes", "version": "v1.31.4",
+                                           "unread": "metrics-server pods (not allowed)"}},
+                    "objects": [node()], "guest_of": []}))),
+        )),
         (status = 404, description = "No such server, or outside the key's reach: `not_found`", body = ErrorBody),
     ))]
 fn server_virtualization() {}
@@ -160,34 +190,34 @@ fn set_device_vmware() {}
 fn delete_device_vmware() {}
 
 #[utoipa::path(put, path = "/api/v1/virtual-objects/{id}/server", tag = "virtualization",
-    summary = "Tie a virtual machine to a server by hand",
-    description = "Says which server or device of the source's customer a virtual machine is, or that it is \
+    summary = "Tie a virtual machine or a Kubernetes node to a server by hand",
+    description = "Says which server or device of the source's customer a virtual machine or node is, or that it is \
 none (`\"server_id\": null`); matching then never changes it. `\"automatic\": true` hands it back to \
 matching, which runs at once.\n\n**Who**: operator or above on the source's site, for a server they can read. \
 **Area**: `servers`. Audited as `virt.link`, with the server before and after.",
-    params(("id" = uuid::Uuid, Path, description = "The virtual machine, from `objects` or `guest_of`")),
+    params(("id" = uuid::Uuid, Path, description = "The virtual machine or node, from `objects` or `guest_of`")),
     request_body(content = virtualization::LinkRequest, example = json!({"server_id": ex::SERVER})),
     responses(
         (status = 200, description = "The virtual machine", body = virtualization::ObjectView,
             example = json!(ex::merge(vm(), json!({"matched_by": "person", "link_fixed": true})))),
-        (status = 400, description = "Not a virtual machine, or a server of another customer: `invalid`", body = ErrorBody),
+        (status = 400, description = "Not a virtual machine or node, or a server of another customer: `invalid`", body = ErrorBody),
         (status = 403, description = "The key may only read the site: `forbidden`", body = ErrorBody),
         (status = 404, description = "No such virtual machine, or outside the key's reach: `not_found`", body = ErrorBody),
     ))]
 fn link_virtual_machine() {}
 
 #[utoipa::path(post, path = "/api/v1/virtual-objects/{id}/install-agent", tag = "virtualization",
-    summary = "Install the agent on a virtual machine",
+    summary = "Install the agent on a virtual machine or a Kubernetes node",
     description = "Adds a server waiting for its agent in the source's site, named after the virtual \
-machine's guest host name (else its name), a Windows server when its guest system says so, and ties the \
-virtual machine to it. Its page then shows the install command; the agent takes it over when it enrolls \
+machine's guest host name or the node's host name (else its name), a Windows server when its system says \
+so, and ties the virtual machine or node to it. Its page then shows the install command; the agent takes it over when it enrolls \
 with that name (ADR-0146).\n\n**Who**: administrator of the source's customer, as for install keys. **Area**: `servers`. Audited as \
 `virt.install_agent`.",
-    params(("id" = uuid::Uuid, Path, description = "The virtual machine")),
+    params(("id" = uuid::Uuid, Path, description = "The virtual machine or node")),
     responses(
         (status = 201, description = "The server waiting for its agent", body = super::servers::ServerView,
             example = json!(ex::merge(ex::server(), json!({"awaiting_agent": true, "status": "waiting"})))),
-        (status = 400, description = "Not a virtual machine: `invalid`", body = ErrorBody),
+        (status = 400, description = "Not a virtual machine or node: `invalid`", body = ErrorBody),
         (status = 403, description = "Not an administrator of the site: `forbidden`", body = ErrorBody),
         (status = 404, description = "No such virtual machine, or outside the key's reach: `not_found`", body = ErrorBody),
         (status = 409, description = "It is already a server: `conflict`", body = ErrorBody),

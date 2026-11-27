@@ -52,7 +52,10 @@ impl VmFacts {
                 .map(str::to_owned)
                 .collect()
         };
-        let guest = text("guest_hostname");
+        // A Kubernetes node's is its `hostname`.
+        let guest = Some(text("guest_hostname"))
+            .filter(|g| !g.is_empty())
+            .unwrap_or_else(|| text("hostname"));
         Self {
             id,
             uuid: reported_uuid(text("uuid")),
@@ -177,6 +180,13 @@ mod tests {
         );
         assert_eq!(vm.macs, ["00:50:56:aa:bb:cc"]);
         assert_eq!(vm.addresses, ["10.0.0.5", "fe80::1"]);
+        // A Kubernetes node names itself by `hostname`.
+        let node = VmFacts::from_details(
+            id(2),
+            "worker-1",
+            &serde_json::json!({"hostname": "w1.cluster.example"}),
+        );
+        assert_eq!(node.name, "w1.cluster.example");
         assert_eq!(vm.name, "web-01");
         let placeholder = VmFacts::from_details(
             id(2),
