@@ -23,7 +23,16 @@ jobs:
           --health-retries 15
     env:
       SQLX_OFFLINE: "true"
+      # Full debug info made the workspace's test binaries fill the
+      # runner's disk: ld died with a bus error writing them. Line tables
+      # keep file and line numbers in backtraces.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
+      # The SDKs preinstalled on the runner that nothing here uses.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/check-numbers.sh
       - run: scripts/check-typography.sh

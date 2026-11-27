@@ -67,7 +67,6 @@ fn unchunk(mut body: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-#[cfg(unix)]
 pub async fn get(socket: &std::path::Path, path: &str) -> std::io::Result<Answer> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

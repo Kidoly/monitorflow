@@ -16,7 +16,6 @@
 //! has no access to it until a person grants it (ADR-0183); the check only
 //! reads (`GET`).
 
-use std::path::PathBuf;
 use std::time::Instant;
 
 use monitorflow_sensors::{Sample, Sensor, SensorError};
@@ -33,7 +32,8 @@ const MAX_PATTERN: usize = 256;
 
 #[derive(Debug)]
 pub struct Docker {
-    socket: PathBuf,
+    #[cfg(unix)]
+    socket: std::path::PathBuf,
     filter: Option<Regex>,
     stats: bool,
     rates: Rates,
@@ -79,7 +79,11 @@ impl Docker {
                 kind: crate::DOCKER,
             });
         }
+        // Checked everywhere, so a bad `engine` reads the same on Windows.
+        #[cfg(not(unix))]
+        let _ = socket;
         Ok(Self {
+            #[cfg(unix)]
             socket: socket.into(),
             filter,
             stats,
@@ -110,6 +114,7 @@ impl Docker {
         ))
     }
 
+    #[cfg(unix)]
     fn io_failure(&self, e: &std::io::Error) -> Failure {
         let socket = self.socket.display();
         match e.kind() {

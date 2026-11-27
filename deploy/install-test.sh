@@ -308,6 +308,9 @@ check "MF_AI_ROOT_ACTIONS=0 refuses root actions" sudo grep -qx 'root_actions = 
 installer MF_DOWNLOAD_URL="$base"
 check "a later run keeps that choice" sudo grep -qx 'root_actions = false' /etc/monitorflow/agent.toml
 sudo systemctl reset-failed monitorflow-agent
+# The runs above rewrote agent.toml on purpose (root_actions, software,
+# major_upgrades); an update must keep it as they left it.
+identity=$(sudo sha256sum /var/lib/monitorflow/agent/tls/cert.pem /etc/monitorflow/agent.toml)
 
 if [ -n "$newer" ]; then
     echo "== self-update"
