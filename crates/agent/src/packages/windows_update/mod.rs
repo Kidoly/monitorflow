@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::helper_trust::{self, HelperRequest, Place};
+use crate::packages::msi::MsiPackage;
 
 /// The pipe the update service listens on.
 pub const PIPE_NAME: &str = r"\\.\pipe\MonitorFlowUpdate";
@@ -108,8 +109,12 @@ pub enum Step {
     InstallApproved,
     /// [`Self::Winget`] for a command that holds apps (ADR-0188).
     WingetApproved,
-    /// Install or remove the software of a `software` command (ADR-0188).
+    /// Install or remove the winget packages of a `software` command
+    /// (ADR-0188).
     Software,
+    /// Install or remove the MSI packages of a `software` command
+    /// (ADR-0188). A service that predates them refuses the step.
+    SoftwareMsi,
 }
 
 impl Step {
@@ -122,6 +127,7 @@ impl Step {
             Self::InstallApproved => "install_approved",
             Self::WingetApproved => "winget_approved",
             Self::Software => "software",
+            Self::SoftwareMsi => "software_msi",
         }
     }
 
@@ -200,6 +206,11 @@ pub enum Request {
     WingetInstall { packages: Vec<WingetPackage> },
     /// Remove these winget apps (ADR-0188), as [`Self::WingetInstall`].
     WingetRemove { packages: Vec<WingetPackage> },
+    /// Download, check and install these MSI packages (ADR-0188), as
+    /// [`Self::WingetInstall`].
+    MsiInstall { packages: Vec<MsiPackage> },
+    /// Remove these MSI packages by ProductCode, as [`Self::WingetInstall`].
+    MsiRemove { packages: Vec<MsiPackage> },
     /// One step of a command the central server signed.
     Signed {
         /// The [`HelperRequest`] holding the command, in base64.
@@ -265,11 +276,13 @@ impl Request {
         }
     }
 
-    /// What a `software` command asks; check it with [`Self::validate`].
+    /// What a `software` command asks of winget; check it with
+    /// [`Self::validate`].
     pub fn software(change: &SoftwareChange) -> Self {
         let packages = change
             .packages
             .iter()
+            .filter(|p| p.msi.is_none())
             .map(|p| WingetPackage {
                 id: p.id.clone(),
                 source: p.source.clone(),
@@ -282,11 +295,43 @@ impl Request {
         }
     }
 
+    /// What a `software` command asks of Windows Installer, `None` when it
+    /// has no MSI package; check it with [`Self::validate`].
+    pub fn software_msi(change: &SoftwareChange) -> Option<Self> {
+        let packages: Vec<MsiPackage> = change.packages.iter().filter_map(MsiPackage::of).collect();
+        if packages.is_empty() {
+            None
+        } else if change.action == i32::from(Action::Remove) {
+            Some(Self::MsiRemove { packages })
+        } else {
+            Some(Self::MsiInstall { packages })
+        }
+    }
+
+    /// Whether it installs or removes software (ADR-0188), which needs the
+    /// host's consent.
+    pub fn changes_software(&self) -> bool {
+        self.change().is_some()
+    }
+
     /// The `SoftwareChange` a software request stands for, for its check.
     fn change(&self) -> Option<SoftwareChange> {
         let (action, packages) = match self {
             Self::WingetInstall { packages } => (Action::Install, packages),
             Self::WingetRemove { packages } => (Action::Remove, packages),
+            Self::MsiInstall { packages } | Self::MsiRemove { packages } => {
+                let action = if matches!(self, Self::MsiInstall { .. }) {
+                    Action::Install
+                } else {
+                    Action::Remove
+                };
+                return Some(SoftwareChange {
+                    action: action.into(),
+                    manager: PackageManager::Winget.into(),
+                    packages: packages.iter().map(MsiPackage::to_package).collect(),
+                    allow_reboot: false,
+                });
+            }
             _ => return None,
         };
         Some(SoftwareChange {
@@ -297,6 +342,7 @@ impl Request {
                 .map(|p| monitorflow_common::proto::v1::SoftwarePackage {
                     id: p.id.clone(),
                     source: p.source.clone(),
+                    msi: None,
                 })
                 .collect(),
             allow_reboot: false,
@@ -383,7 +429,9 @@ pub fn authorized(
         | Request::SelfUpdate(_)
         | Request::WingetUpgrade { .. }
         | Request::WingetInstall { .. }
-        | Request::WingetRemove { .. } => {
+        | Request::WingetRemove { .. }
+        | Request::MsiInstall { .. }
+        | Request::MsiRemove { .. } => {
             return Err("this needs the command the central server signed for it".into())
         }
     };
@@ -400,7 +448,7 @@ pub fn authorized(
         | Step::Reboot
         | Step::Winget
         | Step::WingetApproved => APPLY_UPDATES,
-        Step::Software => SOFTWARE,
+        Step::Software | Step::SoftwareMsi => SOFTWARE,
         Step::SelfUpdate => SELF_UPDATE,
     };
     let command = helper_trust::authorize_step(place, &signed, kind, step.as_str(), now_unix_ms)
@@ -411,6 +459,11 @@ pub fn authorized(
             let change =
                 SoftwareChange::decode(payload).map_err(|_| "invalid SoftwareChange payload")?;
             Request::software(&change)
+        }
+        Step::SoftwareMsi => {
+            let change =
+                SoftwareChange::decode(payload).map_err(|_| "invalid SoftwareChange payload")?;
+            Request::software_msi(&change).ok_or("the command has no MSI package")?
         }
         Step::Reboot if kind == SOFTWARE => {
             let change =
@@ -768,11 +821,10 @@ pub fn select(selection: Selection<'_>, found: &[Found]) -> (Vec<usize>, Vec<Str
 /// installs and removals need `commands.software` in `agent.toml`, which
 /// the update service reads itself (ADR-0188); everything else passes.
 pub fn consented(request: &Request, software_allowed: bool) -> Result<(), String> {
-    match request {
-        Request::WingetInstall { .. } | Request::WingetRemove { .. } if !software_allowed => {
-            Err(SOFTWARE_NOT_ALLOWED.into())
-        }
-        _ => Ok(()),
+    if request.changes_software() && !software_allowed {
+        Err(SOFTWARE_NOT_ALLOWED.into())
+    } else {
+        Ok(())
     }
 }
 

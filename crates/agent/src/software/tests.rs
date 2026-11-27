@@ -231,6 +231,7 @@ mod linux {
                 .map(|n| SoftwarePackage {
                     id: n.to_string(),
                     source: String::new(),
+                    msi: None,
                 })
                 .collect(),
             allow_reboot: reboot,

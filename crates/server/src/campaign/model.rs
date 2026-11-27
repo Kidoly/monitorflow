@@ -634,6 +634,7 @@ impl SoftwareSpec {
             .map(|p| SoftwarePackage {
                 id: p.id.clone(),
                 source: p.source.clone(),
+                msi: None,
             })
             .collect();
         if packages.is_empty() {

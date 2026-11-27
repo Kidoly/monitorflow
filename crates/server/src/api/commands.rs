@@ -719,6 +719,7 @@ mod tests {
             packages: vec![monitorflow_common::proto::v1::SoftwarePackage {
                 id: "7zip.7zip".into(),
                 source: "winget".into(),
+                msi: None,
             }],
             allow_reboot: true,
         };

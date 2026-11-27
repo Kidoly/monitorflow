@@ -1,7 +1,7 @@
 # ADR-0188: Software deployment and update approvals
 
 Date: 2026-11-24
-Status: accepted; Windows (Windows Update approvals and winget) delivered first, then Linux packages, packages from mirrors, recurring campaigns and turning software installs off from the server's page (amended 2026-11-25); MSI packages still to come
+Status: accepted; Windows (Windows Update approvals and winget) delivered first, then Linux packages, packages from mirrors, recurring campaigns and turning software installs off from the server's page (amended 2026-11-25), then MSI packages (amended 2026-11-27)
 
 ## Context
 
@@ -149,9 +149,28 @@ The agent writes `<data_dir>/software-off` and reports `software` as `off` at on
 
 Unlike AI commands, there is no consent that lets the web interface turn software installs back on: installing software is full control of the host, and a central server that is taken over must not regain it by an "on" after an administrator turned it off.
 
-## Still to come
+## MSI packages
 
-**MSI packages on Windows.** A catalogue entry of manager `msi` holds an uploaded file stored by the central server, its SHA-256 and its ProductCode, and optional public properties from a checked grammar. The signed `software` command carries the URL and the SHA-256; the update service downloads it through the agent's upstream (relay mirror listener or central server), checks the digest, and runs `msiexec /i <file> /qn /norestart` with only those properties, or `msiexec /x {ProductCode} /qn /norestart` to remove it. MSI files carry no GPG signature, so the digest in the signed command is what protects them on plain HTTP listeners. It needs a file store on the central server and its copy on relays, which nothing has yet.
+Delivered with the amendment of 2026-11-27, in two parts: the agent and its update service first, then the central server, relays and the web interface.
+
+**The catalogue.** An entry of manager `msi` names a Windows Installer file uploaded to the central server. `POST /api/software/files` takes the file itself (`application/octet-stream`), at most 2 GiB, Windows Installer's own limit, reads its `Property` table and answers with its SHA-256, size, ProductCode, ProductName, ProductVersion and Manufacturer. The entry (`POST /api/software`, `manager` `msi`, `file_sha256`) takes the file's ProductCode as its `package_id` unless one is given, and up to 32 public properties (`properties`, `NAME=value`) passed to every install. A file is stored once by its SHA-256 under `<mirror_dir>/software/`, whoever uploads it, and the central server keeps at most 20 GiB of them: an upload beyond is refused with 409. An entry may name a file the user uploaded, or one an entry they see names already, never one they only know the digest of. A file stays while an entry or a campaign names it, and goes 8 days after the last one stopped, longer than a command's longest time to live (7 days), as does an upload nobody added to the catalogue.
+
+**The command.** In the `software` command of a Windows server, an MSI package is a `SoftwarePackage` whose `msi` is set (`packages.proto`): its `id` is the ProductCode, `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}` in upper case, and `msi` holds the file's SHA-256 and size, the URLs to download it from, the properties and the entry's name. A removal carries the ProductCode alone. One command carries winget and MSI packages alike. `common::software::check_change` checks them on the API, the agent and the update service: a ProductCode, no source, a digest of 64 lower-case hex digits, 1 byte to 2 GiB, 1 to 4 http or https URLs, and properties whose names are public (an upper-case letter, then upper-case letters, digits and `_`, up to 64), each once, never one that changes what `msiexec` does (`ACTION`, `ADVERTISE`, `MSIPATCHREMOVE`, `PATCH`, `REBOOT`, `REBOOTPROMPT`, `REINSTALL`, `REINSTALLMODE`, `REMOVE`, `TRANSFORMS`), with values of up to 256 printable ASCII characters but `"` and `;`.
+
+The URLs are `/software/<sha256>.msi` on the mirror listener of the server's relay, when it reported one, then on the central server's (`mirror_public_url`, ADR-0069). A server that has neither gets no command, with the error "MSI packages download from a mirror listener; set the mirror URL of the central server". Agents that know MSI packages report the kind `software_msi`, with the acceptance of `software`; it is never sent as a command. A server whose agent does not gets no command either: "this server's agent is too old to install MSI packages; it updates by itself". An older agent would refuse the command anyway, since a ProductCode is no winget ID.
+
+**Serving the files.** The central server's mirror listener serves `/software/<sha256>.msi` from `<mirror_dir>/software/`, GET and HEAD only, no listing, like the rest of it (ADR-0030). A relay's listener, on a miss, fetches the same path from its upstream's listener, keeps the file in its on-demand store (ADR-0142) only once its SHA-256 matches the name, and serves it; files are evicted least recently used first under `mirror.cache_max_bytes`. These listeners are plain HTTP, and MSI files carry no GPG signature: the digest in the signed command is what protects them. They are not secret either: anyone who reaches a mirror listener and knows a file's SHA-256 can download it, and the URL crosses the network in the clear. The catalogue says so where files are uploaded: an MSI file must hold nothing that the hosts' network may not read, no license key or password in the package or its properties. Properties are in the signed command, not on the listeners.
+
+**The update service.** The agent sends the signed command as the step `software_msi`, after the step `software` when it also has winget packages; a service that predates MSI packages refuses the unknown step. The service checks the command as for winget (ADR-0108), and the consent in its own `agent.toml` and the web interface's "off", then for each package in turn:
+
+1. Asks Windows Installer whether the ProductCode is installed (`MsiQueryProductStateW`): an install of an installed product, or a removal of a missing one, gives the line `{ProductCode} is installed already` or `is not installed`, which is no error.
+2. For an install, downloads the file from each URL in turn into `%ProgramData%\MonitorFlow\update\msi\`, which only SYSTEM and Administrators can write (ADR-0050), refusing more bytes than the command says and a redirect, and keeps the first file whose size and SHA-256 match the command's.
+3. Opens it without write or delete sharing, so nobody can change it until `msiexec` is done, checks it again through that handle, then runs `%SystemRoot%\System32\msiexec.exe /i "<file>" /qn /norestart /l*v "<log>" NAME="value" ...`, or `msiexec.exe /x {ProductCode} /qn /norestart /l*v "<log>"`, with a log per product next to the files, 30 minutes at most. The file is deleted afterwards.
+4. Exit codes 0, 3010 and 1641 succeed, the last two needing a restart; any other fails the package with its code and meaning, like `fatal error during installation (msiexec exit code 1603)`. An install that succeeds without the ProductCode then installed fails ("the file installs another one"): the catalogue's ProductCode is what detection and removal rely on. One failure does not stop the others.
+
+The agent then reports and, with `allow_reboot`, asks for the signed restart, as for winget.
+
+**Rejected.** Free URLs or file shares in the catalogue: the central server would then make every host fetch from wherever an administrator typed, and the digest would be the only review. Serving files through the agent's gRPC stream: it would carry hundreds of megabytes through every relay's command path, where the mirror listeners already carry packages and agent releases. Detecting installs by display name or by the `Uninstall` registry key: the ProductCode is what Windows Installer itself keys products by.
 
 ## Manual test
 
@@ -163,6 +182,13 @@ On a Windows Server 2025 virtual machine with the agent installed by the MSI wit
 4. A campaign removing it: `succeeded`, the app is gone from the report; again: `is not installed`.
 5. `software off` as administrator, no restart: a new campaign's command fails with the update service's refusal; after `Restart-Service MonitorFlowAgent`, the campaign skips the server with "software installs are not allowed on this server".
 6. An update campaign approving `Definition Updates` only and holding one pending KB: only definition updates install, and the output says the KB is held.
+
+An MSI test, on the same machine, the central server with `mirror_public_url` set:
+
+1. Upload a small MSI to the catalogue: its ProductCode and ProductName are read from the file. Add a property its installer knows.
+2. A campaign installing it: the output has `{ProductCode} succeeded: <name>`, the product is in Programs and Features with the property applied, and `update\msi\` holds its log but no file. Again: `is installed already`.
+3. Behind a relay with a mirror URL, the relay's access log shows the file fetched once, then served from its store.
+4. A campaign removing it: `succeeded`, the product is gone; again: `is not installed`.
 
 A Linux test, on Debian 13 and Rocky Linux 9 with the agent installed with `MF_SOFTWARE_FROM_WEB=1`:
 
@@ -181,3 +207,4 @@ A Linux test, on Debian 13 and Rocky Linux 9 with the agent installed with `MF_S
 - Campaigns can keep software installed and servers updated without anyone pressing "Run again".
 - `servers.command_kinds` gains `software_off`; `deploy/sudoers/monitorflow-agent` gains one line, which existing servers get by running the install command again.
 - `servers.command_kinds` gains `software`. The catalogue is one more table to back up with the database.
+- MSI packages install only where `commands.software` allows software, from files whose digest the signed command fixes; a compromised central server can install there any MSI it uploads, as it could any winget package. `servers.command_kinds` gains `software_msi`. `<mirror_dir>/software/` is one more directory to back up, at most 20 GiB, and the files on it are readable by anyone who reaches a mirror listener and knows their digest.

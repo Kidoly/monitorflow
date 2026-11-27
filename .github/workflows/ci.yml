@@ -138,6 +138,16 @@ jobs:
         run: |
           $msi = (Get-ChildItem target\msi\*.msi).FullName
           deploy/windows/smoke-test.ps1 -Msi $msi -UpgradeMsi target\msi-upgrade\monitorflow-agent-255.0.0-x64.msi
+      # An MSI package installed and removed by the update service's code
+      # (ADR-0188): downloaded, checked, then msiexec /i and /x.
+      - name: Install a tiny MSI package as the update service does
+        shell: pwsh
+        run: |
+          Push-Location deploy/windows
+          dotnet wix build -arch x64 -o ..\..\target\msi-test\tiny.msi test-msi\Tiny.wxs
+          Pop-Location
+          $env:MF_TEST_MSI = (Resolve-Path target\msi-test\tiny.msi).Path
+          cargo test -p monitorflow-agent --test msi_windows -- --nocapture
       - name: Upload the MSI logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -146,6 +156,7 @@ jobs:
           path: |
             ${{ runner.temp }}/monitorflow-msi
             C:/ProgramData/MonitorFlow/agent/logs
+            target/msi-test/work/*.log
           if-no-files-found: ignore
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

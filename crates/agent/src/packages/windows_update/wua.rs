@@ -94,8 +94,10 @@ pub fn handle(request: &Request) -> Reply {
         Request::WingetScan
         | Request::WingetUpgrade { .. }
         | Request::WingetInstall { .. }
-        | Request::WingetRemove { .. } => {
-            Err("winget requests are not Windows Update calls".into())
+        | Request::WingetRemove { .. }
+        | Request::MsiInstall { .. }
+        | Request::MsiRemove { .. } => {
+            Err("winget and MSI requests are not Windows Update calls".into())
         }
         Request::Signed { .. } => Err("the signed command was not checked".into()),
     };

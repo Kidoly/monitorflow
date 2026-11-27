@@ -1220,7 +1220,7 @@ fn platform_handlers(
 ) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
     use monitorflow_agent::commands::unsupported::Unsupported;
     use monitorflow_agent::packages::windows_update::client::{
-        SoftwareHandler, WindowsApplyHandler, WindowsUpdates,
+        MsiPackages, SoftwareHandler, WindowsApplyHandler, WindowsUpdates,
     };
     use monitorflow_agent::packages::windows_update::{pipe::PipeClient, PIPE_NAME};
     use monitorflow_agent::packages::Reports;
@@ -1242,6 +1242,10 @@ fn platform_handlers(
             reports,
             software.switch.clone(),
         )),
+    );
+    handlers.register(
+        command::SOFTWARE_MSI,
+        Arc::new(MsiPackages::new(software.switch.clone())),
     );
     handlers.register(
         command::SELF_UPDATE,
@@ -2004,10 +2008,7 @@ mod update_service {
         let (place, data_dir) = pinned().map_err(|e| format!("{e:#}"))?;
         let now = monitorflow_agent::self_update::unix_ms();
         let run = authorized(request, &place, &data_dir, now)?;
-        if matches!(
-            run,
-            Request::WingetInstall { .. } | Request::WingetRemove { .. }
-        ) {
+        if run.changes_software() {
             let config: monitorflow_common::config::AgentConfig =
                 config::load(&super::default_config()).map_err(|e| format!("{e:#}"))?;
             consented(&run, config.commands.software)?;
@@ -2060,10 +2061,11 @@ mod update_service {
                     let handle = |request: &Request| match checked(request) {
                         Err(error) => Reply::Error(error),
                         Ok(Request::SelfUpdate(request)) => self_update(&request),
-                        // winget requests first (ADR-0139), then Windows Update.
-                        Ok(other) => {
-                            winget::run::handle(&other).unwrap_or_else(|| wua::handle(&other))
-                        }
+                        // MSI and winget requests first (ADR-0188, ADR-0139),
+                        // then Windows Update.
+                        Ok(other) => monitorflow_agent::packages::msi::run::handle(&other)
+                            .or_else(|| winget::run::handle(&other))
+                            .unwrap_or_else(|| wua::handle(&other)),
                     };
                     pipe::serve(PIPE_NAME, &sddl, handle, stop).await?;
                     Ok(())
