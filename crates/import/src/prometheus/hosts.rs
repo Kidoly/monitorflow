@@ -773,7 +773,7 @@ mod tests {
             Fidelity::Approximated(Note::plain("app_cadvisor"))
         );
         assert_eq!(
-            fleet.inventory.checks[4].fidelity,
+            fleet.inventory.checks[5].fidelity,
             Fidelity::Approximated(Note::plain("app_jmx_exporter"))
         );
     }
