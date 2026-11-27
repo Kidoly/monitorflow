@@ -102,7 +102,7 @@ impl Area {
                 "sensors" | "sensor_configs" | "thresholds" | "offline-alerts"
                 | "check-interval" | "dependencies" => Self::Alerts,
                 "commands" | "packages" | "sources" | "rollback" | "update"
-                | "agent-auto-update" => Self::Updates,
+                | "agent-auto-update" | "software" => Self::Updates,
                 "ai-commands" => Self::Remediation,
                 "probes" => Self::Servers,
                 _ if first == "sites" => Self::Administration,
@@ -805,6 +805,7 @@ mod tests {
             ),
             (&post, "/api/relays/{id}/update", Some(Area::Updates)),
             (&post, "/api/servers/{id}/commands", Some(Area::Updates)),
+            (&post, "/api/servers/{id}/software", Some(Area::Updates)),
             (&get, "/api/commands/{id}", Some(Area::Updates)),
             (&post, "/api/campaigns/{id}/start", Some(Area::Updates)),
             (&get, "/api/software", Some(Area::Updates)),

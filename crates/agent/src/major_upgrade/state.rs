@@ -8,7 +8,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use monitorflow_common::major_upgrade::Phase;
+use monitorflow_common::major_upgrade::{self, Phase};
 use monitorflow_common::proto::v1::MajorUpgradeProgress;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +34,9 @@ pub struct State {
     pub sources_restored: bool,
     #[serde(default)]
     pub disabled_sources: Vec<String>,
+    /// leapp's report (`leapp-report.txt`), as it is, bounded.
+    #[serde(default)]
+    pub report: String,
     /// The boot the upgrade started in, then the one it asked to reboot.
     #[serde(default)]
     pub boot_id: String,
@@ -51,6 +54,7 @@ impl State {
             error: String::new(),
             sources_restored: false,
             disabled_sources: Vec::new(),
+            report: String::new(),
             boot_id: boot_id.to_owned(),
             started_at_unix_ms: now,
             updated_at_unix_ms: now,
@@ -66,7 +70,7 @@ impl State {
         let rebooted = !boot_id.is_empty() && !self.boot_id.is_empty() && boot_id != self.boot_id;
         match self.phase {
             Phase::Rebooting if rebooted => {
-                if same_release(release, &self.to) {
+                if major_upgrade::runs(release, &self.to) {
                     state.phase = Phase::Done;
                 } else {
                     state.phase = Phase::Failed;
@@ -91,25 +95,18 @@ impl State {
             error: self.error.clone(),
             sources_restored: self.sources_restored,
             disabled_sources: self.disabled_sources.clone(),
+            report: self.report.clone(),
             started_at_unix_ms: self.started_at_unix_ms,
             updated_at_unix_ms: self.updated_at_unix_ms,
         }
     }
 }
 
-/// "debian 13" and "debian 13.1" are one release.
-fn same_release(running: &str, target: &str) -> bool {
-    let major = |r: &str| {
-        let (id, version) = r.trim().split_once(' ').unwrap_or((r, ""));
-        format!("{id} {}", version.split('.').next().unwrap_or(""))
-    };
-    major(running) == major(target)
-}
-
 /// "upgrading packages", for an error.
 pub fn doing(phase: Phase) -> &'static str {
     match phase {
         Phase::Starting => "starting",
+        Phase::Preupgrade => "checking with leapp",
         Phase::Sources => "changing the sources",
         Phase::Refreshing => "refreshing the package lists",
         Phase::Upgrading | Phase::FullUpgrade => "upgrading packages",

@@ -22,6 +22,7 @@ import type {
   MajorUpgradeSpec,
   Server,
   SoftwareAction,
+  SoftwareManager,
   SourcesPin,
   ThirdPartyManagerName,
   UpdateSpec,
@@ -113,15 +114,30 @@ export interface WindowDraft {
 }
 
 
-/** The major upgrades this version knows, one release at a time (ADR-0182). */
+/** The major upgrades this version knows, one release at a time, as `common::major_upgrade::KNOWN` (ADR-0182). */
 const DEBIAN_13 = { from: "debian 12", to: "debian 13", fromLabel: "Debian 12 (bookworm)", toLabel: "Debian 13 (trixie)" };
-export const MAJOR_UPGRADES: (typeof DEBIAN_13)[] = [DEBIAN_13];
+const leapp = (id: string, name: string, from: string, to: string): typeof DEBIAN_13 => ({
+  from: `${id} ${from}`,
+  to: `${id} ${to}`,
+  fromLabel: `${name} ${from}`,
+  toLabel: `${name} ${to}`,
+});
+export const MAJOR_UPGRADES: (typeof DEBIAN_13)[] = [
+  DEBIAN_13,
+  { from: "ubuntu 22.04", to: "ubuntu 24.04", fromLabel: "Ubuntu 22.04 (jammy)", toLabel: "Ubuntu 24.04 (noble)" },
+  { from: "ubuntu 24.04", to: "ubuntu 26.04", fromLabel: "Ubuntu 24.04 (noble)", toLabel: "Ubuntu 26.04 (resolute)" },
+  leapp("rhel", "Red Hat Enterprise Linux", "8", "9"),
+  leapp("rhel", "Red Hat Enterprise Linux", "9", "10"),
+  leapp("rocky", "Rocky Linux", "8", "9"),
+  leapp("almalinux", "AlmaLinux", "8", "9"),
+  leapp("almalinux", "AlmaLinux", "9", "10"),
+];
 
 /** "Debian 13 (trixie)" for "debian 13", else the release as given. */
 export function releaseLabel(release: string): string {
-  const known = MAJOR_UPGRADES.find((u) => u.from === release || u.to === release);
-  if (!known) return release;
-  return known.from === release ? known.fromLabel : known.toLabel;
+  const from = MAJOR_UPGRADES.find((u) => u.from === release);
+  if (from) return from.fromLabel;
+  return MAJOR_UPGRADES.find((u) => u.to === release)?.toLabel ?? release;
 }
 
 /** Whether `osVersion` ("debian 12", "debian 12.8") is the release `release`. */
@@ -216,6 +232,8 @@ export interface CampaignDraft {
   windows: WindowDraft[];
   /** Pinned snapshots of the campaign edited or copied, kept as they are: the form does not edit them. */
   pin?: SourcesPin;
+  /** Run again by itself at each window (ADR-0188). */
+  recurring: boolean;
 }
 
 export function newWindow(kind: WindowDraft["kind"] = "weekly"): WindowDraft {
@@ -294,6 +312,7 @@ export function emptyDraft(customerId = ""): CampaignDraft {
     thresholdValue: "0",
     thresholdUnit: "count",
     windows: [],
+    recurring: false,
   };
 }
 
@@ -320,6 +339,8 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
     command_ttl_s: draft.ttl,
     failure_threshold: { value: Number(draft.thresholdValue), unit: draft.thresholdUnit },
     windows,
+    // A major upgrade runs once (ADR-0188).
+    ...(draft.recurring && draft.update !== "major" && { recurring: true }),
   };
   if (draft.update === "software") {
     // A software campaign takes no packages, apps, approvals nor snapshots (ADR-0188).
@@ -423,6 +444,7 @@ export function requestFromCampaign(campaign: CampaignDetail, draft: CampaignDra
     ...(spec.classifications?.length && { classifications: spec.classifications }),
     ...(spec.hold?.length && { hold: spec.hold }),
     ...(campaign.software && { software: softwareSelection(campaign.software) }),
+    ...(campaign.recurring && { recurring: true }),
   };
 }
 
@@ -500,7 +522,17 @@ export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {
     thresholdUnit: campaign.failure_threshold.unit,
     windows: campaign.windows.map(windowDraft),
     ...(campaign.sources && { pin: campaign.sources }),
+    recurring: campaign.recurring ?? false,
   };
+}
+
+/** The system each software manager installs on (ADR-0188). */
+const FAMILY_OF: Record<SoftwareManager, string> = { winget: "windows", apt: "debian", dnf: "rhel" };
+const SOFTWARE_FAMILIES: readonly string[] = Object.values(FAMILY_OF);
+
+/** The OS families software of `managers` goes to; every one when none is chosen yet. */
+export function softwareFamilies(managers: SoftwareManager[]): readonly string[] {
+  return managers.length === 0 ? SOFTWARE_FAMILIES : [...new Set(managers.map((m) => FAMILY_OF[m]))];
 }
 
 /** The name of a copy: "Copy of November updates", cut to the longest name the API takes. */
@@ -513,7 +545,8 @@ export function copyName(name: string): string {
  * peer ID. Only an agent update reaches hosts that take no package updates.
  * Without OS updates (`appsOnly`, the managers chosen), only servers of a
  * platform one of them is for. A software campaign (`software`) targets
- * Windows servers only, whether they take package updates or not.
+ * the servers of the systems its software is for (`true`: every one), whether
+ * they take package updates or not.
  */
 export function campaignTargets(
   servers: Server[],
@@ -522,16 +555,17 @@ export function campaignTargets(
   serverIds: string[],
   agentUpdate = false,
   appsOnly: ThirdPartyManagerName[] | null = null,
-  software = false,
+  software: boolean | readonly string[] = false,
 ): Server[] {
+  const families = software === true ? SOFTWARE_FAMILIES : software || null;
   const named = new Set(serverIds);
   return servers
     .filter(
       (s) =>
         s.customer_id === customerId &&
         s.revoked_at === null &&
-        (software
-          ? s.os_family === "windows"
+        (families
+          ? families.includes(s.os_family)
           : appsOnly
           ? appsOnly.some((m) => managerFits(m, s.os_family))
           : agentUpdate || s.package_updates !== false) &&
@@ -607,6 +641,19 @@ export function validWingetId(id: string): boolean {
   );
 }
 
+/**
+ * Whether `name` is a package name of the distribution the API takes for apt and dnf, as
+ * `valid_package_name`: letters, digits and `.+_:-`, at most 128 bytes, starting with a letter or
+ * digit and ending with one before any trailing `+`.
+ */
+export function validLinuxPackage(name: string): boolean {
+  return (
+    name.length <= 128 &&
+    /^[A-Za-z0-9][A-Za-z0-9._+:-]*$/.test(name) &&
+    /[A-Za-z0-9]$/.test(name.replace(/\++$/, ""))
+  );
+}
+
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 
 function isCount(n: number, max: number): boolean {
@@ -656,6 +703,10 @@ export function validateCampaign(request: CampaignRequest, targets: string[]): s
   const appHold = (request.third_party ?? []).flatMap((s) => s.hold ?? []);
   const badApp = appHold.find((id) => !validWingetId(id));
   if (badApp !== undefined) errors.push(t("campaigns.check.appHoldName", { name: badApp }));
+  if (request.recurring) {
+    if (request.major_upgrade) errors.push(t("campaigns.check.recurringMajor"));
+    else if (!request.windows.some((w) => w.kind !== "once")) errors.push(t("campaigns.check.recurring"));
+  }
   if (request.software) {
     if (request.software.catalog_ids.length === 0) errors.push(t("campaigns.check.software"));
     else if (request.software.catalog_ids.length > MAX_SOFTWARE) {

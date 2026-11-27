@@ -4,12 +4,14 @@
 
 use std::time::Duration;
 
-use monitorflow_common::command::REMOTE_SESSION;
+use monitorflow_common::command::{REMOTE_DESKTOP, REMOTE_SESSION};
 use monitorflow_common::proto::v1::{
     remote_data, remote_frame, RemoteClosed, RemoteData, RemoteFrame, RemoteOpened, RemoteResize,
     RemoteSessionOpen,
 };
-use monitorflow_common::remote::{self as sealing, Channel, ServerHandshake, MAX_CHUNK, TERMINAL};
+use monitorflow_common::remote::{
+    self as sealing, Channel, ServerHandshake, DESKTOP, DESKTOP_WINDOW, MAX_CHUNK, TERMINAL,
+};
 use monitorflow_common::tls::PeerRole;
 use prost::Message;
 use serde_json::json;
@@ -32,13 +34,21 @@ const SEEN_EVERY: Duration = Duration::from_secs(20);
 const IDLE_SLACK: Duration = Duration::from_secs(10);
 /// A session whose agent has no stream anywhere for this long ends.
 const AGENT_GONE: Duration = Duration::from_secs(30);
+/// A desktop's output frames passed on between two `delivered`: a
+/// quarter of the agent's window, so it never waits on a busy link.
+const DELIVERED_EVERY: u64 = DESKTOP_WINDOW / 4;
 
 /// From the browser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FromBrowser {
     Input(Vec<u8>),
-    Resize { cols: u32, rows: u32 },
+    Resize {
+        cols: u32,
+        rows: u32,
+    },
     Close,
+    /// The proxy of a desktop gives up, with why (ADR-0190).
+    Abort(String),
 }
 
 /// To the browser.
@@ -46,7 +56,7 @@ pub enum FromBrowser {
 pub enum ToBrowser {
     /// The command is on its way to the agent.
     Waiting,
-    /// The agent opened the terminal.
+    /// The agent opened the terminal, or reached the RDP service.
     Opened,
     Output(Vec<u8>),
     /// The session ended, with why.
@@ -68,6 +78,8 @@ pub enum AttachError {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Attached {
     pub id: Uuid,
+    /// `terminal` or `desktop`.
+    pub kind: String,
     pub server_id: Uuid,
     pub peer_id: String,
     pub hostname: String,
@@ -79,6 +91,12 @@ pub struct Attached {
     pub cols: u32,
     #[sqlx(skip)]
     pub rows: u32,
+}
+
+impl Attached {
+    fn is_terminal(&self) -> bool {
+        self.kind == TERMINAL
+    }
 }
 
 /// SHA-256 of a session token, as stored.
@@ -103,7 +121,7 @@ struct Recording {
 }
 
 impl RemoteHub {
-    /// Uses the session's one-time token: the session is then this
+    /// Uses the one-time token of a terminal: the session is then this
     /// browser's, and no other can take it.
     pub async fn attach(
         &self,
@@ -115,23 +133,43 @@ impl RemoteHub {
         if !sealing::valid_size(cols, rows) {
             return Err(AttachError::BadSize);
         }
-        let attached: Option<Attached> = sqlx::query_as(
-            "UPDATE remote_sessions r SET connected_at = now(), seen_at = now()
-             FROM servers s
-             WHERE r.id = $1 AND s.id = r.server_id AND r.token_sha256 = $2
-               AND r.connected_at IS NULL AND r.closed_at IS NULL AND r.token_expires_at > now()
-             RETURNING r.id, r.server_id, s.peer_id, s.hostname, r.username, r.requested_by,
-                       r.recorded, r.idle_timeout_seconds",
-        )
-        .bind(session)
-        .bind(token_hash(token))
-        .fetch_optional(&self.inner.pool)
-        .await
-        .map_err(|_| AttachError::Database)?;
-        let mut attached = attached.ok_or(AttachError::Refused)?;
+        let mut attached = self.attach_kind(session, token, TERMINAL).await?;
         attached.cols = cols;
         attached.rows = rows;
         Ok(attached)
+    }
+
+    /// The same for a desktop: its token never opens a terminal, nor a
+    /// terminal's a desktop.
+    pub async fn attach_desktop(
+        &self,
+        session: Uuid,
+        token: &str,
+    ) -> Result<Attached, AttachError> {
+        self.attach_kind(session, token, DESKTOP).await
+    }
+
+    async fn attach_kind(
+        &self,
+        session: Uuid,
+        token: &str,
+        kind: &str,
+    ) -> Result<Attached, AttachError> {
+        let attached: Option<Attached> = sqlx::query_as(
+            "UPDATE remote_sessions r SET connected_at = now(), seen_at = now()
+             FROM servers s
+             WHERE r.id = $1 AND s.id = r.server_id AND r.token_sha256 = $2 AND r.kind = $3
+               AND r.connected_at IS NULL AND r.closed_at IS NULL AND r.token_expires_at > now()
+             RETURNING r.id, r.kind, r.server_id, s.peer_id, s.hostname, r.username,
+                       r.requested_by, r.recorded, r.idle_timeout_seconds",
+        )
+        .bind(session)
+        .bind(token_hash(token))
+        .bind(kind)
+        .fetch_optional(&self.inner.pool)
+        .await
+        .map_err(|_| AttachError::Database)?;
+        attached.ok_or(AttachError::Refused)
     }
 
     /// Runs the session until it ends, and returns why it ended.
@@ -217,7 +255,7 @@ impl RemoteHub {
             ServerHandshake::new().map_err(|e| format!("cannot start the session: {e}"))?;
         let payload = RemoteSessionOpen {
             session_id: attached.id.to_string(),
-            kind: TERMINAL.into(),
+            kind: attached.kind.clone(),
             server_key: handshake.public_key().to_vec(),
             cols: attached.cols,
             rows: attached.rows,
@@ -242,7 +280,7 @@ impl RemoteHub {
                             Some(remote_frame::Body::Opened(opened)) => {
                                 let mut channel = self.prove(attached, handshake, &opened).await?;
                                 self.opened(attached).await;
-                                if size != (attached.cols, attached.rows) {
+                                if attached.is_terminal() && size != (attached.cols, attached.rows) {
                                     let resize = resize(size.0, size.1);
                                     self.to_agent(&attached.peer_id, sealed(attached, &mut channel, &resize)).await;
                                 }
@@ -261,6 +299,7 @@ impl RemoteHub {
                 message = from_browser.recv() => match message {
                     Some(FromBrowser::Resize { cols, rows }) if sealing::valid_size(cols, rows) => size = (cols, rows),
                     Some(FromBrowser::Input(_) | FromBrowser::Resize { .. }) => {}
+                    Some(FromBrowser::Abort(reason)) => return Err(reason),
                     Some(FromBrowser::Close) | None => {
                         return Err(format!("closed by {} before it opened", attached.username));
                     }
@@ -285,7 +324,12 @@ impl RemoteHub {
             &mut *tx,
             &NewCommand {
                 server_id: attached.server_id,
-                kind: REMOTE_SESSION.to_owned(),
+                kind: if attached.is_terminal() {
+                    REMOTE_SESSION
+                } else {
+                    REMOTE_DESKTOP
+                }
+                .to_owned(),
                 payload,
                 ttl: COMMAND_TTL,
                 requested_by: attached.requested_by,
@@ -315,7 +359,7 @@ impl RemoteHub {
                 .ok()?;
         match row? {
             (State::Failed | State::Cancelled, error) => {
-                Some(error.unwrap_or_else(|| "the agent could not open the terminal".into()))
+                Some(error.unwrap_or_else(|| "the agent could not open the session".into()))
             }
             (State::Expired, _) => Some("the agent did not answer in time".into()),
             _ => None,
@@ -377,7 +421,7 @@ impl RemoteHub {
         if let Err(error) = result {
             tracing::error!(session = %attached.id, %error, "cannot record that a remote session opened");
         }
-        tracing::info!(session = %attached.id, agent_id = %attached.peer_id, user = %attached.username, "remote terminal opened");
+        tracing::info!(session = %attached.id, agent_id = %attached.peer_id, user = %attached.username, kind = %attached.kind, "remote session opened");
     }
 
     /// Carries the open session until it ends; returns why.
@@ -400,6 +444,9 @@ impl RemoteHub {
         let mut seen = interval(SEEN_EVERY);
         seen.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut agent_gone_since: Option<Instant> = None;
+        // Desktops: output frames passed on, and the last count the agent
+        // heard.
+        let (mut delivered, mut told) = (0u64, 0u64);
         loop {
             tokio::select! {
                 message = from_browser.recv() => match message {
@@ -419,6 +466,7 @@ impl RemoteHub {
                             self.to_agent(&attached.peer_id, frame).await;
                         }
                     }
+                    Some(FromBrowser::Abort(reason)) => return reason,
                     Some(FromBrowser::Close) | None => return format!("closed by {}", attached.username),
                 },
                 inbound = inbox.recv() => match inbound {
@@ -431,6 +479,14 @@ impl RemoteHub {
                                         self.record(attached, recording, opened_at, &output).await;
                                         if to_browser.send(ToBrowser::Output(output)).await.is_err() {
                                             return format!("closed by {}", attached.username);
+                                        }
+                                        if !attached.is_terminal() {
+                                            delivered += 1;
+                                            if delivered - told >= DELIVERED_EVERY {
+                                                told = delivered;
+                                                let frame = sealed(attached, channel, &sealing::delivered(delivered));
+                                                self.to_agent(&attached.peer_id, frame).await;
+                                            }
                                         }
                                     }
                                     Ok(RemoteData { body: Some(remote_data::Body::Close(reason)) }) => {
@@ -564,7 +620,7 @@ impl RemoteHub {
             .await?;
         }
         tx.commit().await?;
-        tracing::info!(session = %attached.id, agent_id = %attached.peer_id, %reason, seconds = lasted.as_secs(), "remote terminal closed");
+        tracing::info!(session = %attached.id, agent_id = %attached.peer_id, kind = %attached.kind, %reason, seconds = lasted.as_secs(), "remote session closed");
         Ok(())
     }
 }
@@ -580,7 +636,7 @@ async fn audit(
         details.insert("session_id".into(), json!(attached.id));
         details.insert("hostname".into(), json!(attached.hostname));
         details.insert("peer_id".into(), json!(attached.peer_id));
-        details.insert("kind".into(), json!(TERMINAL));
+        details.insert("kind".into(), json!(attached.kind));
     }
     let actor = attached
         .requested_by

@@ -2,9 +2,9 @@
 //! alerts a check gets when it is added with them.
 //!
 //! The checks themselves are ordinary rows of `sensor_configs` of kinds
-//! `postgresql`, `mysql`, `redis` and `docker`, made with the routes of
-//! [`super::sensors`]; a template only says what such a check measures and
-//! which thresholds come with it.
+//! `postgresql`, `mysql`, `mssql`, `redis`, `jmx`, `docker` and
+//! `kubernetes`, made with the routes of [`super::sensors`]; a template
+//! only says what such a check measures and which thresholds come with it.
 
 use axum::Json;
 use monitorflow_apps::templates::{self, Template};
@@ -28,7 +28,8 @@ pub struct TemplateView {
     pub kind: &'static str,
     pub title: &'static str,
     /// `agent_or_probe`: the server's agent, the central server or a
-    /// relay; `agent`: the server's agent only.
+    /// relay; `agent`: the server's agent only; `probe`: the central
+    /// server or a relay only.
     pub runs: &'static str,
     pub default_port: Option<u16>,
     pub params: Vec<ParamView>,
@@ -164,7 +165,10 @@ mod tests {
     #[test]
     fn views_name_full_metrics() {
         let views: Vec<_> = templates::TEMPLATES.iter().map(view).collect();
-        assert_eq!(views.len(), 4);
+        assert_eq!(views.len(), 7);
+        assert_eq!(views[4].kind, "jmx");
+        let k8s = views.iter().find(|v| v.kind == "kubernetes").unwrap();
+        assert_eq!((k8s.runs, k8s.default_port), ("probe", Some(6443)));
         let pg = &views[0];
         assert_eq!(pg.kind, "postgresql");
         assert!(pg
@@ -188,6 +192,9 @@ mod tests {
                 assert!((0..=86_400).contains(&a.duration_s));
             }
         }
-        assert_eq!(views[3].runs, "agent");
+        assert_eq!(views[2].kind, "mssql");
+        assert_eq!(views[5].kind, "docker");
+        assert_eq!(views[5].runs, "agent");
+        assert_eq!(views[4].runs, "agent_or_probe");
     }
 }

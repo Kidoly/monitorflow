@@ -18,7 +18,8 @@ use crate::secrets::{self, Column};
 const MAX_GRANTED_BYTES: usize = 3 * 1024 * 1024;
 
 /// Adds the opened password of a website check (ADR-0150) or an
-/// application check (ADR-0183) to its `params`, as the check reads it.
+/// application check (ADR-0183), or a Kubernetes cluster's token and CA,
+/// to its `params`, as the check reads it.
 /// One that does not open is left out, so the check runs without it and
 /// its failure shows.
 pub(crate) fn with_secret(
@@ -30,12 +31,14 @@ pub(crate) fn with_secret(
         return;
     }
     match secrets::open_stored(Column::SensorConfigs, secret) {
-        Some(Ok(secret)) => {
+        Some(Ok(secret)) if kind == monitorflow_webcheck::KIND => {
             params.insert(
                 monitorflow_webcheck::SECRET_PARAM.into(),
                 secret.expose().to_owned(),
             );
         }
+        // A password, or a cluster's token and CA (ADR-0183).
+        Some(Ok(secret)) => monitorflow_apps::open_into(kind, secret.expose(), params),
         Some(Err(error)) => {
             tracing::warn!(%error, kind, "the password of a check does not open; sent without it")
         }

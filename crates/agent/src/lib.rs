@@ -37,6 +37,7 @@ pub mod sensor_config;
 pub mod sensors;
 #[cfg(unix)]
 pub mod snapshots;
+pub mod software;
 pub mod stream;
 pub mod upload;
 

@@ -456,7 +456,7 @@ function certificate(seed: string) {
 }
 
 function serverDetail(s: DemoServer): ServerDetail {
-  return { ...live(s), certificate: certificate(s.id), ai_commands_change: null };
+  return { ...live(s), certificate: certificate(s.id), ai_commands_change: null, software_off_change: null };
 }
 
 function sourcesOf(s: DemoServer): SourcesStatus {

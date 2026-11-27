@@ -18,13 +18,18 @@ import {
   editMode,
   emptyDraft,
   failedServers,
+  MAJOR_UPGRADES,
   newWindow,
   planWaves,
+  releaseLabel,
   requestFromCampaign,
+  runsRelease,
   searchServers,
   updateSources,
   shortWindow,
+  softwareFamilies,
   toRequest,
+  validLinuxPackage,
   validateCampaign,
 } from "./campaigns";
 
@@ -501,12 +506,44 @@ describe("software and update approvals (ADR-0188)", () => {
     ]);
   });
 
-  it("targets the customer's Windows servers, package updates or not", () => {
+  it("targets the servers of the systems its software is for, package updates or not", () => {
     const servers = [
       server({ id: "w", hostname: "win-1", os_family: "windows", package_updates: false }),
       server({ id: "l", hostname: "web-1" }),
+      server({ id: "r", hostname: "web-2", os_family: "rhel" }),
     ];
-    expect(campaignTargets(servers, "c1", "site-1", [], false, null, true).map((s) => s.id)).toEqual(["w"]);
+    expect(campaignTargets(servers, "c1", "site-1", [], false, null, true).map((s) => s.id)).toEqual(["l", "r", "w"]);
+    const only = (managers: Parameters<typeof softwareFamilies>[0]) =>
+      campaignTargets(servers, "c1", "site-1", [], false, null, softwareFamilies(managers)).map((s) => s.id);
+    expect(only(["winget"])).toEqual(["w"]);
+    expect(only(["apt", "dnf", "apt"])).toEqual(["l", "r"]);
+    expect(only([])).toEqual(["l", "r", "w"]);
+  });
+
+  it("checks package names of the distribution as the API does", () => {
+    for (const ok of ["nginx", "g++", "libstdc++6:amd64", "python3.12"]) expect(validLinuxPackage(ok), ok).toBe(true);
+    for (const bad of ["", "-y", "nginx-", "/tmp/x.deb", "ngin*", "@core", "a b", "x".repeat(129)]) {
+      expect(validLinuxPackage(bad), bad).toBe(false);
+    }
+  });
+
+  it("runs again at each window only with a recurring window, and never a major upgrade", () => {
+    const weekly = newWindow("weekly");
+    const draft = { ...emptyDraft("c1"), name: "Nightly", serverIds: ["s1"], recurring: true };
+    const request = toRequest({ ...draft, windows: [weekly] });
+    expect(request.recurring).toBe(true);
+    expect(validateCampaign(request, ["s1"])).toEqual([]);
+    expect(validateCampaign(toRequest(draft), ["s1"])).toEqual([
+      "A campaign that runs again at each window needs a weekly, monthly or yearly window.",
+    ]);
+    expect(toRequest({ ...draft, windows: [weekly], update: "major" }).recurring).toBeUndefined();
+    expect(validateCampaign({ ...request, major_upgrade: { from: "debian 12", to: "debian 13" } } as CampaignRequest, ["s1"])).toContain(
+      "A major upgrade does not run again at each window.",
+    );
+    const saved = detail({ recurring: true });
+    expect(draftFromCampaign(saved).recurring).toBe(true);
+    expect(requestFromCampaign(saved, draftFromCampaign(saved)).recurring).toBe(true);
+    expect(draftFromCampaign(detail({})).recurring).toBe(false);
   });
 
   it("round-trips a software campaign and approvals through the draft", () => {
@@ -535,5 +572,25 @@ describe("software and update approvals (ADR-0188)", () => {
       third_party: [{ manager: "winget", packages: [], hold: ["7zip.7zip"] }],
     });
     expect(requestFromCampaign(approved, back)).toMatchObject({ classifications: ["Critical Updates"], hold: ["KB1"] });
+  });
+});
+
+describe("major upgrades", () => {
+  it("knows Ubuntu LTS and the RHEL family, one release at a time", () => {
+    expect(MAJOR_UPGRADES.map((u) => `${u.from} > ${u.to}`)).toEqual([
+      "debian 12 > debian 13",
+      "ubuntu 22.04 > ubuntu 24.04",
+      "ubuntu 24.04 > ubuntu 26.04",
+      "rhel 8 > rhel 9",
+      "rhel 9 > rhel 10",
+      "rocky 8 > rocky 9",
+      "almalinux 8 > almalinux 9",
+      "almalinux 9 > almalinux 10",
+    ]);
+    expect(releaseLabel("ubuntu 24.04")).toBe("Ubuntu 24.04 (noble)");
+    expect(releaseLabel("rocky 9")).toBe("Rocky Linux 9");
+    expect(releaseLabel("slackware 15")).toBe("slackware 15");
+    expect(runsRelease("rocky 8.10", "rocky 8")).toBe(true);
+    expect(runsRelease("ubuntu 24.10", "ubuntu 24.04")).toBe(false);
   });
 });

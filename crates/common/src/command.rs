@@ -22,6 +22,9 @@ pub const ROOT_ACTION: &str = "root_action";
 pub const RUN_SCRIPT: &str = "run_script";
 /// Kind of [`crate::proto::v1::RemoteSessionOpen`] commands (ADR-0190).
 pub const REMOTE_SESSION: &str = "remote_session";
+/// Kind of the [`crate::proto::v1::RemoteSessionOpen`] commands of remote
+/// desktops, with a consent of their own (ADR-0190).
+pub const REMOTE_DESKTOP: &str = "remote_desktop";
 /// Kind of [`crate::proto::v1::SelfUpdate`] commands (ADR-0053).
 pub const SELF_UPDATE: &str = "self_update";
 /// Kind of [`crate::proto::v1::TakeSnapshot`] commands (ADR-0094).
@@ -32,6 +35,8 @@ pub const DELETE_SNAPSHOT: &str = "delete_snapshot";
 pub const MAJOR_UPGRADE: &str = "major_upgrade";
 /// Kind of [`crate::proto::v1::SoftwareChange`] commands (ADR-0188).
 pub const SOFTWARE: &str = "software";
+/// Kind of [`crate::proto::v1::SoftwareOff`] commands (ADR-0188).
+pub const SOFTWARE_OFF: &str = "software_off";
 
 /// Package names in an `ApplyUpdates` reach a command line on the agent:
 /// letters, digits and `.+_:-`, at most 128 bytes, not starting with `-` so

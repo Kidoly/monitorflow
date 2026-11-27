@@ -103,8 +103,10 @@ export const en = {
   "agent.aiFromWebNote": "(administrators can then turn AI commands on and off from the server's page; they stay off until someone does. Without it, they can only turn them off)",
   "agent.remoteTerminal": "Allow a remote terminal",
   "agent.remoteTerminalNote": "(people of the roles allowed in Server settings can then open a terminal on the server from its page, as the agent's user unless MF_REMOTE_TERMINAL_USER names another account. Sessions are audited and can be recorded)",
+  "agent.remoteDesktop": "Allow a remote desktop",
+  "agent.remoteDesktopNote": "(Windows servers: people of the roles allowed in Server settings can then open the server's desktop from its page, through its own Remote Desktop service, which must be turned on. They sign in to Windows as usual. Sessions are audited, never recorded)",
   "agent.softwareFromWeb": "Allow installing and removing software from the web interface",
-  "agent.softwareFromWebNote": "(Windows servers: administrators can then install and remove software of the catalogue. Linux comes later)",
+  "agent.softwareFromWebNote": "(administrators can then install and remove software of the catalogue on this server, with winget on Windows, apt or dnf on Linux. The web interface can turn this off later, never on)",
   "command.unavailable": "{name}: {reason}",
   "relay.title": "Install the relay",
   "relay.central":
@@ -312,8 +314,10 @@ export const fr: Translation<typeof en> = {
   "agent.aiFromWebNote": "(les administrateurs peuvent alors activer et désactiver les commandes IA depuis la page du serveur ; elles restent désactivées tant que personne ne le fait. Sans cela, ils peuvent seulement les désactiver)",
   "agent.remoteTerminal": "Autoriser un terminal à distance",
   "agent.remoteTerminalNote": "(les personnes des rôles autorisés dans les réglages du serveur central peuvent alors ouvrir un terminal sur le serveur depuis sa page, avec l’utilisateur de l’agent, sauf si MF_REMOTE_TERMINAL_USER nomme un autre compte. Les sessions sont tracées dans le journal d’audit et peuvent être enregistrées)",
+  "agent.remoteDesktop": "Autoriser un bureau à distance",
+  "agent.remoteDesktopNote": "(serveurs Windows : les personnes des rôles autorisés dans les réglages du serveur central peuvent alors ouvrir le bureau du serveur depuis sa page, par son propre service Bureau à distance, qui doit être activé. Elles se connectent à Windows comme d’habitude. Les sessions sont tracées dans le journal d’audit, jamais enregistrées)",
   "agent.softwareFromWeb": "Autoriser l’installation et la suppression de logiciels depuis l’interface web",
-  "agent.softwareFromWebNote": "(serveurs Windows : les administrateurs peuvent alors installer et supprimer les logiciels du catalogue. Linux viendra plus tard)",
+  "agent.softwareFromWebNote": "(les administrateurs peuvent alors installer et supprimer les logiciels du catalogue sur ce serveur, avec winget sous Windows, apt ou dnf sous Linux. L’interface web peut le désactiver plus tard, jamais l’activer)",
   "command.unavailable": "{name} : {reason}",
   "relay.title": "Installer le relais",
   "relay.central":

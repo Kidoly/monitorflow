@@ -110,21 +110,50 @@ struct Setup {
 }
 
 fn setup(enabled: bool) -> Setup {
+    with(
+        Allowed {
+            terminal: enabled,
+            desktop: false,
+        },
+        Kind::Terminal,
+    )
+}
+
+/// Sessions as `allowed` says, with the handler of `kind`; both kinds
+/// start the fake.
+fn with(allowed: Allowed, kind: Kind) -> Setup {
     let (fake, spawner) = fake();
     let announced: Arc<StdMutex<Vec<String>>> = Arc::default();
     let said = announced.clone();
     let (remote, end) = link(
-        enabled,
+        allowed,
         Box::new(proof("web-1")),
-        spawner,
+        Spawners {
+            terminal: spawner.clone(),
+            desktop: spawner,
+        },
         Arc::new(move |m| said.lock().unwrap().push(m)),
     );
+    let handler = match kind {
+        Kind::Terminal => RemoteSessionHandler::new(remote.clone()),
+        Kind::Desktop => RemoteSessionHandler::desktop(remote.clone()),
+    };
     Setup {
-        handler: RemoteSessionHandler::new(remote.clone()),
+        handler,
         remote,
         end,
         fake,
         announced,
+    }
+}
+
+fn desktop(server: &ServerHandshake) -> RemoteSessionOpen {
+    RemoteSessionOpen {
+        kind: DESKTOP.into(),
+        cols: 0,
+        rows: 0,
+        recorded: false,
+        ..open(server)
     }
 }
 
@@ -432,4 +461,104 @@ async fn a_helper_gets_the_request_on_a_pipe_and_the_terminal_on_stdout() {
         seen.push_str(&String::from_utf8_lossy(&chunk));
     }
     terminal.control.kill();
+}
+
+#[tokio::test]
+async fn a_desktop_needs_its_own_consent_and_its_own_command() {
+    let terminal_only = Allowed {
+        terminal: true,
+        desktop: false,
+    };
+    let setup = with(terminal_only, Kind::Desktop);
+    assert_eq!(setup.handler.acceptance(), CommandAcceptance::Disabled);
+    let server = ServerHandshake::new().unwrap();
+    let output = setup.handler.run(&desktop(&server).encode_to_vec()).await;
+    assert!(output.rejected, "{output:?}");
+    assert!(output.error.unwrap().contains("remote.desktop"));
+
+    // A desktop's consent opens no terminal, and a terminal's command no
+    // desktop: the kind is signed with the command.
+    let desktop_only = Allowed {
+        terminal: false,
+        desktop: true,
+    };
+    let setup = with(desktop_only, Kind::Terminal);
+    assert_eq!(setup.handler.acceptance(), CommandAcceptance::Disabled);
+    assert!(
+        setup
+            .handler
+            .run(&open(&server).encode_to_vec())
+            .await
+            .rejected
+    );
+    let both = Allowed {
+        terminal: true,
+        desktop: true,
+    };
+    let setup = with(both, Kind::Desktop);
+    assert_eq!(setup.handler.acceptance(), CommandAcceptance::Accepted);
+    let output = setup.handler.run(&open(&server).encode_to_vec()).await;
+    assert!(output.rejected, "{output:?}");
+    let setup = with(both, Kind::Terminal);
+    let output = setup.handler.run(&desktop(&server).encode_to_vec()).await;
+    assert!(output.rejected, "{output:?}");
+    assert!(setup.fake.seen.lock().unwrap().specs.is_empty());
+}
+
+#[tokio::test]
+async fn a_desktop_waits_for_the_server_once_its_window_is_full() {
+    let mut setup = with(
+        Allowed {
+            terminal: false,
+            desktop: true,
+        },
+        Kind::Desktop,
+    );
+    let server = ServerHandshake::new().unwrap();
+    let output = setup.handler.run(&desktop(&server).encode_to_vec()).await;
+    assert_eq!(output.error, None, "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("remote desktop"));
+    let frame = setup.end.up.recv().await.unwrap();
+    let Some(remote_frame::Body::Opened(opened)) = frame.body else {
+        panic!("{frame:?}")
+    };
+    let mut channel = server
+        .finish(SESSION, "web-1", &opened, |_| Ok(()))
+        .unwrap();
+    let said = setup.announced.lock().unwrap().clone();
+    assert!(said[0].contains("remote desktop") && !said[0].contains("recorded"));
+
+    // The service sends more than the window: the agent stops at it.
+    let service = setup.fake.output.lock().unwrap()[0].clone();
+    let total = DESKTOP_WINDOW + 5;
+    tokio::spawn(async move {
+        for i in 0..total {
+            service.send(vec![i as u8]).await.unwrap();
+        }
+    });
+    for i in 0..DESKTOP_WINDOW {
+        assert_eq!(
+            next(&mut setup, &mut channel).await.unwrap(),
+            sealing::output(vec![i as u8])
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(setup.end.up.try_recv().is_err(), "sent beyond the window");
+    // A `delivered` beyond what was sent counts for what was sent.
+    setup
+        .end
+        .deliver(sealed(&mut channel, sealing::delivered(u64::MAX)));
+    for i in DESKTOP_WINDOW..total {
+        assert_eq!(
+            next(&mut setup, &mut channel).await.unwrap(),
+            sealing::output(vec![i as u8])
+        );
+    }
+
+    // The service closes its side.
+    setup.fake.output.lock().unwrap().clear();
+    assert_eq!(
+        next(&mut setup, &mut channel).await.unwrap(),
+        sealing::close("the remote desktop service closed the connection")
+    );
 }

@@ -26,6 +26,13 @@ use crate::tls::{PeerIdentity, PeerRole};
 
 /// `RemoteSessionOpen.kind` of a terminal.
 pub const TERMINAL: &str = "terminal";
+/// `RemoteSessionOpen.kind` of a remote desktop: the host's own RDP
+/// service, tunnelled.
+pub const DESKTOP: &str = "desktop";
+/// Output frames of a desktop the agent sends beyond the last
+/// `delivered` the server acknowledged: at most 512 KiB in flight, and
+/// fewer frames than a session's inbox holds on either side.
+pub const DESKTOP_WINDOW: u64 = 128;
 /// Most bytes of input or output in one frame, so a frame stays far below
 /// what a PostgreSQL notification carries between server instances.
 pub const MAX_CHUNK: usize = 4096;
@@ -296,6 +303,13 @@ pub fn input(bytes: Vec<u8>) -> RemoteData {
 pub fn output(bytes: Vec<u8>) -> RemoteData {
     RemoteData {
         body: Some(remote_data::Body::Output(bytes)),
+    }
+}
+
+/// The server passed `frames` output frames of a desktop on.
+pub fn delivered(frames: u64) -> RemoteData {
+    RemoteData {
+        body: Some(remote_data::Body::Delivered(frames)),
     }
 }
 

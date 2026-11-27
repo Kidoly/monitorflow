@@ -30,8 +30,8 @@ use super::{ApiError, ApiState};
 use crate::campaign::query::{self, ListFilter, Listed, TargetRow, WaveCounts, WaveRow};
 use crate::campaign::{
     Action, CampaignError, CampaignState, CampaignStore, FailureThreshold, MajorUpgradeSpec,
-    NewCampaign, RunSettings, SoftwareSpec, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec,
-    Window,
+    NewCampaign, PinnedMirror, RunSettings, SoftwareSpec, SourcesMode, SourcesPin, ThirdPartySpec,
+    UpdateSpec, WaveSpec, Window,
 };
 use crate::commands::sources::{self, KeyLookupError};
 
@@ -104,9 +104,18 @@ pub struct CreateRequest {
     #[serde(default)]
     pub hold: Vec<String>,
     /// Install or remove software from the catalogue instead of updating
-    /// (ADR-0188): Windows servers whose administrator allowed it, with
-    /// `allow_reboot`; takes no other package option nor `sources`.
+    /// (ADR-0188): each server gets the packages of its manager (winget,
+    /// apt or dnf), where its administrator allowed it, with
+    /// `allow_reboot`; takes no other package option. `sources` may only
+    /// add mirrors; without it, the mirrors the entries install from are
+    /// added, pinned to their newest published snapshot.
     pub software: Option<SoftwareRequest>,
+    /// Run again by itself at the first window that opens after each run
+    /// completes, as "Run again" does (ADR-0188). Needs a weekly, monthly
+    /// or yearly window; not for major upgrades. A failed or stopped run
+    /// ends it until someone runs the campaign again.
+    #[serde(default)]
+    pub recurring: bool,
 }
 
 /// Servers by status; `failed` includes expired commands and skipped
@@ -162,6 +171,8 @@ pub struct CampaignView {
     /// Set for a software campaign: what it installs or removes, as the
     /// catalogue held it when the campaign was saved (ADR-0188).
     pub software: Option<SoftwareSpec>,
+    /// Run again by itself at each window once a run completed (ADR-0188).
+    pub recurring: bool,
     /// The `server_ids` of the request, as last written; `null` for a
     /// campaign made before they were kept (ADR-0179).
     pub server_ids: Option<Vec<Uuid>>,
@@ -337,6 +348,7 @@ async fn views(state: &ApiState, rows: Vec<Listed>) -> Result<Vec<CampaignView>,
                         mirrors: pins.remove(&c.id).unwrap_or_default(),
                     }),
                     software: c.software().cloned(),
+                    recurring: c.recurring,
                     agent_version: c.agent_version,
                     major_upgrade: c.major_upgrade.map(|m| m.0),
                     server_ids: c.requested_server_ids,
@@ -470,6 +482,7 @@ async fn new_campaign(
     state: &ApiState,
     user: &CurrentUser,
     request: CreateRequest,
+    existing: Option<Uuid>,
 ) -> Result<NewCampaign, ApiError> {
     authorize_customer(user, request.customer_id, true)?;
     validate_name(&request.name).map_err(|e| ApiError::Invalid(e.to_string()))?;
@@ -482,7 +495,15 @@ async fn new_campaign(
     if request.site_id.is_none() && request.server_ids.is_empty() {
         return Err(ApiError::Invalid("give a site_id or server_ids".into()));
     }
-    if request.sources.is_some() {
+    let software = match &request.software {
+        Some(software) => Some(resolve(&state.pool, request.customer_id, software).await?),
+        None => None,
+    };
+    let sources = match (&software, request.sources) {
+        (Some(software), None) => software_sources(state, software, existing).await?,
+        (_, sources) => sources,
+    };
+    if sources.is_some() {
         check_sources(state).await?;
     }
     let agent_version = request
@@ -491,10 +512,6 @@ async fn new_campaign(
         .map(str::parse::<Version>)
         .transpose()
         .map_err(|_| ApiError::Invalid("agent_version must be like 0.2.0".into()))?;
-    let software = match &request.software {
-        Some(software) => Some(resolve(&state.pool, request.customer_id, software).await?),
-        None => None,
-    };
     Ok(NewCampaign {
         customer_id: request.customer_id,
         name: request.name,
@@ -513,12 +530,73 @@ async fn new_campaign(
         command_ttl: Duration::from_secs(ttl),
         failure_threshold: request.failure_threshold,
         windows: request.windows,
-        sources: request.sources,
+        sources,
         agent_version,
         major_upgrade: request.major_upgrade,
         software,
+        recurring: request.recurring,
         created_by: Some(user.id),
     })
+}
+
+/// The sources a software campaign adds for the mirrors its packages
+/// install from (ADR-0188): the pins the campaign `existing` holds when
+/// they name the same mirrors, so an edit keeps them, else each mirror's
+/// newest published snapshot. `None` without mirrors.
+async fn software_sources(
+    state: &ApiState,
+    software: &SoftwareSpec,
+    existing: Option<Uuid>,
+) -> Result<Option<SourcesPin>, ApiError> {
+    let mut wanted = software.mirrors();
+    if wanted.is_empty() {
+        return Ok(None);
+    }
+    wanted.sort();
+    if let Some(id) = existing {
+        let mode: Option<SourcesMode> =
+            sqlx::query_scalar("SELECT sources_mode FROM campaigns WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&state.pool)
+                .await?
+                .flatten();
+        let pins: Vec<PinnedMirror> = query::pins(&state.pool, &[id])
+            .await?
+            .into_iter()
+            .map(|(_, pin)| pin)
+            .collect();
+        let mut names: Vec<String> = pins.iter().map(|p| p.name.clone()).collect();
+        names.sort();
+        if mode == Some(SourcesMode::Add) && names == wanted {
+            return Ok(Some(SourcesPin {
+                mode: SourcesMode::Add,
+                mirrors: pins,
+            }));
+        }
+    }
+    let mut mirrors = Vec::with_capacity(wanted.len());
+    for name in wanted {
+        let snapshot: Option<String> = sqlx::query_scalar(
+            "SELECT s.name FROM mirror_snapshots s JOIN mirrors m ON m.id = s.mirror_id
+             WHERE m.name = $1 AND m.deleting_at IS NULL AND s.state = 'published'
+             ORDER BY s.published_at DESC, s.name DESC LIMIT 1",
+        )
+        .bind(&name)
+        .fetch_optional(&state.pool)
+        .await?;
+        let snapshot = snapshot.ok_or_else(|| {
+            ApiError::Invalid(format!(
+                "mirror `{}`, which some of this software installs from, has no published \
+                 snapshot yet",
+                name.escape_debug()
+            ))
+        })?;
+        mirrors.push(PinnedMirror { name, snapshot });
+    }
+    Ok(Some(SourcesPin {
+        mode: SourcesMode::Add,
+        mirrors,
+    }))
 }
 
 /// Refuses a major upgrade of servers that cannot get a snapshot first,
@@ -568,7 +646,7 @@ pub async fn create(
     request: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<CampaignDetail>), ApiError> {
     let request = body(request)?;
-    let new = new_campaign(&state, &user, request).await?;
+    let new = new_campaign(&state, &user, request, None).await?;
     check_rollback(&state, &user, &new).await?;
     let actor = user.id.to_string();
     let row = CampaignStore::new(state.pool.clone())
@@ -591,7 +669,7 @@ pub async fn update(
     let customer = customer_of(&state, &user, id).await?;
     authorize_customer(&user, customer, true)?;
     let request = body(request)?;
-    let new = new_campaign(&state, &user, request).await?;
+    let new = new_campaign(&state, &user, request, Some(id)).await?;
     check_rollback(&state, &user, &new).await?;
     let actor = user.id.to_string();
     let row = CampaignStore::new(state.pool.clone())

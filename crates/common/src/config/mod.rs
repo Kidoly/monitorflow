@@ -532,6 +532,10 @@ pub struct AgentRemoteConfig {
     /// unset, never root unless named here. A root helper checks the
     /// signed command before it starts the shell as that account.
     pub terminal_user: Option<String>,
+    /// Opens remote desktops, Windows only: the agent then carries the
+    /// host's own RDP service on 127.0.0.1:3389, and nothing else, to the
+    /// web interface. Off unless enabled here.
+    pub desktop: bool,
 }
 
 /// A local account name the remote terminal may run as: letters, digits

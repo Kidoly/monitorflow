@@ -18,6 +18,8 @@ import { usePolledData } from "@/lib/usePolledData";
 import styles from "./AdminPages.module.css";
 import own from "./IntegrationsCatalogue.module.css";
 import { psaStatus } from "./IntegrationsCatalogue";
+import { PsaAssets } from "./PsaAssets";
+import { PsaCustomerLinks } from "./PsaCustomerLinks";
 import { PsaSiteLinks } from "./PsaSiteLinks";
 import { PsaTickets } from "./PsaTickets";
 import { Breadcrumb } from "./ui/Breadcrumb";
@@ -75,8 +77,10 @@ function HaloPsa() {
       <ConnectionForm key={data.connection?.updated_at ?? "new"} saved={data.connection} onSaved={refresh} />
       {data.connection ? (
         <>
+          <PsaCustomerLinks key={`customers-${data.connection.base_url}`} connection={data.connection} onSaved={refresh} />
           <PsaSiteLinks key={data.connection.base_url} />
           <PsaTickets key={`tickets-${data.connection.base_url}`} connection={data.connection} onSaved={refresh} />
+          <PsaAssets key={`assets-${data.connection.base_url}`} />
         </>
       ) : (
         <p className={styles.footnote}>

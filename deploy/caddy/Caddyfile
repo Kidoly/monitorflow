@@ -93,8 +93,11 @@
 		# Next's static export uses inline scripts. Each page carries a CSP
 		# <meta> allowing its own by hash, and the browser enforces both
 		# policies, so 'unsafe-inline' here lets no other inline script run
-		# (ADR-0124). Everything else is same-origin only.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		# (ADR-0124). Everything else is same-origin only, but for the
+		# remote desktop's WebAssembly client (ADR-0190): 'wasm-unsafe-eval'
+		# compiles it, and `data:` lets it read its module from its own
+		# script, which reaches no network.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 		-Server
 	}
 

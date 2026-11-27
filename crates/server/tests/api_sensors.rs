@@ -768,6 +768,85 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn kubernetes_checks_seal_their_token_and_ca(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let f = fleet(&pool).await;
+        let operator = session(&pool, "op", Role::Operator, Some(f.paris)).await;
+        let (status, device) = call(&pool, &operator, "POST", "/api/devices", Some(json!({
+            "site_id": f.paris, "name": "k8s-prod", "address": "192.0.2.60"
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{device}");
+        let device = device["id"].as_str().unwrap().to_owned();
+        let uri = format!("/api/servers/{device}/sensor_configs");
+        let mut params = rcgen::CertificateParams::default();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let ca = params.self_signed(&rcgen::KeyPair::generate().unwrap()).unwrap().pem();
+        let token = "eyJhbGciOiJSUzI1NiJ9.k8s-s3cret-token.sig";
+
+        // Run by a probe only, never by an agent.
+        let (status, body) = call(&pool, &operator, "POST",
+            &format!("/api/servers/{}/sensor_configs", f.paris_server),
+            Some(json!({"kind": "kubernetes", "interval_ms": 60_000, "params": {"host": "192.0.2.61", "token": token}}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("set `probe`"), "{body}");
+        // A CA that is not one is refused.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "kubernetes", "interval_ms": 60_000, "probe": "central",
+            "params": {"token": token, "ca_certificate": "not a certificate"}
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "kubernetes", "interval_ms": 60_000, "probe": "central", "default_alerts": true,
+            "params": {"token": token, "ca_certificate": ca, "namespaces": "^shop"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["secret_set"], true);
+        let text = body.to_string();
+        assert!(!text.contains("k8s-s3cret") && !text.contains("BEGIN CERTIFICATE"), "{body}");
+        assert_eq!(body["params"], json!({"namespaces": "^shop"}));
+        let id = body["id"].as_str().unwrap().to_owned();
+        let alerts: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM thresholds WHERE server_id = $1::uuid AND metric LIKE 'monitorflow_kubernetes_%'")
+            .bind(&device).fetch_one(&pool).await.unwrap();
+        assert_eq!(alerts, 11);
+
+        // The probe gets both, at the device's address.
+        let probe_params = || async {
+            let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+            sets["central"].checks.iter().find(|c| c.kind == "kubernetes").unwrap().config.params.clone()
+        };
+        let sent = probe_params().await;
+        assert_eq!(sent["token"], token);
+        assert_eq!(sent["ca_certificate"], ca);
+        assert_eq!(sent["host"], "192.0.2.60");
+
+        // An update without the token keeps both; the CA alone is refused;
+        // a new token without a CA replaces both.
+        let row = |params: Value| json!({"kind": "kubernetes", "interval_ms": 120_000, "probe": "central", "params": params});
+        let put = format!("/api/sensor_configs/{id}");
+        let (status, body) = call(&pool, &operator, "PUT", &put, Some(row(json!({})))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(probe_params().await["ca_certificate"], ca);
+        let (status, body) = call(&pool, &operator, "PUT", &put, Some(row(json!({"ca_certificate": ca})))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("`token` must be given with `ca_certificate`"), "{body}");
+        let (status, body) = call(&pool, &operator, "PUT", &put, Some(row(json!({"host": "192.0.2.99"})))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("`token`"), "{body}");
+        let (status, body) = call(&pool, &operator, "PUT", &put, Some(row(json!({"token": "new-token-value"})))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let sent = probe_params().await;
+        assert_eq!(sent["token"], "new-token-value");
+        assert!(!sent.contains_key("ca_certificate"));
+
+        for (_, _, details) in audit(&pool).await {
+            let text = details.to_string();
+            assert!(!text.contains("k8s-s3cret") && !text.contains("new-token-value") && !text.contains("BEGIN"), "{text}");
+        }
+    }
+
+    #[sqlx::test]
     async fn application_checks_keep_their_password_and_bring_their_alerts(pool: PgPool) {
         monitorflow_server::secrets::install_for_tests();
         let f = fleet(&pool).await;
@@ -779,7 +858,7 @@ db_tests! {
         assert_eq!(status, StatusCode::OK);
         let kinds: Vec<&str> = body["templates"].as_array().unwrap().iter()
             .map(|t| t["kind"].as_str().unwrap()).collect();
-        assert_eq!(kinds, ["postgresql", "mysql", "redis", "docker"]);
+        assert_eq!(kinds, ["postgresql", "mysql", "mssql", "redis", "jmx", "docker", "kubernetes"]);
 
         // Bad parameters are refused as the agent would.
         let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
@@ -847,9 +926,79 @@ db_tests! {
             .fetch_one(&pool).await.unwrap();
         assert_eq!(redis_alerts, 0);
 
+        // SQL Server from the central server, with its alerts.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "mssql", "interval_ms": 60_000, "probe": "central", "default_alerts": true,
+            "params": {"host": "10.0.0.13", "password": "mssql-pw"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["secret_set"], true);
+        assert!(!body.to_string().contains("mssql-pw"), "{body}");
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let mssql = sets["central"].checks.iter().find(|c| c.kind == "mssql").unwrap();
+        assert_eq!(mssql.config.params["password"], "mssql-pw");
+        let ple: (Option<f64>, i32) = sqlx::query_as(
+            "SELECT warning, duration_s FROM thresholds WHERE server_id = $1
+             AND metric = 'monitorflow_mssql_page_life_expectancy_seconds'")
+            .bind(f.paris_server).fetch_one(&pool).await.unwrap();
+        assert_eq!(ple, (Some(300.0), 900));
+
         for (_, _, details) in audit(&pool).await {
             let text = details.to_string();
             assert!(!text.contains("pg-s3cret") && !text.contains("r3dis-pw"), "{text}");
+            assert!(!text.contains("mssql-pw"), "{text}");
+        }
+    }
+
+    #[sqlx::test]
+    async fn jmx_checks_send_their_password_over_https_only(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let f = fleet(&pool).await;
+        let operator = session(&pool, "op", Role::Operator, Some(f.paris)).await;
+        let uri = format!("/api/servers/{}/sensor_configs", f.paris_server);
+
+        // From a probe over plain HTTP, the password would cross the
+        // network in clear.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "jmx", "interval_ms": 60_000, "probe": "central",
+            "params": {"host": "10.0.0.20", "user": "monitorflow", "password": "jmx-s3cret"}
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("HTTPS"), "{body}");
+
+        // Over HTTPS from the central server, sealed and sent to it alone.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "jmx", "interval_ms": 60_000, "probe": "central", "default_alerts": true,
+            "params": {"host": "10.0.0.20", "tls": "verify", "groups": "kafka",
+                "user": "monitorflow", "password": "jmx-s3cret"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["secret_set"], true);
+        assert!(!body.to_string().contains("jmx-s3cret"), "{body}");
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let jmx = sets["central"].checks.iter().find(|c| c.kind == "jmx").unwrap();
+        assert_eq!(jmx.config.params["password"], "jmx-s3cret");
+        let metrics: Vec<String> = sqlx::query_scalar(
+            "SELECT metric FROM thresholds WHERE server_id = $1 ORDER BY metric")
+            .bind(f.paris_server).fetch_all(&pool).await.unwrap();
+        for metric in ["monitorflow_jmx_up", "monitorflow_jmx_heap_usage_ratio",
+            "monitorflow_jmx_gc_time_ratio", "monitorflow_jmx_kafka_under_min_isr"] {
+            assert!(metrics.contains(&metric.to_owned()), "{metrics:?}");
+        }
+
+        // On the agent, to the loopback over HTTP.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "jmx", "name": "tomcat", "interval_ms": 60_000,
+            "params": {"port": 8778, "groups": "tomcat", "user": "monitorflow", "password": "jmx-s3cret"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "jmx", "name": "jvm2", "interval_ms": 60_000, "params": {"groups": "jetty"}
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        for (_, _, details) in audit(&pool).await {
+            assert!(!details.to_string().contains("jmx-s3cret"), "{details}");
         }
     }
 }

@@ -1,7 +1,7 @@
 # ADR-0164: PSA connection, HaloPSA first
 
 Date: 2026-11-21
-Status: proposed
+Status: proposed; first version in ADR-0166, the rest in ADR-0191
 
 ## Context
 

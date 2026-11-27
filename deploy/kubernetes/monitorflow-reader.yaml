@@ -1,0 +1,57 @@
+# What MonitorFlow's Kubernetes check needs in a cluster (ADR-0183): a
+# service account that may only get and list nodes, pods, persistent
+# volume claims, deployments, stateful sets and daemon sets, and a
+# long-lived token for it. Nothing here can change the cluster, read a
+# secret or open a shell in a pod.
+#
+#   kubectl apply -f monitorflow-reader.yaml
+#   kubectl -n monitorflow get secret monitorflow-reader-token -o jsonpath='{.data.token}' | base64 -d
+#
+# The guide "How to monitor Kubernetes" walks through it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitorflow
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitorflow-reader
+  namespace: monitorflow
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: monitorflow-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "persistentvolumeclaims"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: monitorflow-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: monitorflow-reader
+subjects:
+  - kind: ServiceAccount
+    name: monitorflow-reader
+    namespace: monitorflow
+---
+# A token that does not expire, revoked by deleting this secret. Prefer
+# `kubectl create token monitorflow-reader --duration=8760h` to have one
+# that expires, and enter the new one on the check before it does.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: monitorflow-reader-token
+  namespace: monitorflow
+  annotations:
+    kubernetes.io/service-account.name: monitorflow-reader
+type: kubernetes.io/service-account-token

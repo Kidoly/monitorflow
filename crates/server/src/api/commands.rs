@@ -84,7 +84,9 @@ pub struct CreateRequest {
     #[serde(default)]
     pub hold: Vec<String>,
     /// `software`: what to install or remove, from the catalogue
-    /// (ADR-0188). `allow_reboot` applies to it too.
+    /// (ADR-0188): the entries of the server's manager (winget, apt or
+    /// dnf), none that installs from a mirror, which takes a campaign.
+    /// `allow_reboot` applies to it too.
     pub software: Option<SoftwareRequest>,
     /// Seconds the agent may still start it; [`MIN_TTL_S`] to
     /// [`MAX_TTL_S`], default [`DEFAULT_TTL_S`].
@@ -185,6 +187,7 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
             }),
             Err(_) => Value::Null,
         },
+        command::SOFTWARE_OFF => json!({}),
         command::SOFTWARE => match SoftwareChange::decode(payload) {
             Ok(p) => json!({
                 "action": software::action_key(p.action()),
@@ -387,8 +390,8 @@ pub async fn create(
 }
 
 /// A `software` command (ADR-0188): software from the catalogue of the
-/// server's customer, for a Windows server whose administrator allowed
-/// it.
+/// server's customer, the packages of the server's manager, where its
+/// administrator allowed it.
 async fn create_software(
     state: &ApiState,
     user: &CurrentUser,
@@ -414,7 +417,7 @@ async fn create_software(
         .as_ref()
         .ok_or_else(|| ApiError::Invalid("software is required".into()))?;
     let ttl = ttl(request.ttl_s)?;
-    if target.os_family != "windows" {
+    if monitorflow_common::software::manager_for(&target.os_family).is_none() {
         return Err(ApiError::Invalid(format!(
             "software deployment is not available on {} servers yet",
             target.os_family
@@ -427,11 +430,21 @@ async fn create_software(
     .bind(target.id)
     .fetch_one(&state.pool)
     .await?;
-    if let Some(refusal) = software_refusal(state_word.as_deref()) {
+    if let Some(refusal) = software_refusal(state_word.as_deref(), &target.os_family) {
         return Err(ApiError::Conflict(refusal.into()));
     }
     let spec = resolve(&state.pool, customer, software).await?;
-    let payload = spec.change(request.allow_reboot).encode_to_vec();
+    if !spec.mirrors().is_empty() {
+        return Err(ApiError::Invalid(
+            "this software installs from a mirror: install it with a campaign, which adds the \
+             mirror to the server's sources first"
+                .into(),
+        ));
+    }
+    let payload = spec
+        .change_for(&target.os_family, request.allow_reboot)
+        .map_err(ApiError::Invalid)?
+        .encode_to_vec();
     queue(state, user, target, &request.kind, payload, ttl).await
 }
 

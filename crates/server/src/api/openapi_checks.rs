@@ -189,7 +189,8 @@ fn check_usage() {}
 #[utoipa::path(get, path = "/api/v1/check-templates", tag = "sensors",
     summary = "List the ready-made application checks",
     description = "The templates of the ready-made application checks (ADR-0183): PostgreSQL \
-(`postgresql`), MySQL and MariaDB (`mysql`), Redis (`redis`) and Docker containers (`docker`). Each says who \
+(`postgresql`), MySQL and MariaDB (`mysql`), SQL Server (`mssql`), Redis (`redis`), Java virtual machines \
+through Jolokia (`jmx`) and Docker containers (`docker`). Each says who \
 runs it (`agent_or_probe`: the server's agent against `127.0.0.1`, or the central server or a relay against \
 the server's or device's address; `agent`: the server's agent only), its parameters with their defaults, the \
 metrics it writes, and the alerts that come with it. Metrics are named after the check: \
@@ -197,7 +198,7 @@ metrics it writes, and the alerts that come with it. Metrics are named after the
 A check is added with `POST /api/v1/servers/{id}/sensor_configs` (or a site's), with its `kind`, its \
 `params` (the `password` is kept sealed and never returned) and `\"default_alerts\": true` to add the \
 template's alerts as ordinary thresholds where the server or site has none on that metric yet. The account \
-should be read-only: the guides list the least privileges per database.\n\n\
+should be read-only: the guides list the least privileges per application.\n\n\
 **Who**: any role. **Area**: `alerts`.",
     responses(
         (status = 200, description = "The templates", body = check_templates::CheckTemplates,

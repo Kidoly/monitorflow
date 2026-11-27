@@ -35,6 +35,18 @@ pub struct Inner {
     pub ticket_refusal: Mutex<Option<(u16, String)>>,
     /// Requires `category_1` on new tickets, as some instances do.
     pub category_required: Mutex<bool>,
+    /// What `GET /api/Tickets/{id}` answers, by id; `null` answers 404.
+    /// A ticket created and not set here is New and unassigned.
+    pub ticket_states: Mutex<HashMap<i64, Value>>,
+    /// When set, `GET /api/Tickets/{id}` answers 429 with this
+    /// `Retry-After`.
+    pub rate_limited: Mutex<Option<u64>>,
+    /// Assets of the instance, created or given by a test.
+    pub assets: Mutex<Vec<Value>>,
+    /// Bodies posted to `/api/Asset`.
+    pub asset_posts: Mutex<Vec<Value>>,
+    /// Refuses ticket bodies naming assets, as an instance might.
+    pub assets_refused: Mutex<bool>,
 }
 
 #[derive(Clone)]
@@ -57,6 +69,14 @@ impl FakeHalo {
             .route("/api/Category", get(categories))
             .route("/api/Status", get(statuses))
             .route("/api/Tickets", post(tickets).get(find_tickets))
+            .route("/api/Tickets/{id}", get(ticket))
+            .route("/api/Agent/{id}", get(agent))
+            .route("/api/TicketType/{id}", get(ticket_type))
+            .route("/api/Priority", get(priorities))
+            .route("/api/AssetType", get(asset_types))
+            .route("/api/AssetType/{id}", get(asset_type))
+            .route("/api/Asset", get(list_assets).post(save_asset))
+            .route("/api/Asset/{id}", get(one_asset))
             .route("/api/Actions", post(actions))
             .with_state(inner.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -92,7 +112,35 @@ impl FakeHalo {
     pub fn require_category(&self) {
         *self.inner.category_required.lock().unwrap() = true;
     }
+
+    /// Sets what reading the ticket `id` back answers.
+    pub fn set_ticket(&self, id: i64, state: Value) {
+        self.inner.ticket_states.lock().unwrap().insert(id, state);
+    }
+
+    pub fn rate_limit(&self, retry_after: Option<u64>) {
+        *self.inner.rate_limited.lock().unwrap() = retry_after;
+    }
+
+    pub fn add_asset(&self, asset: Value) {
+        self.inner.assets.lock().unwrap().push(asset);
+    }
+
+    pub fn assets(&self) -> Vec<Value> {
+        self.inner.assets.lock().unwrap().clone()
+    }
+
+    pub fn asset_posts(&self) -> Vec<Value> {
+        self.inner.asset_posts.lock().unwrap().clone()
+    }
+
+    pub fn refuse_assets_on_tickets(&self) {
+        *self.inner.assets_refused.lock().unwrap() = true;
+    }
 }
+
+/// The agent a test assigns tickets to.
+pub const TECHNICIAN: (i64, &str) = (7, "Alice Martin");
 
 async fn token(
     State(inner): State<Arc<Inner>>,
@@ -292,6 +340,9 @@ async fn tickets(
         return (StatusCode::BAD_REQUEST, "Expected an array").into_response();
     };
     let creating = ticket.get("id").is_none();
+    if creating && ticket.get("assets").is_some() && *inner.assets_refused.lock().unwrap() {
+        return (StatusCode::BAD_REQUEST, "Unknown field assets").into_response();
+    }
     if creating
         && *inner.category_required.lock().unwrap()
         && ticket
@@ -350,4 +401,210 @@ async fn actions(
         .unwrap_or(Value::Null);
     inner.actions.lock().unwrap().push(action.clone());
     (StatusCode::CREATED, Json(action)).into_response()
+}
+
+async fn ticket(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if !authorized(&inner, &headers, format!("GET /api/Tickets/{id}")) {
+        return unauthorized();
+    }
+    if let Some(seconds) = *inner.rate_limited.lock().unwrap() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("retry-after", seconds.to_string())],
+            "Too many requests",
+        )
+            .into_response();
+    }
+    if let Some(state) = inner.ticket_states.lock().unwrap().get(&id).cloned() {
+        if state.is_null() {
+            return (StatusCode::NOT_FOUND, "Ticket not found").into_response();
+        }
+        let mut answer =
+            json!({"id": id, "status_id": 1, "agent_id": 1, "deleted": false, "merged_into_id": 0});
+        for (k, v) in state.as_object().cloned().unwrap_or_default() {
+            answer[k] = v;
+        }
+        return Json(answer).into_response();
+    }
+    let created = inner.tickets.lock().unwrap().len() as i64;
+    if id > 5000 && id <= 5000 + created {
+        Json(
+            json!({"id": id, "status_id": 1, "agent_id": 1, "deleted": false, "merged_into_id": 0}),
+        )
+        .into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Ticket not found").into_response()
+    }
+}
+
+async fn agent(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if !authorized(&inner, &headers, format!("GET /api/Agent/{id}")) {
+        return unauthorized();
+    }
+    match id {
+        42 => Json(json!({"id": 42, "name": AGENT})).into_response(),
+        7 => Json(json!({"id": 7, "name": TECHNICIAN.1})).into_response(),
+        _ => (StatusCode::NOT_FOUND, "Agent not found").into_response(),
+    }
+}
+
+async fn ticket_type(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if !authorized(&inner, &headers, format!("GET /api/TicketType/{id}")) {
+        return unauthorized();
+    }
+    let sla = if id == 3 { 2 } else { 1 };
+    Json(json!({"id": id, "name": "Incident", "default_sla": sla, "default_priority": 3}))
+        .into_response()
+}
+
+async fn priorities(State(inner): State<Arc<Inner>>, headers: HeaderMap) -> Response {
+    if !authorized(&inner, &headers, "GET /api/Priority".into()) {
+        return unauthorized();
+    }
+    Json(json!([
+        {"id": "6f1c0c1e-0001-4000-8000-000000000001", "priorityid": 1, "name": "Critical", "slaid": 1},
+        {"id": "6f1c0c1e-0001-4000-8000-000000000002", "priorityid": 2, "name": "High", "slaid": 1},
+        {"id": "6f1c0c1e-0001-4000-8000-000000000003", "priorityid": 3, "name": "Medium", "slaid": 1},
+        {"id": "6f1c0c1e-0002-4000-8000-000000000001", "priorityid": 1, "name": "P1", "slaid": 2},
+    ]))
+    .into_response()
+}
+
+async fn asset_types(State(inner): State<Arc<Inner>>, headers: HeaderMap) -> Response {
+    if !authorized(&inner, &headers, "GET /api/AssetType".into()) {
+        return unauthorized();
+    }
+    Json(json!([
+        {"id": 4, "name": "Workstation"},
+        {"id": 3, "name": "Server"},
+        {"id": 9, "name": "Retired", "inactive": true},
+    ]))
+    .into_response()
+}
+
+async fn asset_type(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if !authorized(
+        &inner,
+        &headers,
+        query_line(&format!("/api/AssetType/{id}"), &query),
+    ) {
+        return unauthorized();
+    }
+    match id {
+        3 => Json(json!({"id": 3, "name": "Server", "fields": [
+            {"id": 12, "name": "Serial Number"},
+            {"id": 13, "name": "Manufacturer"},
+            {"id": 14, "name": "Model"},
+        ]}))
+        .into_response(),
+        // Without its fields: they come from one of its assets.
+        4 => Json(json!({"id": 4, "name": "Workstation"})).into_response(),
+        _ => (StatusCode::NOT_FOUND, "Asset type not found").into_response(),
+    }
+}
+
+async fn list_assets(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if !authorized(&inner, &headers, query_line("/api/Asset", &query)) {
+        return unauthorized();
+    }
+    let client: Option<i64> = query.get("client_id").and_then(|v| v.parse().ok());
+    let kind: Option<i64> = query.get("assettypes").and_then(|v| v.parse().ok());
+    let size: usize = query
+        .get("page_size")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    let page: usize = query
+        .get("page_no")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let found: Vec<Value> = inner
+        .assets
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| client.is_none() || a["client_id"].as_i64() == client)
+        .filter(|a| kind.is_none() || a["assettype_id"].as_i64() == kind)
+        .filter(|a| !a["inactive"].as_bool().unwrap_or(false))
+        .skip(size * page.saturating_sub(1))
+        .take(size)
+        .cloned()
+        .collect();
+    Json(json!({"record_count": found.len(), "assets": found})).into_response()
+}
+
+async fn one_asset(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if !authorized(&inner, &headers, format!("GET /api/Asset/{id}")) {
+        return unauthorized();
+    }
+    match inner
+        .assets
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"].as_i64() == Some(id))
+    {
+        Some(asset) => Json(asset.clone()).into_response(),
+        None => (StatusCode::NOT_FOUND, "Asset not found").into_response(),
+    }
+}
+
+async fn save_asset(
+    State(inner): State<Arc<Inner>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    if !authorized(&inner, &headers, "POST /api/Asset".into()) {
+        return unauthorized();
+    }
+    let Some(asset) = body.as_array().and_then(|a| a.first()).cloned() else {
+        return (StatusCode::BAD_REQUEST, "Expected an array").into_response();
+    };
+    inner.asset_posts.lock().unwrap().push(asset.clone());
+    let mut assets = inner.assets.lock().unwrap();
+    let saved = match asset.get("id").and_then(Value::as_i64) {
+        Some(id) => {
+            let Some(stored) = assets.iter_mut().find(|a| a["id"].as_i64() == Some(id)) else {
+                return (StatusCode::NOT_FOUND, "Asset not found").into_response();
+            };
+            for (k, v) in asset.as_object().cloned().unwrap_or_default() {
+                stored[k] = v;
+            }
+            stored.clone()
+        }
+        None => {
+            let mut created = asset.clone();
+            created["id"] = (7000 + assets.len() as i64 + 1).into();
+            if let Some(tag) = created.get("inventory_number").cloned() {
+                created["key_field"] = tag;
+            }
+            assets.push(created.clone());
+            created
+        }
+    };
+    (StatusCode::CREATED, Json(json!([saved]))).into_response()
 }

@@ -240,7 +240,9 @@ function CampaignList() {
       cell: (c) =>
         c.windows.length === 0
           ? t("campaigns.anyTime")
-          : `${shortWindow(c.windows[0]!)}${c.windows.length > 1 ? ` +${c.windows.length - 1}` : ""}`,
+          : `${shortWindow(c.windows[0]!)}${c.windows.length > 1 ? ` +${c.windows.length - 1}` : ""}${
+              c.recurring ? ` · ${t("campaigns.fact.recurring")}` : ""
+            }`,
     },
   ];
 

@@ -265,6 +265,9 @@ impl Watch {
     }
 }
 
+/// The port of a Kubernetes API server, the check's default.
+pub const KUBERNETES_PORT: u16 = 6443;
+
 /// The kinds of ready-made application checks (ADR-0183).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -272,10 +275,16 @@ pub enum AppKind {
     Postgresql,
     /// MySQL and MariaDB.
     Mysql,
+    /// SQL Server.
+    Mssql,
     Redis,
+    /// A Java virtual machine, read through its Jolokia agent.
+    Jmx,
     /// The containers of the host's Docker or Podman engine, read by its
     /// agent.
     Docker,
+    /// A Kubernetes cluster through its API, read from a probe.
+    Kubernetes,
 }
 
 impl AppKind {
@@ -284,8 +293,11 @@ impl AppKind {
         match self {
             Self::Postgresql => "postgresql",
             Self::Mysql => "mysql",
+            Self::Mssql => "mssql",
             Self::Redis => "redis",
+            Self::Jmx => "jmx",
             Self::Docker => "docker",
+            Self::Kubernetes => "kubernetes",
         }
     }
 }
@@ -310,6 +322,12 @@ pub struct App {
     /// Docker: a regular expression the container names must match.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub containers: Option<String>,
+    /// JMX: the path Jolokia answers on, `/jolokia/` when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// JMX: Jolokia over HTTPS, its certificate verified.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub https: bool,
 }
 
 impl App {
@@ -322,6 +340,8 @@ impl App {
             database: None,
             user: None,
             containers: None,
+            path: None,
+            https: false,
         }
     }
 }

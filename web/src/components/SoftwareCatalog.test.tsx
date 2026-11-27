@@ -51,7 +51,7 @@ describe("SoftwareCatalog", () => {
     expect(within(table).getByText("7zip.7zip")).toBeInTheDocument();
     expect(within(table).getByText("Shared")).toBeInTheDocument();
     expect(within(table).getByText("acme")).toBeInTheDocument();
-    expect(screen.getByText(/installed with winget on Windows servers/)).toBeInTheDocument();
+    expect(screen.getByText(/installed with winget on Windows, apt on Debian/)).toBeInTheDocument();
 
     const form = screen.getByRole("form", { name: "Add software" });
     await userEvent.type(within(form).getByLabelText("Name"), "Notepad++");
@@ -108,6 +108,39 @@ describe("SoftwareCatalog", () => {
     await userEvent.click(screen.getByRole("button", { name: "Delete Firefox" }));
     expect(await screen.findByText("7-Zip")).toBeInTheDocument();
     expect(screen.queryByText("Firefox")).not.toBeInTheDocument();
+  });
+
+  it("adds an apt package from a mirror of its family, without a source", async () => {
+    const mirror = (name: string, family: "apt" | "dnf") => ({ id: `m-${name}`, name, family, deleting_at: null });
+    const fetchMock = stubFetch({
+      "GET /api/software": [list([]), list([])],
+      "GET /api/customers": customers,
+      "GET /api/mirrors": { status: 200, body: { mirrors: [mirror("nginx-debian", "apt"), mirror("epel-9", "dnf")] } },
+      "POST /api/software": { status: 201, body: { ...shared, manager: "apt", package_id: "nginx", source: "", mirror: "nginx-debian" } },
+    });
+    show();
+    const form = await screen.findByRole("form", { name: "Add software" });
+    await userEvent.selectOptions(within(form).getByLabelText("Manager"), "apt");
+    expect(within(form).queryByLabelText("Source")).not.toBeInTheDocument();
+    const mirrors = within(form).getByLabelText("Mirror");
+    expect(within(mirrors).queryByText("epel-9")).not.toBeInTheDocument();
+    await userEvent.type(within(form).getByLabelText("Name"), "nginx");
+    await userEvent.type(within(form).getByLabelText("Package ID"), "-y");
+    await userEvent.click(within(form).getByRole("button", { name: "Add" }));
+    expect(screen.getByText(/Give a package name of the distribution/)).toBeInTheDocument();
+    await userEvent.clear(within(form).getByLabelText("Package ID"));
+    await userEvent.type(within(form).getByLabelText("Package ID"), "nginx");
+    await userEvent.selectOptions(mirrors, "nginx-debian");
+    await userEvent.click(within(form).getByRole("button", { name: "Add" }));
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+      customer_id: null,
+      name: "nginx",
+      manager: "apt",
+      package_id: "nginx",
+      mirror: "nginx-debian",
+      description: "",
+    });
   });
 
   it("shows a failed save in a banner", async () => {

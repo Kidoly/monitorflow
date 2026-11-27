@@ -347,8 +347,36 @@ pub const NOTES: &[(&str, &str)] = &[
         "Docker is read by the agent of the server that runs it, and this host becomes a device.",
     ),
     (
+        "app_mssql_wmi",
+        "PRTG read SQL Server's counters over WMI; MonitorFlow's check signs in to SQL Server instead: create the login with VIEW SERVER STATE the guide describes, and enter its password on the check.",
+    ),
+    (
+        "app_jolokia",
+        "PRTG read values through Jolokia: MonitorFlow's Java check reads the JVM's memory, garbage collection and threads, and Tomcat's or Kafka's where they run, through the same agent, with their alerts. Enter the password on the check if Jolokia asks for one.",
+    ),
+    (
+        "app_jmx_template",
+        "The template {template} becomes MonitorFlow's Java check, which reads the JVM through the Jolokia agent instead of Zabbix's Java gateway: add Jolokia to the JVM, on its port 8778, as the guide shows.",
+    ),
+    (
+        "app_jmx_exporter",
+        "MonitorFlow reads the JVM through the Jolokia agent instead of the JMX exporter, on the exporter's machine and Jolokia's port 8778: add Jolokia to the JVM, as the guide shows. The exporter's other metrics are not moved.",
+    ),
+    (
         "app_other_database",
-        "MonitorFlow has ready-made checks for PostgreSQL, MySQL, MariaDB and Redis, not for this database yet.",
+        "MonitorFlow has ready-made checks for PostgreSQL, MySQL, MariaDB, SQL Server and Redis, not for this database yet.",
+    ),
+    (
+        "app_kubernetes",
+        "The cluster's API becomes MonitorFlow's Kubernetes check, read from the central server or a relay, with its own measures and alerts: enter the read-only service account's token and the cluster's CA on the check.",
+    ),
+    (
+        "app_kubernetes_template",
+        "The template {template} becomes MonitorFlow's Kubernetes check of the cluster, read from the central server or a relay, with its own measures and alerts in place of the template's items and triggers. Enter the service account's token and the cluster's CA on the check.",
+    ),
+    (
+        "app_kubernetes_exporter",
+        "MonitorFlow reads the cluster's API itself instead of scraping {exporter}: enter the service account's token and the cluster's CA on the check. The other metrics are not moved.",
     ),
     (
         "virtual_partial",

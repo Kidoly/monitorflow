@@ -45,6 +45,16 @@ impl Rates {
 }
 
 impl Round {
+    /// Whether this is the first round, or the first after a failure.
+    pub fn first(&self) -> bool {
+        self.elapsed.is_none()
+    }
+
+    /// Whether the last round had `key`.
+    pub fn seen(&self, key: &str) -> bool {
+        self.before.contains_key(key)
+    }
+
     /// How much `key` grew since the last round; `None` the first time,
     /// or when it went back (a restart, statistics reset).
     pub fn delta(&mut self, key: &str, value: f64) -> Option<f64> {

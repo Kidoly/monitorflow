@@ -59,6 +59,13 @@ impl PackageManager for Dnf {
         super::third_party::collect(&self.tools).await
     }
 
+    async fn major_upgrade(
+        &self,
+        packages: &[Package],
+    ) -> Option<monitorflow_common::proto::v1::MajorUpgradeReport> {
+        crate::major_upgrade::handler::report(packages).await
+    }
+
     async fn reboot_required(&self) -> Result<bool, PackageError> {
         let run = self
             .tools

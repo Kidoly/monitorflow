@@ -10,7 +10,7 @@ use axum::extract::{Query, State};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::MAJOR_UPGRADE;
-use monitorflow_common::major_upgrade::{self, FAILED, OK};
+use monitorflow_common::major_upgrade::{self, Method, FAILED, OK};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -176,7 +176,12 @@ pub(crate) async fn readiness(
         let mut checks = Vec::new();
         if let Some(upgrade) = known {
             let target = upgrade.to_release();
-            let mirror = if on_mirror.contains(&row.id) {
+            // Ubuntu's and leapp's tools take the new release from the
+            // distribution; the agent's `sources` check refuses a server on
+            // the mirrors.
+            let mirror = if upgrade.method != Method::Apt {
+                None
+            } else if on_mirror.contains(&row.id) {
                 let id = mirror_id(&target);
                 let problem = match problems.get(&id) {
                     Some(problem) => problem.clone(),
@@ -195,6 +200,13 @@ pub(crate) async fn readiness(
                 .as_ref()
                 .and_then(|k| k.0.get(MAJOR_UPGRADE).cloned());
             checks = server_checks(acceptance.as_deref(), stored, &target, mirror);
+            if upgrade.method != Method::Apt {
+                checks[2] = Check::new(
+                    "mirror",
+                    OK,
+                    "The upgrade takes the next release from the distribution, not from the mirrors.",
+                );
+            }
             if let Some(stored) = stored.filter(|s| s.target == target) {
                 checks.extend(stored.checks.iter().cloned());
             }

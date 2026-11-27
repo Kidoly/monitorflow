@@ -158,12 +158,56 @@ describe("adding a check", () => {
     expect(threshold).toBeNull();
     expect(more).toEqual([]);
     expect(CHECK_TYPES.find((t) => t.kind === "docker")).toMatchObject({ os: "linux", anyRunner: false, probe: false });
-    expect(DEVICE_CHECK_TYPES.filter((t) => t.template).map((t) => t.kind)).toEqual(["postgresql", "mysql", "redis"]);
+    expect(DEVICE_CHECK_TYPES.filter((t) => t.template).map((t) => t.kind)).toEqual(["postgresql", "mysql", "mssql", "redis", "jmx", "kubernetes"]);
+    const mssql = CHECK_TYPES.find((t) => t.kind === "mssql")!;
+    const mssqlValues = Object.fromEntries(mssql.fields.map((f) => [f.key, f.initial ?? ""]));
+    expect(checkRequests(mssql, { ...mssqlValues, password: "pw" }, 60_000).sensor).toMatchObject({
+      kind: "mssql",
+      default_alerts: true,
+      params: { host: "127.0.0.1", port: "1433", user: "monitorflow", password: "pw", tls: "prefer" },
+    });
+  });
+
+  it("reads a JVM through Jolokia, with its template's alerts", () => {
+    const jmx = CHECK_TYPES.find((t) => t.kind === "jmx")!;
+    expect(jmx).toMatchObject({ template: true, anyRunner: true, os: null });
+    const values = Object.fromEntries(jmx.fields.map((f) => [f.key, f.initial ?? ""]));
+    const { sensor, threshold } = checkRequests(jmx, values, 60_000);
+    expect(sensor).toMatchObject({
+      kind: "jmx",
+      name: "jmx",
+      default_alerts: true,
+      params: { host: "127.0.0.1", port: "8778", groups: "tomcat,kafka", path: "/jolokia/", tls: "off" },
+    });
+    expect(sensor.params).not.toHaveProperty("password");
+    expect(threshold).toBeNull();
+    expect(jmx.fields.find((f) => f.key === "tls")!.options!.map((o) => o.value)).toEqual(["off", "verify"]);
+    // A device's address comes from the device.
+    const device = DEVICE_CHECK_TYPES.find((t) => t.kind === "jmx")!;
+    expect(device.fields[0]!.initial).toBeUndefined();
+  });
+
+  it("adds a Kubernetes cluster to a device, read from a probe (ADR-0183)", () => {
+    const k8s = DEVICE_CHECK_TYPES.find((t) => t.kind === "kubernetes")!;
+    expect(k8s).toMatchObject({ probe: true, template: true });
+    expect(CHECK_TYPES.find((t) => t.kind === "kubernetes")).toBeUndefined();
+    const values = Object.fromEntries(k8s.fields.map((f) => [f.key, f.initial ?? ""]));
+    const { sensor, threshold } = checkRequests(k8s, { ...values, token: "eyJ.t0ken", ca_certificate: "LS0tLS1CRUdJTg==" }, 300_000);
+    expect(sensor).toEqual({
+      kind: "kubernetes",
+      name: "kubernetes",
+      interval_ms: 300_000,
+      default_alerts: true,
+      params: { port: "6443", token: "eyJ.t0ken", ca_certificate: "LS0tLS1CRUdJTg==" },
+    });
+    expect(threshold).toBeNull();
+    expect(k8s.fields.find((f) => f.key === "token")).toMatchObject({ input: "password" });
+    expect(k8s.fields.find((f) => f.key === "token")?.optional).toBeFalsy();
   });
 
   it("offers what the server's system runs, everything for a site", () => {
-    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script", "http", "postgresql", "mysql", "redis", "docker"]);
-    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script", "http", "postgresql", "mysql", "redis"]);
+    expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script", "http", "postgresql", "mysql", "mssql", "redis", "jmx", "docker"]);
+    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script", "http", "postgresql", "mysql", "mssql", "redis", "jmx"]);
     expect(checkTypesFor(null)).toHaveLength(CHECK_TYPES.length);
     const path = (os: string | null) => checkTypesFor(os).find((t) => t.kind === "log")!.fields[0]!;
     expect(path("windows").placeholder).toBe("C:\\Logs\\app.log");

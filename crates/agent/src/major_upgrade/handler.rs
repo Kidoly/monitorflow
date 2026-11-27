@@ -55,9 +55,21 @@ fn build(upgradable: usize, root: &Path, state_dir: &Path) -> Option<MajorUpgrad
         report.target = upgrade.to_release();
         report.target_codename = upgrade.to_codename.into();
         let plan = sources::plan(root, upgrade);
-        report.checks = checks::evaluate(&Host, upgradable, &plan);
+        report.checks = checks::evaluate(&Host::new(upgrade.method), upgrade, upgradable, &plan);
     }
     Some(report)
+}
+
+/// The checks before `upgrade`, one line each with their items, for
+/// `monitorflow-agent major-upgrade checks`.
+pub fn describe(upgrade: &major_upgrade::Upgrade, upgradable: usize) -> Vec<String> {
+    let plan = sources::plan(Path::new("/"), upgrade);
+    let mut lines = Vec::new();
+    for check in checks::evaluate(&Host::new(upgrade.method), upgrade, upgradable, &plan) {
+        lines.push(format!("{} {}: {}", check.state, check.name, check.detail));
+        lines.extend(check.items.iter().map(|item| format!("    {item}")));
+    }
+    lines
 }
 
 /// The last upgrade as it stands now, from the state file.

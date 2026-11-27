@@ -1,4 +1,5 @@
-//! Remote terminals opened from the web interface (ADR-0190).
+//! Remote terminals and desktops opened from the web interface
+//! (ADR-0190).
 //!
 //! The central server sends a signed `remote_session` command. Its handler
 //! refuses it unless the host's administrator set `remote.terminal` in
@@ -7,6 +8,14 @@
 //! the agent's own user (or, on Linux, as `remote.terminal_user` through
 //! the root helper of [`helper`]), and returns: the session goes on in a task of its
 //! own, so the command dispatcher is free again.
+//!
+//! A remote desktop is the same session with another consent,
+//! `remote.desktop`, and another command kind, `remote_desktop`: instead
+//! of a shell, the agent connects to the host's own RDP service on
+//! `127.0.0.1:3389` ([`desktop`]), never another address, and carries its
+//! bytes both ways. The central server speaks RDP (TLS included) with it
+//! inside the sealed frames. Its output waits for the server's
+//! `delivered` once [`DESKTOP_WINDOW`] frames are in flight.
 //!
 //! Frames come and go on the agent's stream as `RemoteFrame` envelopes,
 //! sealed end to end ([`monitorflow_common::remote`]). The session ends
@@ -19,6 +28,7 @@
 //! opened it and whether it is recorded (`wall` on Unix, `msg` on Windows),
 //! and again when it closes. The agent's log says it too.
 
+pub mod desktop;
 #[cfg(unix)]
 pub mod helper;
 #[cfg(unix)]
@@ -37,7 +47,9 @@ use monitorflow_common::proto::v1::{
     remote_data, remote_frame, CommandAcceptance, RemoteClosed, RemoteData, RemoteFrame,
     RemoteOpened, RemoteSessionOpen,
 };
-use monitorflow_common::remote::{self as sealing, Channel, MAX_CHUNK, TERMINAL};
+use monitorflow_common::remote::{
+    self as sealing, Channel, DESKTOP, DESKTOP_WINDOW, MAX_CHUNK, TERMINAL,
+};
 use prost::Message;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{sleep_until, Instant};
@@ -48,9 +60,11 @@ use crate::commands::{Handler, Output};
 pub const MAX_SESSIONS: usize = 4;
 /// A session closes after this long, whatever happens in it.
 pub const MAX_DURATION: Duration = Duration::from_secs(12 * 60 * 60);
-/// Output bytes a session sends per second at most, so a flood does not
+/// Output bytes a terminal sends per second at most, so a flood does not
 /// hold the stream up for the samples and results that share it.
 const OUTPUT_PER_SECOND: usize = 256 * 1024;
+/// The same for a desktop, whose screen updates need more.
+const DESKTOP_PER_SECOND: usize = 2 * 1024 * 1024;
 /// Frames waiting for the stream, from every session.
 const UP_QUEUE: usize = 64;
 /// Frames from the server waiting for one session. More close it: the
@@ -68,6 +82,75 @@ pub const DISABLED: &str = "remote terminals are not allowed on this server (rem
                             run `monitorflow-agent.exe remote-access terminal on` as an \
                             administrator and restart the MonitorFlowAgent service to allow them";
 
+/// Why `remote_desktop` is refused while `remote.desktop` is off.
+pub const DESKTOP_DISABLED: &str =
+    "remote desktops are not allowed on this server (remote.desktop); run \
+     `monitorflow-agent.exe remote-access desktop on` as an administrator and restart the \
+     MonitorFlowAgent service, or install with REMOTE_DESKTOP=1, to allow them";
+
+/// The two kinds of session, each with its own consent and command kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A shell, `remote_session` commands, `remote.terminal`.
+    Terminal,
+    /// The host's RDP service, `remote_desktop` commands,
+    /// `remote.desktop`.
+    Desktop,
+}
+
+impl Kind {
+    /// `RemoteSessionOpen.kind`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Terminal => TERMINAL,
+            Kind::Desktop => DESKTOP,
+        }
+    }
+
+    /// In messages: "remote terminal".
+    fn what(self) -> &'static str {
+        match self {
+            Kind::Terminal => "remote terminal",
+            Kind::Desktop => "remote desktop",
+        }
+    }
+
+    fn disabled(self) -> &'static str {
+        match self {
+            Kind::Terminal => DISABLED,
+            Kind::Desktop => DESKTOP_DISABLED,
+        }
+    }
+
+    fn per_second(self) -> usize {
+        match self {
+            Kind::Terminal => OUTPUT_PER_SECOND,
+            Kind::Desktop => DESKTOP_PER_SECOND,
+        }
+    }
+
+    /// Why the session ends when its output closes.
+    fn ended(self) -> &'static str {
+        match self {
+            Kind::Terminal => "the shell exited",
+            Kind::Desktop => "the remote desktop service closed the connection",
+        }
+    }
+}
+
+/// What the host's administrator allowed, in `agent.toml`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Allowed {
+    pub terminal: bool,
+    pub desktop: bool,
+}
+
+/// How each kind starts: a shell, and the connection to the RDP service.
+pub struct Spawners {
+    pub terminal: Spawner,
+    pub desktop: Spawner,
+}
+
 /// What a terminal is started with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spec {
@@ -82,7 +165,7 @@ pub struct Spec {
 }
 
 /// A shell on a pseudo-terminal: what it prints, and how to type into it,
-/// resize it and end it.
+/// resize it and end it. A desktop's connection is one too, without sizes.
 pub struct Terminal {
     /// Chunks of at most [`MAX_CHUNK`] bytes; closed when the shell exits.
     pub output: mpsc::Receiver<Vec<u8>>,
@@ -176,9 +259,9 @@ pub fn platform_announce() -> Announce {
 
 /// What the sessions share.
 struct Shared {
-    enabled: bool,
+    allowed: Allowed,
     proof: Box<dyn Proof>,
-    spawner: Spawner,
+    spawners: Spawners,
     announce: Announce,
     up: mpsc::Sender<RemoteFrame>,
     sessions: Mutex<HashMap<String, mpsc::Sender<Inbound>>>,
@@ -238,19 +321,20 @@ impl StreamEnd {
     }
 }
 
-/// The sessions and their stream end. `enabled` is `remote.terminal`.
+/// The sessions and their stream end. `allowed` is `remote.terminal` and
+/// `remote.desktop`.
 pub fn link(
-    enabled: bool,
+    allowed: Allowed,
     proof: Box<dyn Proof>,
-    spawner: Spawner,
+    spawners: Spawners,
     announce: Announce,
 ) -> (Remote, StreamEnd) {
     let (up, up_rx) = mpsc::channel(UP_QUEUE);
     let remote = Remote {
         shared: Arc::new(Shared {
-            enabled,
+            allowed,
             proof,
-            spawner,
+            spawners,
             announce,
             up,
             sessions: Mutex::new(HashMap::new()),
@@ -273,8 +357,12 @@ enum Refused {
 }
 
 impl Remote {
-    pub fn enabled(&self) -> bool {
-        self.shared.enabled
+    /// Whether the host allowed sessions of `kind`.
+    pub fn enabled(&self, kind: Kind) -> bool {
+        match kind {
+            Kind::Terminal => self.shared.allowed.terminal,
+            Kind::Desktop => self.shared.allowed.desktop,
+        }
     }
 
     /// Sessions open now.
@@ -282,21 +370,28 @@ impl Remote {
         self.shared.sessions().len()
     }
 
-    async fn open(&self, open: RemoteSessionOpen, request: Vec<u8>) -> Result<String, Refused> {
+    async fn open(
+        &self,
+        kind: Kind,
+        open: RemoteSessionOpen,
+        request: Vec<u8>,
+    ) -> Result<String, Refused> {
         use Refused::{Failed, Rejected};
-        if !self.shared.enabled {
-            return Err(Rejected(DISABLED.into()));
+        if !self.enabled(kind) {
+            return Err(Rejected(kind.disabled().into()));
         }
-        if open.kind != TERMINAL {
+        // The kind is signed with the command: a terminal's consent never
+        // opens a desktop, nor the other way round.
+        if open.kind != kind.name() {
             return Err(Rejected(format!(
-                "remote sessions of kind `{}` are not supported",
+                "remote sessions of kind `{}` are not supported by this command",
                 open.kind.escape_debug()
             )));
         }
         if !valid_session_id(&open.session_id) {
             return Err(Rejected("invalid remote session ID".into()));
         }
-        if !sealing::valid_size(open.cols, open.rows) {
+        if kind == Kind::Terminal && !sealing::valid_size(open.cols, open.rows) {
             return Err(Rejected("invalid terminal size".into()));
         }
         let idle = open
@@ -334,7 +429,10 @@ impl Remote {
             rows: open.rows as u16,
             request,
         };
-        let spawner = self.shared.spawner.clone();
+        let spawner = match kind {
+            Kind::Terminal => self.shared.spawners.terminal.clone(),
+            Kind::Desktop => self.shared.spawners.desktop.clone(),
+        };
         let started = tokio::task::spawn_blocking(move || spawner(&spec))
             .await
             .map_err(|e| e.to_string())
@@ -343,7 +441,14 @@ impl Remote {
             Ok(terminal) => terminal,
             Err(error) => {
                 self.shared.sessions().remove(&open.session_id);
-                return Err(Failed(format!("cannot start a shell: {error}")));
+                return Err(Failed(match kind {
+                    Kind::Terminal => format!("cannot start a shell: {error}"),
+                    Kind::Desktop => format!(
+                        "cannot reach the remote desktop service on {}: {error}; is Remote \
+                         Desktop turned on in the server's settings?",
+                        desktop::RDP_ADDRESS
+                    ),
+                }));
             }
         };
         let opened = RemoteFrame {
@@ -361,10 +466,13 @@ impl Remote {
             ""
         };
         (self.shared.announce)(format!(
-            "MonitorFlow: {requested_by} opened a remote terminal on this server from the web \
-             interface{recorded}."
+            "MonitorFlow: {requested_by} opened a {} on this server from the web \
+             interface{recorded}.",
+            kind.what()
         ));
         let session = Session {
+            kind,
+            window: (kind == Kind::Desktop).then_some(Window::default()),
             id: open.session_id.clone(),
             requested_by: requested_by.clone(),
             channel,
@@ -377,9 +485,9 @@ impl Remote {
             self.shared.sessions().remove(&open.session_id);
             return Err(Failed("the agent is shutting down".into()));
         }
-        tracing::info!(session_id = %open.session_id, requested_by = %requested_by, "remote terminal opened");
+        tracing::info!(session_id = %open.session_id, requested_by = %requested_by, kind = kind.name(), "remote session opened");
         tokio::spawn(session.run());
-        Ok(format!("remote terminal opened for {requested_by}\n"))
+        Ok(format!("{} opened for {requested_by}\n", kind.what()))
     }
 }
 
@@ -392,8 +500,25 @@ fn valid_session_id(id: &str) -> bool {
         })
 }
 
+/// A desktop's output frames: sent, and passed on to the browser as the
+/// server last said.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Window {
+    sent: u64,
+    delivered: u64,
+}
+
+impl Window {
+    fn open(&self) -> bool {
+        self.sent - self.delivered < DESKTOP_WINDOW
+    }
+}
+
 /// One open session.
 struct Session {
+    kind: Kind,
+    /// Desktops only: output waits while it is full.
+    window: Option<Window>,
     id: String,
     requested_by: String,
     channel: Channel,
@@ -421,17 +546,21 @@ impl Session {
                         break "the connection to the central server was lost".to_owned()
                     }
                 },
-                output = self.terminal.output.recv() => match output {
+                output = self.terminal.output.recv(), if self.window.is_none_or(|w| w.open()) => match output {
                     Some(bytes) => {
                         let sent = bytes.len();
                         if !self.send(sealing::output(bytes)).await {
                             break "the agent is shutting down".to_owned();
                         }
-                        pace(&mut window, sent).await;
+                        if let Some(window) = &mut self.window {
+                            window.sent += 1;
+                        }
+                        pace(&mut window, sent, self.kind.per_second()).await;
                     }
                     None => {
-                        self.send(sealing::close("the shell exited")).await;
-                        break "the shell exited".to_owned();
+                        let reason = self.kind.ended();
+                        self.send(sealing::close(reason)).await;
+                        break reason.to_owned();
                     }
                 },
                 () = sleep_until(idle_at) => {
@@ -462,10 +591,11 @@ impl Session {
             counter: 0,
         });
         (self.shared.announce)(format!(
-            "MonitorFlow: the remote terminal {} opened is closed.",
+            "MonitorFlow: the {} {} opened is closed.",
+            self.kind.what(),
             self.requested_by
         ));
-        tracing::info!(session_id = %self.id, %reason, minutes = started.elapsed().as_secs() / 60, "remote terminal closed");
+        tracing::info!(session_id = %self.id, %reason, kind = self.kind.name(), minutes = started.elapsed().as_secs() / 60, "remote session closed");
     }
 
     /// Applies a frame from the server: `Ok(true)` for input, `Err` with
@@ -489,13 +619,20 @@ impl Session {
             Some(remote_data::Body::Input(bytes)) => {
                 for chunk in bytes.chunks(MAX_CHUNK) {
                     if self.terminal.input.send(chunk.to_vec()).is_err() {
-                        return Err("the shell exited".into());
+                        return Err(self.kind.ended().into());
                     }
                 }
                 Ok(true)
             }
+            Some(remote_data::Body::Delivered(frames)) => {
+                if let Some(window) = &mut self.window {
+                    // Never beyond what was sent, never backwards.
+                    window.delivered = frames.clamp(window.delivered, window.sent);
+                }
+                Ok(false)
+            }
             Some(remote_data::Body::Resize(size)) => {
-                if sealing::valid_size(size.cols, size.rows) {
+                if self.kind == Kind::Terminal && sealing::valid_size(size.cols, size.rows) {
                     let _ = self
                         .terminal
                         .control
@@ -539,34 +676,47 @@ fn closed_reason(reason: &str, fallback: &str) -> String {
     }
 }
 
-/// Waits when this second's output passed [`OUTPUT_PER_SECOND`].
-async fn pace(window: &mut (Instant, usize), sent: usize) {
+/// Waits when this second's output passed `per_second`.
+async fn pace(window: &mut (Instant, usize), sent: usize, per_second: usize) {
     let now = Instant::now();
     if now.duration_since(window.0) >= Duration::from_secs(1) {
         *window = (now, 0);
     }
     window.1 += sent;
-    if window.1 >= OUTPUT_PER_SECOND {
+    if window.1 >= per_second {
         sleep_until(window.0 + Duration::from_secs(1)).await;
         *window = (Instant::now(), 0);
     }
 }
 
-/// Runs `remote_session` commands.
+/// Runs `remote_session` commands, or `remote_desktop` ones.
 pub struct RemoteSessionHandler {
     remote: Remote,
+    kind: Kind,
 }
 
 impl RemoteSessionHandler {
+    /// `remote_session`: terminals.
     pub fn new(remote: Remote) -> Self {
-        Self { remote }
+        Self {
+            remote,
+            kind: Kind::Terminal,
+        }
+    }
+
+    /// `remote_desktop`: the host's RDP service.
+    pub fn desktop(remote: Remote) -> Self {
+        Self {
+            remote,
+            kind: Kind::Desktop,
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl Handler for RemoteSessionHandler {
     fn acceptance(&self) -> CommandAcceptance {
-        if self.remote.enabled() {
+        if self.remote.enabled(self.kind) {
             CommandAcceptance::Accepted
         } else {
             CommandAcceptance::Disabled
@@ -586,7 +736,7 @@ impl Handler for RemoteSessionHandler {
             return Output::rejected("invalid RemoteSessionOpen payload");
         };
         let request = crate::helper_trust::HelperRequest::of(command).framed();
-        match self.remote.open(open, request).await {
+        match self.remote.open(self.kind, open, request).await {
             Ok(message) => Output {
                 stdout: message.into_bytes(),
                 ..Output::default()

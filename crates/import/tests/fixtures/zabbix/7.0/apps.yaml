@@ -1,4 +1,4 @@
-# Database, Redis and Docker templates (ADR-0183), written by hand in the
+# Database, Redis, JMX, Docker and Kubernetes templates (ADR-0183), written by hand in the
 # shape of a Zabbix 7.0 export (defaults left out, as Zabbix leaves them
 # out). The Redis template is exported with one item and one trigger; the
 # others are linked but not exported, so only their names and the
@@ -64,6 +64,21 @@ zabbix_export:
       interfaces:
         - ip: 192.0.2.51
           interface_ref: if1
+    - host: k8s-prod
+      name: k8s-prod
+      templates:
+        - name: 'Kubernetes cluster state by HTTP'
+        - name: 'Kubernetes nodes by HTTP'
+      groups:
+        - name: Databases
+      interfaces:
+        - ip: 192.0.2.70
+          interface_ref: if1
+      macros:
+        - macro: '{$KUBE.API.URL}'
+          value: 'https://192.0.2.70:6443'
+        - macro: '{$KUBE.API.TOKEN}'
+          type: SECRET_TEXT
     - host: app-01
       name: app-01
       templates:
@@ -80,3 +95,38 @@ zabbix_export:
           value: 192.0.2.60
         - macro: '{$MYSQL.PORT}'
           value: '3307'
+    - host: sql-01
+      name: sql-01
+      templates:
+        - name: 'MSSQL by ODBC'
+      groups:
+        - name: Databases
+      interfaces:
+        - ip: 192.0.2.53
+          interface_ref: if1
+      macros:
+        - macro: '{$MSSQL.PORT}'
+          value: '1434'
+        - macro: '{$MSSQL.USER}'
+          value: zbx_monitor
+        - macro: '{$MSSQL.PASSWORD}'
+          type: SECRET_TEXT
+    - host: jvm-01
+      name: jvm-01
+      templates:
+        - name: 'Apache Tomcat by JMX'
+        - name: 'Generic Java JMX'
+      groups:
+        - name: Databases
+      interfaces:
+        - ip: 192.0.2.53
+          interface_ref: if1
+        - type: JMX
+          ip: 192.0.2.53
+          port: '12345'
+          interface_ref: if2
+      items:
+        - name: 'Own heap item'
+          type: JMX
+          key: 'jmx["java.lang:type=Memory","HeapMemoryUsage.used"]'
+          interface_ref: if2

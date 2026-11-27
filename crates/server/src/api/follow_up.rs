@@ -756,8 +756,15 @@ pub async fn use_link(
         return Err(ApiError::Forbidden);
     }
     let now = Utc::now();
-    let done =
-        follow_up::acknowledge(&mut tx, &allowed, (user, &username), "link", None, now).await?;
+    let done = follow_up::acknowledge(
+        &mut tx,
+        &allowed,
+        (Some(user), &username),
+        "link",
+        None,
+        now,
+    )
+    .await?;
     let actor = user.to_string();
     for incident in &done {
         let target = incident.to_string();

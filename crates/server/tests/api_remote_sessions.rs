@@ -1,4 +1,4 @@
-//! Remote terminals from a server's page (ADR-0190): the settings, who
+//! Remote terminals and desktops from a server's page (ADR-0190): the settings, who
 //! may start, list, close and replay sessions, what the agent's report and
 //! connection allow, the one-time token and the audit entries. Ignored
 //! without `DATABASE_URL`.
@@ -252,9 +252,13 @@ db_tests! {
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(error.to_string().contains("not connected"), "{error}");
         assert_eq!(
-            h.send("POST", &uri, &admin, Some(json!({"kind": "desktop"}))).await.0,
+            h.send("POST", &uri, &admin, Some(json!({"kind": "screen"}))).await.0,
             StatusCode::BAD_REQUEST
         );
+        // A desktop is for Windows servers.
+        let (status, error) = h.send("POST", &uri, &admin, Some(json!({"kind": "desktop"}))).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(error.to_string().contains("Windows servers"), "{error}");
 
         h.connect();
         let (status, started) = h.send("POST", &uri, &admin, start.clone()).await;
@@ -395,5 +399,59 @@ db_tests! {
             .unwrap();
         assert_eq!(kept, [live]);
         assert_eq!(h.audit("remote_session.close").await, 3);
+    }
+
+    #[sqlx::test]
+    async fn a_desktop_starts_where_the_host_allowed_it_apart_from_terminals(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        sqlx::query("UPDATE servers SET os_family = 'windows' WHERE id = $1")
+            .bind(h.server)
+            .execute(&pool)
+            .await
+            .unwrap();
+        h.connect();
+        let admin = h.login("alice", Role::Administrator, GrantScope::Site(h.site)).await;
+        let operator = h.login("olga", Role::Operator, GrantScope::Site(h.site)).await;
+        let uri = format!("/api/servers/{}/remote-sessions", h.server);
+        let desktop = Some(json!({"kind": "desktop"}));
+
+        // Terminals allowed, desktops not: the line that allows them.
+        h.report(json!({"remote_session": "accepted", "remote_desktop": "off"})).await;
+        let (status, error) = h.send("POST", &uri, &admin, desktop.clone()).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(error.to_string().contains("remote-access desktop on"), "{error}");
+        h.report(json!({"remote_session": "accepted"})).await;
+        let (_, error) = h.send("POST", &uri, &admin, desktop.clone()).await;
+        assert!(error.to_string().contains("updates by itself"), "{error}");
+
+        // The same roles as terminals.
+        h.report(json!({"remote_session": "off", "remote_desktop": "accepted"})).await;
+        assert_eq!(h.send("POST", &uri, &operator, desktop.clone()).await.0, StatusCode::FORBIDDEN);
+        let (status, started) = h.send("POST", &uri, &admin, desktop.clone()).await;
+        assert_eq!(status, StatusCode::CREATED, "{started}");
+        assert_eq!(started["session"]["kind"], "desktop");
+        // Recording is on, but a desktop's screen is never recorded.
+        assert_eq!(started["session"]["recorded"], false);
+        let details: Value = sqlx::query_scalar(
+            "SELECT details FROM audit_log WHERE action = 'remote_session.start'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((&details["kind"], &details["recorded"]), (&json!("desktop"), &json!(false)));
+        // And the terminal itself is refused where only desktops are allowed.
+        let (status, error) = h.send("POST", &uri, &admin, Some(json!({"kind": "terminal"}))).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(error.to_string().contains("remote-access terminal on"), "{error}");
+
+        // A desktop's token never opens a terminal, nor a terminal's a desktop.
+        let id: Uuid = started["session"]["id"].as_str().unwrap().parse().unwrap();
+        let token = started["token"].as_str().unwrap().to_owned();
+        assert_eq!(h.hub.attach(id, &token, 80, 24).await.unwrap_err(), AttachError::Refused);
+        let attached = h.hub.attach_desktop(id, &token).await.unwrap();
+        assert_eq!((attached.kind.as_str(), attached.recorded), ("desktop", false));
+        assert_eq!(h.hub.attach_desktop(id, &token).await.unwrap_err(), AttachError::Refused);
+        let (_, list) = h.send("GET", &uri, &admin, None).await;
+        assert_eq!(list[0]["kind"], "desktop");
     }
 }

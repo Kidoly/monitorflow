@@ -507,11 +507,13 @@ message ScriptParameter {
 message RemoteSessionOpen {
   // UUID of the session, chosen by the server; every frame names it.
   string session_id = 1;
-  // "terminal". Other kinds are refused.
+  // "terminal" with the command kind `remote_session`, or "desktop" with
+  // `remote_desktop`: the host's own RDP service on 127.0.0.1:3389, and
+  // nothing else (ADR-0190). Other kinds are refused.
   string kind = 2;
   // The server's X25519 public key for this session, 32 bytes.
   bytes server_key = 3;
-  // Initial size of the terminal.
+  // Initial size of the terminal; 0 for a desktop.
   uint32 cols = 4;
   uint32 rows = 5;
   // Who opened it, as shown on the server's banner.
@@ -556,14 +558,19 @@ message RemoteOpened {
 // What a sealed frame holds.
 message RemoteData {
   oneof body {
-    // Server to agent: keystrokes.
+    // Server to agent: keystrokes, or the bytes for the RDP service.
     bytes input = 1;
-    // Agent to server: what the terminal printed.
+    // Agent to server: what the terminal printed, or the RDP service sent.
     bytes output = 2;
     // Server to agent: the browser's terminal changed size.
     RemoteResize resize = 3;
     // Either way: the session ends, with why.
     string close = 4;
+    // Server to agent, desktops only: how many `output` frames the server
+    // passed on to the browser so far. The agent keeps at most
+    // `common::remote::DESKTOP_WINDOW` frames beyond it in flight, so a
+    // slow browser slows the RDP service down instead of overflowing.
+    uint64 delivered = 5;
   }
 }
 

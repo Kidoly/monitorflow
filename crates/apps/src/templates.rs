@@ -2,7 +2,7 @@
 //! the template the server applies when a check is added with its
 //! default alerts, and lists in its API.
 
-use crate::{DOCKER, MYSQL, POSTGRESQL, REDIS};
+use crate::{DOCKER, JMX, KUBERNETES, MSSQL, MYSQL, POSTGRESQL, REDIS};
 
 /// One metric of a kind, by its suffix: the check's name, `_`, then this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +41,7 @@ pub struct Param {
 pub struct Template {
     pub kind: &'static str,
     pub title: &'static str,
-    /// `agent_or_probe` or `agent`.
+    /// `agent_or_probe`, `agent` or `probe`.
     pub runs: &'static str,
     pub default_port: Option<u16>,
     pub params: &'static [Param],
@@ -353,6 +353,165 @@ pub const MYSQL_TEMPLATE: Template = Template {
     ],
 };
 
+pub const MSSQL_TEMPLATE: Template = Template {
+    kind: MSSQL,
+    title: "SQL Server",
+    runs: "agent_or_probe",
+    default_port: Some(1433),
+    params: &[
+        HOST,
+        p("port", Some("1433"), "Port; a named instance needs its fixed port"),
+        p(
+            "user",
+            Some("monitorflow"),
+            "A SQL Server login with `VIEW SERVER STATE` only",
+        ),
+        PASSWORD,
+        p(
+            "tls",
+            Some("prefer"),
+            "`prefer` (encrypted, certificate not verified), `verify` (certificate and name verified) or `off` (the password then goes in clear)",
+        ),
+    ],
+    metrics: &[
+        UP,
+        RESPONSE,
+        m(
+            "connections",
+            "count",
+            None,
+            "User connections, the check's own included",
+        ),
+        m(
+            "connections_max",
+            "count",
+            None,
+            "`user connections`, 32767 when unlimited",
+        ),
+        m(
+            "connections_ratio",
+            "ratio",
+            None,
+            "Connections against `user connections`",
+        ),
+        m(
+            "batch_requests_per_second",
+            "per_second",
+            None,
+            "Batches of statements received per second",
+        ),
+        m(
+            "page_life_expectancy_seconds",
+            "seconds",
+            None,
+            "How long a page stays in the buffer pool",
+        ),
+        m(
+            "buffer_cache_hit_ratio",
+            "ratio",
+            None,
+            "Pages found in the buffer pool without reading the disk",
+        ),
+        m(
+            "processes_blocked",
+            "count",
+            None,
+            "Requests waiting for another one's lock",
+        ),
+        m(
+            "longest_blocked_seconds",
+            "seconds",
+            None,
+            "Longest wait of a blocked request, 0 when none is",
+        ),
+        m(
+            "longest_query_seconds",
+            "seconds",
+            None,
+            "Age of the longest running request",
+        ),
+        m(
+            "lock_waits_per_second",
+            "per_second",
+            None,
+            "Lock requests that had to wait, per second",
+        ),
+        m(
+            "deadlocks",
+            "count",
+            None,
+            "Deadlocks since the last collection",
+        ),
+        m(
+            "database_size_bytes",
+            "bytes",
+            Some("database"),
+            "Data files of each database",
+        ),
+        m(
+            "log_size_bytes",
+            "bytes",
+            Some("database"),
+            "Transaction log of each database",
+        ),
+        m(
+            "log_used_ratio",
+            "ratio",
+            Some("database"),
+            "Share of each database's log in use",
+        ),
+        m(
+            "ag_replica_connected",
+            "",
+            Some("replica"),
+            "Always On: 1 while the replica is connected; label `role`",
+        ),
+        m(
+            "ag_replica_healthy",
+            "",
+            Some("replica"),
+            "Always On: 1 while the replica's synchronization is healthy",
+        ),
+        m(
+            "ag_log_send_queue_bytes",
+            "bytes",
+            Some("database"),
+            "Always On: log a secondary has not received yet",
+        ),
+        m(
+            "ag_redo_queue_bytes",
+            "bytes",
+            Some("database"),
+            "Always On: log a secondary has not replayed yet",
+        ),
+        m(
+            "ag_secondary_lag_seconds",
+            "seconds",
+            Some("database"),
+            "Always On: how far a secondary is behind, from SQL Server 2016",
+        ),
+    ],
+    alerts: &[
+        a("up", "<", None, Some(1.0), 2),
+        a("connections_ratio", ">", Some(0.8), Some(0.95), 5),
+        a("page_life_expectancy_seconds", "<", Some(300.0), None, 15),
+        a("buffer_cache_hit_ratio", "<", Some(0.95), None, 30),
+        a("processes_blocked", ">", Some(0.0), None, 5),
+        a("deadlocks", ">", Some(0.0), None, 0),
+        a("log_used_ratio", ">", Some(0.8), Some(0.95), 5),
+        a("ag_replica_connected", "<", None, Some(1.0), 2),
+        a("ag_replica_healthy", "<", None, Some(1.0), 5),
+        a("ag_log_send_queue_bytes", ">", Some(GIB), None, 10),
+        a(
+            "ag_secondary_lag_seconds",
+            ">",
+            Some(300.0),
+            Some(1800.0),
+            5,
+        ),
+    ],
+};
+
 pub const REDIS_TEMPLATE: Template = Template {
     kind: REDIS,
     title: "Redis",
@@ -455,6 +614,256 @@ pub const REDIS_TEMPLATE: Template = Template {
     ],
 };
 
+pub const JMX_TEMPLATE: Template = Template {
+    kind: JMX,
+    title: "Java (JMX)",
+    runs: "agent_or_probe",
+    default_port: Some(crate::jmx::DEFAULT_PORT),
+    params: &[
+        HOST,
+        p("port", Some("8778"), "Port of the Jolokia agent"),
+        p("path", Some("/jolokia/"), "Path Jolokia answers on"),
+        p("user", None, "Jolokia's HTTP Basic user; none by default"),
+        p(
+            "password",
+            None,
+            "Kept sealed by the server, never returned; sent over HTTPS only, or to the loopback",
+        ),
+        p(
+            "tls",
+            Some("off"),
+            "`off` (HTTP) or `verify` (HTTPS, certificate and name verified)",
+        ),
+        p(
+            "groups",
+            Some("tomcat,kafka"),
+            "MBeans read besides the JVM's, where they exist: `tomcat`, `kafka`, or `none`",
+        ),
+    ],
+    metrics: &[
+        m(
+            "up",
+            "",
+            None,
+            "1 when Jolokia answered with the JVM's memory; 0 with labels `reason` and `error`",
+        ),
+        m(
+            "response_seconds",
+            "seconds",
+            None,
+            "Time Jolokia took to answer every read",
+        ),
+        m("heap_used_bytes", "bytes", None, "Heap in use"),
+        m(
+            "heap_committed_bytes",
+            "bytes",
+            None,
+            "Heap the JVM holds from the system",
+        ),
+        m("heap_max_bytes", "bytes", None, "Largest heap (`-Xmx`)"),
+        m(
+            "heap_usage_ratio",
+            "ratio",
+            None,
+            "Heap in use against its maximum",
+        ),
+        m(
+            "non_heap_used_bytes",
+            "bytes",
+            None,
+            "Metaspace, code cache and other memory outside the heap",
+        ),
+        m(
+            "non_heap_committed_bytes",
+            "bytes",
+            None,
+            "Non-heap memory the JVM holds from the system",
+        ),
+        m(
+            "non_heap_max_bytes",
+            "bytes",
+            None,
+            "Largest non-heap memory, when set",
+        ),
+        m(
+            "non_heap_usage_ratio",
+            "ratio",
+            None,
+            "Non-heap memory in use against its maximum, when set",
+        ),
+        m(
+            "gc_collections",
+            "count",
+            Some("collector"),
+            "Collections since the last collection",
+        ),
+        m(
+            "gc_seconds",
+            "seconds",
+            Some("collector"),
+            "Time spent collecting since the last collection",
+        ),
+        m(
+            "gc_time_ratio",
+            "ratio",
+            None,
+            "Share of time every collector spent collecting since the last collection",
+        ),
+        m("threads", "count", None, "Live threads"),
+        m("threads_daemon", "count", None, "Live daemon threads"),
+        m(
+            "threads_peak",
+            "count",
+            None,
+            "Most live threads since the JVM started",
+        ),
+        m(
+            "threads_deadlocked",
+            "count",
+            None,
+            "Threads deadlocked; absent when a Jolokia policy refuses `exec`",
+        ),
+        m(
+            "process_cpu_ratio",
+            "ratio",
+            None,
+            "Share of the machine's processor time the JVM uses",
+        ),
+        m(
+            "file_descriptors_open",
+            "count",
+            None,
+            "Open file descriptors (Unix)",
+        ),
+        m(
+            "file_descriptors_ratio",
+            "ratio",
+            None,
+            "Open file descriptors against the process's limit (Unix)",
+        ),
+        m(
+            "uptime_seconds",
+            "seconds",
+            None,
+            "Time since the JVM started",
+        ),
+        m(
+            "tomcat_threads_busy",
+            "count",
+            Some("connector"),
+            "Tomcat: threads serving a request",
+        ),
+        m(
+            "tomcat_threads_max",
+            "count",
+            Some("connector"),
+            "Tomcat: `maxThreads`",
+        ),
+        m(
+            "tomcat_threads_ratio",
+            "ratio",
+            Some("connector"),
+            "Tomcat: busy threads against `maxThreads`",
+        ),
+        m(
+            "tomcat_requests_per_second",
+            "per_second",
+            Some("connector"),
+            "Tomcat: requests per second",
+        ),
+        m(
+            "tomcat_errors",
+            "count",
+            Some("connector"),
+            "Tomcat: responses with an error status (400 or more) since the last collection",
+        ),
+        m(
+            "tomcat_request_seconds",
+            "seconds",
+            Some("connector"),
+            "Tomcat: average time per request since the last collection",
+        ),
+        m(
+            "tomcat_sessions",
+            "count",
+            Some("context"),
+            "Tomcat: active sessions of each web application",
+        ),
+        m(
+            "kafka_under_replicated",
+            "count",
+            None,
+            "Kafka: partitions led here with fewer in-sync replicas than replicas",
+        ),
+        m(
+            "kafka_under_min_isr",
+            "count",
+            None,
+            "Kafka: partitions led here under `min.insync.replicas`, refusing `acks=all` writes",
+        ),
+        m(
+            "kafka_offline_partitions",
+            "count",
+            None,
+            "Kafka, on the active controller: partitions without a leader",
+        ),
+        m(
+            "kafka_active_controller",
+            "",
+            None,
+            "Kafka: 1 on the broker that is the active controller",
+        ),
+        m(
+            "kafka_partitions",
+            "count",
+            None,
+            "Kafka: partitions on this broker",
+        ),
+        m(
+            "kafka_isr_shrinks",
+            "count",
+            None,
+            "Kafka: times a replica fell out of sync since the last collection",
+        ),
+        m(
+            "kafka_messages_in_per_second",
+            "per_second",
+            None,
+            "Kafka: messages received per second",
+        ),
+        m(
+            "kafka_bytes_in_per_second",
+            "per_second",
+            None,
+            "Kafka: bytes received from clients per second",
+        ),
+        m(
+            "kafka_bytes_out_per_second",
+            "per_second",
+            None,
+            "Kafka: bytes sent to clients per second",
+        ),
+        m(
+            "kafka_handler_idle_ratio",
+            "ratio",
+            None,
+            "Kafka: share of time request handler threads are idle, over a minute",
+        ),
+    ],
+    alerts: &[
+        a("up", "<", None, Some(1.0), 2),
+        a("heap_usage_ratio", ">", Some(0.9), Some(0.95), 10),
+        a("gc_time_ratio", ">", Some(0.1), Some(0.25), 10),
+        a("threads_deadlocked", ">", None, Some(0.0), 0),
+        a("file_descriptors_ratio", ">", Some(0.8), Some(0.95), 5),
+        a("tomcat_threads_ratio", ">", Some(0.9), None, 5),
+        a("kafka_under_replicated", ">", Some(0.0), None, 5),
+        a("kafka_under_min_isr", ">", None, Some(0.0), 2),
+        a("kafka_offline_partitions", ">", None, Some(0.0), 2),
+        a("kafka_handler_idle_ratio", "<", Some(0.2), None, 10),
+    ],
+};
+
 pub const DOCKER_TEMPLATE: Template = Template {
     kind: DOCKER,
     title: "Docker containers",
@@ -554,12 +963,177 @@ pub const DOCKER_TEMPLATE: Template = Template {
     ],
 };
 
+pub const KUBERNETES_TEMPLATE: Template = Template {
+    kind: KUBERNETES,
+    title: "Kubernetes cluster",
+    runs: "probe",
+    default_port: Some(crate::kubernetes::DEFAULT_PORT),
+    params: &[
+        p(
+            "host",
+            None,
+            "Address or name of the API server; the device's address by default",
+        ),
+        p("port", Some("6443"), "Port of the API server"),
+        p(
+            "token",
+            None,
+            "A read-only service account's token, kept sealed with the CA, never returned; absent from an update, both stored ones are kept",
+        ),
+        p(
+            "ca_certificate",
+            None,
+            "The cluster's CA in PEM, or the `certificate-authority-data` of a kubeconfig; the machine's roots without it. Sealed with the token: give both again to change either",
+        ),
+        p(
+            "namespaces",
+            None,
+            "A regular expression the namespaces must match; all by default",
+        ),
+    ],
+    metrics: &[
+        m(
+            "up",
+            "",
+            None,
+            "1 when the API answered and took the token, label `version`; 0 with labels `reason` and `error`",
+        ),
+        m(
+            "response_seconds",
+            "seconds",
+            None,
+            "Time to read the version and the nodes",
+        ),
+        m("nodes", "count", None, "Nodes of the cluster"),
+        m("nodes_not_ready", "count", None, "Nodes not ready"),
+        m(
+            "node_ready",
+            "",
+            Some("node"),
+            "1 when ready; labels `roles` and `kubelet_version`",
+        ),
+        m(
+            "node_memory_pressure",
+            "",
+            Some("node"),
+            "1 while the node is short of memory",
+        ),
+        m(
+            "node_disk_pressure",
+            "",
+            Some("node"),
+            "1 while the node is short of disk space",
+        ),
+        m(
+            "node_pid_pressure",
+            "",
+            Some("node"),
+            "1 while the node is short of process IDs",
+        ),
+        m(
+            "node_network_unavailable",
+            "",
+            Some("node"),
+            "1 while the node's network is not set up",
+        ),
+        m(
+            "node_unschedulable",
+            "",
+            Some("node"),
+            "1 when cordoned: no new pod goes there",
+        ),
+        m("pods", "count", None, "Pods of the watched namespaces"),
+        m(
+            "pods_not_running",
+            "count",
+            None,
+            "Pods pending, failed, unknown or running but not ready",
+        ),
+        m(
+            "namespace_pods",
+            "count",
+            Some("namespace"),
+            "Pods of the namespace",
+        ),
+        m(
+            "namespace_pods_not_running",
+            "count",
+            Some("namespace"),
+            "Pods that do not run or are not ready, named in label `pods` with why",
+        ),
+        m(
+            "namespace_pod_restarts",
+            "count",
+            Some("namespace"),
+            "Container restarts since the last collection",
+        ),
+        m(
+            "workload_replicas_desired",
+            "count",
+            Some("workload"),
+            "Replicas a deployment, stateful set or daemon set wants; label `workload`",
+        ),
+        m(
+            "workload_replicas_ready",
+            "count",
+            Some("workload"),
+            "Its replicas ready",
+        ),
+        m(
+            "workload_ready_ratio",
+            "ratio",
+            Some("workload"),
+            "Ready replicas against those wanted; absent when scaled to zero",
+        ),
+        m(
+            "workloads_short",
+            "count",
+            None,
+            "Workloads with fewer ready replicas than wanted",
+        ),
+        m(
+            "claims_pending",
+            "count",
+            None,
+            "Persistent volume claims waiting for a volume",
+        ),
+        m(
+            "namespace_claims_pending",
+            "count",
+            Some("namespace"),
+            "Claims waiting for a volume, named in label `claims`",
+        ),
+        m(
+            "namespace_claims_lost",
+            "count",
+            Some("namespace"),
+            "Claims whose volume is gone, named in label `claims`",
+        ),
+    ],
+    alerts: &[
+        a("up", "<", None, Some(1.0), 2),
+        a("node_ready", "<", None, Some(1.0), 5),
+        a("node_memory_pressure", ">=", Some(1.0), None, 5),
+        a("node_disk_pressure", ">=", Some(1.0), None, 5),
+        a("node_pid_pressure", ">=", Some(1.0), None, 5),
+        a("node_network_unavailable", ">=", None, Some(1.0), 5),
+        a("namespace_pods_not_running", ">", Some(0.0), None, 10),
+        a("namespace_pod_restarts", ">", Some(0.0), None, 0),
+        a("workload_ready_ratio", "<", Some(1.0), Some(0.5), 10),
+        a("namespace_claims_pending", ">", Some(0.0), None, 10),
+        a("namespace_claims_lost", ">", None, Some(0.0), 0),
+    ],
+};
+
 /// Every template, in the order they are offered.
-pub const TEMPLATES: [Template; 4] = [
+pub const TEMPLATES: [Template; 7] = [
     POSTGRESQL_TEMPLATE,
     MYSQL_TEMPLATE,
+    MSSQL_TEMPLATE,
     REDIS_TEMPLATE,
+    JMX_TEMPLATE,
     DOCKER_TEMPLATE,
+    KUBERNETES_TEMPLATE,
 ];
 
 /// The template of `kind`.
@@ -590,6 +1164,11 @@ mod tests {
                 assert!(alert.warning.is_some() || alert.critical.is_some());
                 assert!(matches!(alert.comparison, ">" | ">=" | "<" | "<="));
             }
+            // An imported check's name of up to 32 bytes, `_` and the
+            // suffix fit the 64 of a sensor's name.
+            for metric in t.metrics {
+                assert!(metric.suffix.len() <= 31, "{} {}", t.kind, metric.suffix);
+            }
             let mut names: Vec<_> = t.metrics.iter().map(|m| m.suffix).collect();
             names.sort_unstable();
             names.dedup();
@@ -597,5 +1176,6 @@ mod tests {
         }
         assert_eq!(metric_name("postgresql", "up"), "monitorflow_postgresql_up");
         assert!(of("redis").is_some() && of("cpu").is_none());
+        assert_eq!(of("mssql").map(|t| t.default_port), Some(Some(1433)));
     }
 }

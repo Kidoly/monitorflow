@@ -39,7 +39,8 @@ One command serves every server of a site, for 30 days by default[^0073]. Each s
 | `MF_AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page (`commands.from_web`), through a systemd drop-in. Without it, the web interface can only turn them off. Works on an installed agent too; `MF_AI_COMMANDS_FROM_WEB=0` takes it back. "Allow AI commands to be turned on from the web interface" on the Add servers page, ticked by default, adds it to the command; AI commands stay off until an administrator turns them on there[^0098][^0175] |
 | `MF_AI_ROOT_ACTIONS=0` | Refuse the AI root actions (clearing the package cache, vacuuming the journal, pruning unused Docker images, restarting a service), which a new install allows (`commands.root_actions` in `agent.toml`). `MF_AI_ROOT_ACTIONS=1` allows them, also on an installed agent; without the variable an installed agent keeps its choice. They run only while AI commands are on ([AI root actions](#ai-root-actions))[^0181] |
 | `MF_ALLOW_SCRIPTS=1` | Let this agent run scripts of the script library (`commands.scripts`) as its own user, never as root, through a systemd drop-in. Off by default, and the web interface cannot turn it on: whoever runs the central server could otherwise run code on this host. Works on an installed agent too; `MF_ALLOW_SCRIPTS=0` takes it back. "Allow scripts from the script library" on the Add servers page, unticked by default, adds it to the command[^0189] |
-| `MF_MAJOR_UPGRADES_FROM_WEB=1` | Allow major upgrades of the distribution from the web interface (`packages.major_upgrades` in `agent.toml`), Debian 12 to 13 for now ([below](#major-upgrades)). Works on an installed agent too; `MF_MAJOR_UPGRADES_FROM_WEB=0` takes it back. "Allow major upgrades from the web interface" on the Add servers page, off by default, adds it to the command[^0182] |
+| `MF_MAJOR_UPGRADES_FROM_WEB=1` | Allow major upgrades of the distribution from the web interface (`packages.major_upgrades` in `agent.toml`): Debian, Ubuntu LTS, RHEL, Rocky Linux and AlmaLinux ([below](#major-upgrades)). Works on an installed agent too; `MF_MAJOR_UPGRADES_FROM_WEB=0` takes it back. "Allow major upgrades from the web interface" on the Add servers page, off by default, adds it to the command[^0182] |
+| `MF_SOFTWARE_FROM_WEB=1` | Let administrators install and remove software of the catalogue on this server with apt or dnf (`commands.software` in `agent.toml`, set with `monitorflow-agent software on`). Off by default; the web interface can only turn it off, never on. Works on an installed agent too, and either value forgets a "turn off" from the web interface; `MF_SOFTWARE_FROM_WEB=0` takes it back. "Allow installing and removing software from the web interface" on the Add servers page, unticked by default, adds it to the command ([Software from the catalogue](#software-from-the-catalogue))[^0188] |
 | `MF_REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page in the web interface, as the agent's user, through the agent's connection: sets `[remote] terminal = true` in `agent.toml` with `monitorflow-agent remote-access terminal on`. Who may (administrators by default), recording and idle time are set on the central server; this line is the server's own consent, which the central server cannot give itself. Works on an installed agent too; `MF_REMOTE_TERMINAL=0` takes it back. "Allow a remote terminal" on the Add servers page, unticked by default, adds it[^0190] |
 | `MF_REMOTE_TERMINAL_USER=<account>` | The local account remote terminals run as (`[remote] terminal_user`), instead of the agent's user. A root helper checks each signed command before it starts that account's login shell; the central server cannot choose the account. Never root unless named here; `none` goes back to the agent's user. Linux only[^0190] |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
@@ -228,26 +229,68 @@ The server's image is read-only and its `/tmp` is a tmpfs, which `docker compose
 
 ## Major upgrades
 
-A major upgrade moves a server to the next release of its distribution: Debian 12 (bookworm) to Debian 13 (trixie) for now, one release at a time[^0182]. It is a campaign of its own kind, "Major upgrade" in the new campaign form (`major_upgrade` in `POST /api/campaigns`), which only global administrators and administrators of the customer can create and start; neither a rule nor the AI ever starts one.
+A major upgrade moves a server to the next release of its distribution, one release at a time[^0182]:
+
+| From | To | With |
+| --- | --- | --- |
+| Debian 12 (bookworm) | Debian 13 (trixie) | apt, sources rewritten by MonitorFlow |
+| Ubuntu 22.04 (jammy) | Ubuntu 24.04 (noble) | `do-release-upgrade` |
+| Ubuntu 24.04 (noble) | Ubuntu 26.04 (resolute) | `do-release-upgrade` |
+| Red Hat Enterprise Linux 8 or 9 | 9 or 10 | leapp |
+| Rocky Linux 8 | Rocky Linux 9 | leapp with the ELevate data |
+| AlmaLinux 8 or 9 | 9 or 10 | leapp with the ELevate data |
+
+Rocky Linux 9 to 10 is not offered: ELevate publishes no `leapp-data-rocky` for Rocky Linux 9 yet. It is a campaign of its own kind, "Major upgrade" in the new campaign form (`major_upgrade` in `POST /api/campaigns`), which only global administrators and administrators of the customer can create and start; neither a rule nor the AI ever starts one.
 
 **The server must allow it.** `packages.major_upgrades = true` in `agent.toml`, which only root can write: `MF_MAJOR_UPGRADES_FROM_WEB=1` with the installer, or `sudo monitorflow-agent major-upgrades on` (`off` takes it back), then `systemctl restart monitorflow-agent` for the web interface to see it. The root helper reads the file itself before every upgrade, so a central server that is taken over cannot upgrade a server that did not agree.
 
-**Checks.** The server's Updates tab, and the campaign form for every server picked, show what the agent checked with its last package report: every package of the current release up to date, no held or broken package, enough free space (2 GiB on `/`, 4 GiB on `/var`, 300 MiB on `/boot`, added up when they share a filesystem), no reboot pending, and the sources. Third-party sources are listed: they are switched off for the upgrade and left off, with a comment saying so, since their packages were built for the old release. The central server adds whether the server allows major upgrades, whether its agent knows the next release, and, for a server on the mirrors, whether the mirrors carry Debian 13. The helper runs the checks again, after `apt-get update`, just before it starts, and refuses on any failed one. `GET /api/major-upgrades` returns the same.
+**Checks.** The server's Updates tab, and the campaign form for every server picked, show what the agent checked with its last package report: every package of the current release up to date, no held or broken package, enough free space (2 GiB on `/`, 4 GiB on `/var`, 300 MiB on `/boot`, added up when they share a filesystem), no reboot pending, and the sources. Third-party sources are listed: they are switched off for the upgrade and left off, with a comment saying so, since their packages were built for the old release. The central server adds whether the server allows major upgrades, whether its agent knows the next release, and, for a Debian server on the mirrors, whether the mirrors carry Debian 13. The helper runs the checks again, after `apt-get update` (`dnf check-update` on the RHEL family), just before it starts, and refuses on any failed one.
+
+- **Ubuntu** also needs the next LTS offered: `Prompt=lts` in `/etc/update-manager/release-upgrades` and `do-release-upgrade -c` finding it, which happens once that LTS has its first point release (24.04.1, 26.04.1). `ubuntu-release-upgrader-core` must be installed.
+- **RHEL and its derivatives** need leapp installed: `dnf install leapp-upgrade` on RHEL; on Rocky Linux and AlmaLinux, the ELevate repository and data first, `dnf install https://repo.almalinux.org/elevate/elevate-release-latest-el8.noarch.rpm` (`el9` on 9), then `dnf install leapp-upgrade leapp-data-rocky` (or `leapp-data-almalinux`). Held packages are dnf's version locks, broken ones what `dnf check` reports, and third-party repositories are listed: leapp does not use them.
+- **On the mirrors**, Ubuntu and the RHEL family are refused: their tools take the new release from the distribution and would leave the mirror files on the old one. Put the server's own sources back first ("Revert package sources" on its page).
+
+`monitorflow-agent major-upgrade checks`, as any user on the server, prints the same checks. `GET /api/major-upgrades` returns the same.
 
 **Snapshot.** Each server gets a Proxmox snapshot when it is a mapped guest, else a local LVM or ZFS snapshot, before its upgrade. Where neither is possible, the campaign form says so per server and the campaign needs "I accept that these servers cannot be rolled back by a snapshot" (`accept_limited_rollback`).
 
 **On the server**, `sudo -n /usr/bin/monitorflow-agent major-upgrade` checks the signed command, the consent, the releases and the checks, then starts the transient unit `monitorflow-major-upgrade`, which survives a restart of the agent:
+
+On **Debian**:
 
 1. every source of the release moves to `trixie` (`sources.list`, `*.list` and deb822 `*.sources`, `non-free-firmware` added where `non-free` was used), after a copy of each file in `/var/lib/monitorflow/major-upgrade/backup/`;
 2. `apt-get update`; on a failure the sources are put back as they were and nothing else changes;
 3. `apt-get upgrade --without-new-pkgs`, then `apt-get full-upgrade`, non-interactive, keeping every changed configuration file;
 4. `systemctl reboot`.
 
-After step 3 starts, only the snapshot goes back. The phase is in `/var/lib/monitorflow/major-upgrade/state.json`, the full output in `/var/lib/monitorflow/major-upgrade/log` (root only) and `journalctl -u monitorflow-major-upgrade`.
+After step 3 starts, only the snapshot goes back.
 
-**Waves.** One server of a batch at a time by default (`parallel`), the first batch as the pilot, inside the campaign's maintenance windows, stopping at the first failure by default. A server is done once it rebooted, its agent reports Debian 13, and no check fails on it that did not fail before; it fails when a step fails, when its checks are not back 30 minutes after it returned, or 6 hours after its upgrade started.
+On **Ubuntu**: `do-release-upgrade -f DistUpgradeViewNonInteractive`, which rewrites the sources, switches the third-party ones off and upgrades, keeping changed configuration files; then `systemctl reboot`. If it ends with the server still on the old release, the upgrade fails before the reboot. Its own logs are in `/var/log/dist-upgrade/`.
 
-Hosts installed before major upgrades lack the sudo line and the setting: run the install command again with `MF_MAJOR_UPGRADES_FROM_WEB=1`. Ubuntu and RHEL with its derivatives are planned (ADR-0182).
+On **RHEL, Rocky Linux and AlmaLinux**: `leapp preupgrade`; any inhibitor in its report fails the upgrade with nothing changed, and the report (`/var/log/leapp/leapp-report.txt`) is shown as it is on the server's Updates tab, under "leapp's report". Fix what it says (`leapp answer` for the questions it asks), then run the campaign again. Then `leapp upgrade`, which prepares the upgrade environment, and `systemctl reboot` into it: the packages are upgraded there, and the server boots again into the new release. The phase is in `/var/lib/monitorflow/major-upgrade/state.json`, the full output in `/var/lib/monitorflow/major-upgrade/log` (root only) and `journalctl -u monitorflow-major-upgrade`.
+
+**Waves.** One server of a batch at a time by default (`parallel`), the first batch as the pilot, inside the campaign's maintenance windows, stopping at the first failure by default. A server is done once it rebooted, its agent reports the new release, and no check fails on it that did not fail before; it fails when a step fails, when its checks are not back 30 minutes after it returned, or 6 hours after its upgrade started.
+
+Hosts installed before major upgrades lack the sudo line and the setting: run the install command again with `MF_MAJOR_UPGRADES_FROM_WEB=1`.
+
+## Software from the catalogue
+
+Campaigns and the API install and remove software of the catalogue on Linux servers whose administrator allowed it, with the distribution's own manager: apt on Debian and Ubuntu, dnf on RHEL and its derivatives[^0188]. Each server takes the catalogue entries of its manager; a campaign can list `nginx` for apt and for dnf, and each server gets its own.
+
+**The server must allow it.** `[commands] software = true` in `agent.toml`, which only root can write: `MF_SOFTWARE_FROM_WEB=1` with the installer, or `sudo monitorflow-agent software on` (`off` takes it back). The root helper reads the file itself at each change; restart the agent (`systemctl restart monitorflow-agent`) for the web interface to see it.
+
+**Turning it off from the web interface.** Administrators of the server's site can turn software installs off from the server's page (`POST /api/servers/{id}/software` with `{"on": false}`): the agent writes `/var/lib/monitorflow/agent/software-off`, and the agent and the root helper refuse every install and removal from then on. Only the server's administrator turns it on again, with `sudo monitorflow-agent software on` or the installer with `MF_SOFTWARE_FROM_WEB=1`, which remove that file.
+
+**On the server**, `sudo -n /usr/bin/monitorflow-agent packages software` reads the signed `software` command, checks the consent, the file above, the signature (ADR-0108) and the package names (letters, digits and `.+_:-`, never an option, a path, a glob or a group), then runs:
+
+- apt: `apt-get -q update`, then `apt-get -q -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --no-upgrade install <names>`, or the same options with `remove <names>`, with `DEBIAN_FRONTEND=noninteractive`;
+- dnf: `dnf -q -y install <names>` or `dnf -q -y remove <names>`.
+
+A package installed already is skipped ("nginx is installed already"), and so is one to remove that is not installed. Never `purge`, `autoremove` or a package file. With "Reboot if needed", the server restarts a minute later when the change asks for it.
+
+**Packages from a mirror.** An apt or dnf entry can name a mirror of the central server it installs from, for software outside the distribution's own repositories. A campaign of such software adds that mirror to each server's sources first (`configure_sources` in `add` mode, pinned to the mirror's newest published snapshot when the campaign is saved), installs, then puts the server's sources back, as pinned update campaigns do. Every Linux server of the campaign must then be of that mirror's distribution. A single command cannot do it: it would install from the server's own sources.
+
+Hosts installed before software installs lack the sudo line: run the install command again. Until then the server reports software installs as unsupported and campaigns skip it with that reason.
 
 ## Pointing a server at the mirrors
 
@@ -296,6 +339,7 @@ msiexec /i monitorflow-agent-0.11.0-x64.msi /qn /l*v install.log `
 | `AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page, on a new install or an upgrade: sets `[commands] from_web = true` in `agent.toml`, as `ai-commands from-web on` does[^0098] |
 | `ALLOW_SCRIPTS=1` | Let the agent run scripts of the script library, on a new install or an upgrade: sets `[commands] scripts = true` in `agent.toml`, as `scripts on` does[^0189] |
 | `REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page, on a new install or an upgrade: sets `[remote] terminal = true` in `agent.toml`, as `remote-access terminal on` does; `REMOTE_TERMINAL=0` refuses it[^0190] |
+| `REMOTE_DESKTOP=1` | Let people open this server's desktop from its page, through its own Remote Desktop service, on a new install or an upgrade: sets `[remote] desktop = true` in `agent.toml`, as `remote-access desktop on` does; `REMOTE_DESKTOP=0` refuses it. A consent of its own, apart from terminals. "Allow a remote desktop" on the Add servers page, unticked by default, adds it[^0190] |
 | `SOFTWARE_FROM_WEB=1` | Let administrators install and remove software of the catalogue on this server, on a new install or an upgrade: sets `[commands] software = true` in `agent.toml`, as `software on` does. "Allow installing and removing software from the web interface" on the Add servers page, off by default, adds it to the command[^0188] |
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
@@ -432,6 +476,17 @@ Restart-Service MonitorFlowAgent
 
 `remote-access terminal off` takes it back. The shell runs as the agent's user (`monitorflow` with a login shell on Linux, `NT SERVICE\MonitorFlowAgent` with Windows PowerShell on Windows). On Linux, `remote-access terminal-user <account>` (or `MF_REMOTE_TERMINAL_USER`) makes it that account's login shell instead, started by the root helper `remote-shell` once it checked the signed command; it is never root unless you name root there. Keystrokes and output are sealed end to end between the central server and the agent, so relays cannot read or change them. While a session is open, people logged in on the server are told who opened it (`wall` on Linux, `msg` on Windows), and again when it closes. Sessions close after the idle time the central server sets, 15 minutes by default, and after 12 hours.
 
+### Remote desktops (Windows)
+
+On a Windows server, people of the same roles can also open its desktop from the Remote desktop tab: the agent reaches the server's own Remote Desktop service on `127.0.0.1:3389`, and nothing else, and carries it through its connection and its relay, sealed as terminals are; no port opens, the firewall rule for Remote Desktop can stay closed[^0190]. The person signs in with an account of the server, as with any Remote Desktop client, network level authentication included; MonitorFlow does not keep the password. The server must allow it, apart from terminals, and Remote Desktop must be turned on in its settings ("Enable Remote Desktop"):
+
+```powershell
+& "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" remote-access desktop on   # or REMOTE_DESKTOP=1 with the MSI
+Restart-Service MonitorFlowAgent
+```
+
+`remote-access desktop off` takes it back. The session is the server's usual Remote Desktop session: Windows Server gives one of its own, while Windows 10 or 11 allows one session at a time, so the person at its screen is disconnected. It closes after the same idle time as terminals and after 12 hours, people logged in are told who opened it, and it is audited but never recorded. Windows Server 2016 or newer, or Windows 10 or newer, is needed: the central server speaks TLS 1.2 or 1.3 with the service.
+
 Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SERVICE\MonitorFlowAgent`, from `C:\`, with the system `PATH`, and is stopped with everything it started at the time limit. That account is not an administrator: it reads services, processes, the System and Application event logs, disks and network state, but cannot restart most services. To let AI restart one service after approval, grant the account that right on that service, for example with `sc.exe sdshow` and `sc.exe sdset`, adding `(A;;RPWPLCRC;;;S-1-5-80-546755567-1596817566-60379001-3258130523-3598288828)` (the service SID of `MonitorFlowAgent`). Without it, the command fails with "access denied" and the incident goes to a person.
 
 ### Software from the catalogue on Windows
@@ -470,7 +525,7 @@ It sets `[commands] software = true` in `agent.toml`; `software off` takes it ba
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
 [^0182]: [ADR-0182: Major distribution upgrades](adr/0182-major-distribution-upgrades.md)
-[^0190]: [ADR-0190: Remote terminals through the agent's connection](adr/0190-remote-terminals.md)
+[^0190]: [ADR-0190: Remote terminals and desktops through the agent's connection](adr/0190-remote-terminals.md)
 [^0175]: [ADR-0175: A diagnosis for every alert, commands where allowed](adr/0175-diagnosis-for-every-alert.md)
 [^0181]: [ADR-0181: AI root actions, and the diagnosis in the reader's language](adr/0181-ai-root-actions.md)
 [^0189]: [ADR-0189: Script library and automation rules](adr/0189-script-library-and-automation-rules.md)

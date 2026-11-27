@@ -5,6 +5,23 @@ import { acceptance, type Acceptance } from "./commandKinds";
 export const terminalAcceptance = (server: Pick<ServerDetail, "command_kinds">): Acceptance =>
   acceptance(server.command_kinds?.remote_session);
 
+/** What the agent does with remote desktops, as it last reported (ADR-0190). */
+export const desktopAcceptance = (server: Pick<ServerDetail, "command_kinds">): Acceptance =>
+  acceptance(server.command_kinds?.remote_desktop);
+
+/** Whether the server's page has a Remote desktop tab: Windows servers, for those who may open sessions or see them. */
+export const hasDesktopTab = (server: Pick<ServerDetail, "os_family" | "remote_terminal" | "kind">): boolean =>
+  server.kind !== "device" &&
+  server.os_family === "windows" &&
+  !!server.remote_terminal &&
+  (server.remote_terminal.can_open || server.remote_terminal.can_review);
+
+/** A size for a new desktop in a box `width` pixels wide: 16:9, from 1024×576 to 2560×1440, even numbers. */
+export function desktopSize(width: number): { width: number; height: number } {
+  const w = Math.min(2560, Math.max(1024, Math.round(width / 2) * 2));
+  return { width: w, height: Math.round((w * 9) / 16 / 2) * 2 };
+}
+
 /** The session's WebSocket on this page's host: `wss://` behind HTTPS. */
 export function socketUrl(location: Pick<Location, "protocol" | "host">, sessionId: string): string {
   const scheme = location.protocol === "https:" ? "wss" : "ws";

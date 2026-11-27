@@ -1,6 +1,6 @@
 # MonitorFlow agent: the privileged commands it runs through `sudo -n`
 # (ADR-0031, ADR-0032, ADR-0035, ADR-0036, ADR-0053, ADR-0094, ADR-0181,
-# ADR-0182, ADR-0190). Install as /etc/sudoers.d/monitorflow-agent, owner
+# ADR-0182, ADR-0188, ADR-0190). Install as /etc/sudoers.d/monitorflow-agent, owner
 # root, mode 0440, and check with `visudo -cf`. See docs/deploy-agent.md.
 #
 # Exact command lines, no wildcards: sudo refuses any other argument.
@@ -9,6 +9,12 @@
 # checks them before running apt or dnf (ADR-0036).
 
 Cmnd_Alias MONITORFLOW_PACKAGES = /usr/bin/monitorflow-agent packages update
+# Software from the central server's catalogue: the helper reads a
+# `software` command the central server signed on stdin, runs it only if
+# `commands.software` is set in agent.toml and the web interface did not
+# turn it off, and installs or removes the packages it names with apt or
+# dnf and fixed options (ADR-0188). Never a command line.
+Cmnd_Alias MONITORFLOW_SOFTWARE = /usr/bin/monitorflow-agent packages software
 Cmnd_Alias MONITORFLOW_REBOOT = /usr/sbin/shutdown -r +1
 Cmnd_Alias MONITORFLOW_SOURCES = \
     /usr/bin/monitorflow-agent sources apply, \
@@ -43,4 +49,4 @@ Cmnd_Alias MONITORFLOW_ROOT_ACTIONS = /usr/bin/monitorflow-agent root-action
 # allows terminals and names that account (ADR-0190).
 Cmnd_Alias MONITORFLOW_REMOTE_SHELL = /usr/bin/monitorflow-agent remote-shell
 
-monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES, MONITORFLOW_SELF_UPDATE, MONITORFLOW_SNAPSHOTS, MONITORFLOW_MAJOR_UPGRADE, MONITORFLOW_ROOT_ACTIONS, MONITORFLOW_REMOTE_SHELL
+monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_SOFTWARE, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES, MONITORFLOW_SELF_UPDATE, MONITORFLOW_SNAPSHOTS, MONITORFLOW_MAJOR_UPGRADE, MONITORFLOW_ROOT_ACTIONS, MONITORFLOW_REMOTE_SHELL

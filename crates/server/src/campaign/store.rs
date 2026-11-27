@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use monitorflow_common::command;
+use monitorflow_common::proto::v1::PackageManager;
 use monitorflow_common::third_party;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -29,7 +30,7 @@ pub(super) const COLUMNS: &str =
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
      created_by, created_at, started_at, finished_at, sources_mode, agent_version, include_os,
      third_party, requested_server_ids, requested_waves, major_upgrade, classifications, hold,
-     software";
+     software, recurring";
 
 /// Who acts, as `(actor_kind, actor_id)` of the audit log.
 pub type Actor<'a> = (&'a str, &'a str);
@@ -56,6 +57,8 @@ pub struct NewCampaign {
     pub major_upgrade: Option<MajorUpgradeSpec>,
     /// Install or remove this software instead of updating (ADR-0188).
     pub software: Option<SoftwareSpec>,
+    /// Run again by itself at each window once a run completed (ADR-0188).
+    pub recurring: bool,
     pub created_by: Option<Uuid>,
 }
 
@@ -117,6 +120,8 @@ pub struct CampaignRow {
     pub hold: Vec<String>,
     /// Set for a software campaign (ADR-0188).
     pub software: Option<sqlx::types::Json<SoftwareSpec>>,
+    /// Run again by itself at each window (ADR-0188).
+    pub recurring: bool,
 }
 
 impl CampaignRow {
@@ -223,9 +228,10 @@ impl CampaignStore {
                 "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
                      allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit,
                      sources_mode, agent_version, include_os, third_party, requested_server_ids,
-                     requested_waves, major_upgrade, classifications, hold, software, created_by)
+                     requested_waves, major_upgrade, classifications, hold, software, recurring,
+                     created_by)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                         $17, $18, $19, $20)
+                         $17, $18, $19, $20, $21)
                  RETURNING {COLUMNS}"
             ))),
             new,
@@ -277,7 +283,7 @@ impl CampaignStore {
                 && current.windows == windows
                 && current.failure_threshold == new.failure_threshold
             {
-                let row = rename(&mut tx, &row, &new.name, actor).await?;
+                let row = rename(&mut tx, &row, new, actor).await?;
                 tx.commit().await?;
                 return Ok(row);
             }
@@ -576,16 +582,36 @@ fn check(new: &NewCampaign) -> Result<Vec<Window>, CampaignError> {
     }
     if let Some(software) = &new.software {
         software.validate().map_err(CampaignError::Invalid)?;
-        let update_options = !spec.packages.is_empty()
-            || spec.security_only
-            || spec.has_third_party()
-            || approvals
-            || new.sources.is_some();
+        let update_options =
+            !spec.packages.is_empty() || spec.security_only || spec.has_third_party() || approvals;
         if update_options {
             return Err(CampaignError::Invalid(
                 "a software campaign takes no packages, security_only, third_party, \
-                 classifications, hold or sources"
+                 classifications or hold"
                     .into(),
+            ));
+        }
+        // Mirrors are added for the install, never in place of the
+        // server's own sources (ADR-0188).
+        if new
+            .sources
+            .as_ref()
+            .is_some_and(|p| p.mode != SourcesMode::Add)
+        {
+            return Err(CampaignError::Invalid(
+                "a software campaign only adds mirrors: sources.mode must be `add`".into(),
+            ));
+        }
+    }
+    if new.recurring {
+        if new.major_upgrade.is_some() {
+            return Err(CampaignError::Invalid(
+                "a major upgrade campaign does not recur".into(),
+            ));
+        }
+        if !windows.iter().any(|w| !matches!(w, Window::Once { .. })) {
+            return Err(CampaignError::Invalid(
+                "a recurring campaign needs a weekly, monthly or yearly window".into(),
             ));
         }
     }
@@ -625,7 +651,7 @@ async fn plan(
 type RowQuery<'q> =
     sqlx::query::QueryAs<'q, sqlx::Postgres, CampaignRow, sqlx::postgres::PgArguments>;
 
-/// Binds `$1` to `$19` of an insert or update of `campaigns` from `new`.
+/// Binds `$1` to `$20` of an insert or update of `campaigns` from `new`.
 fn bind_fields<'q>(query: RowQuery<'q>, new: &'q NewCampaign) -> RowQuery<'q> {
     query
         .bind(new.customer_id)
@@ -647,6 +673,7 @@ fn bind_fields<'q>(query: RowQuery<'q>, new: &'q NewCampaign) -> RowQuery<'q> {
         .bind(&new.spec.classifications)
         .bind(&new.spec.hold)
         .bind(new.software.as_ref().map(sqlx::types::Json))
+        .bind(new.recurring)
 }
 
 /// Stores the pins, waves, targets and windows of the campaign `id`.
@@ -720,6 +747,7 @@ fn details(row: &CampaignRow, new: &NewCampaign, plan: &Plan) -> serde_json::Val
         "major_upgrade": new.major_upgrade,
         "impact": if new.major_upgrade.is_some() { Some("high_impact") } else { None },
         "software": new.software,
+        "recurring": new.recurring,
     })
 }
 
@@ -745,6 +773,9 @@ pub struct RunSettings {
     /// Set for a software campaign (ADR-0188).
     #[serde(default)]
     pub software: Option<SoftwareSpec>,
+    /// Whether it ran again by itself at each window (ADR-0188).
+    #[serde(default)]
+    pub recurring: bool,
 }
 
 impl From<&NewCampaign> for RunSettings {
@@ -762,6 +793,7 @@ impl From<&NewCampaign> for RunSettings {
             windows: new.windows.clone(),
             sources: new.sources.clone(),
             software: new.software.clone(),
+            recurring: new.recurring,
         }
     }
 }
@@ -877,6 +909,7 @@ async fn request_of(
         agent_version: row.agent_version.as_deref().and_then(|v| v.parse().ok()),
         major_upgrade: row.major_upgrade.as_ref().map(|m| m.0.clone()),
         software: row.software().cloned(),
+        recurring: row.recurring,
         created_by: row.created_by,
     })
 }
@@ -915,15 +948,17 @@ fn locked_changes(current: &NewCampaign, new: &NewCampaign, targets: bool) -> Ve
 async fn rename(
     conn: &mut PgConnection,
     row: &CampaignRow,
-    name: &str,
+    new: &NewCampaign,
     actor: Actor<'_>,
 ) -> Result<CampaignRow, CampaignError> {
+    let name = new.name.as_str();
     // SQL-safe: interpolates only the constant COLUMNS.
     let renamed: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "UPDATE campaigns SET name = $2 WHERE id = $1 RETURNING {COLUMNS}"
+        "UPDATE campaigns SET name = $2, recurring = $3 WHERE id = $1 RETURNING {COLUMNS}"
     )))
     .bind(row.id)
     .bind(name)
+    .bind(new.recurring)
     .fetch_one(&mut *conn)
     .await?;
     audit::record(
@@ -937,6 +972,7 @@ async fn rename(
                 "name": name,
                 "previous_name": row.name,
                 "state": row.state.as_str(),
+                "recurring": new.recurring,
             }),
         },
     )
@@ -963,13 +999,15 @@ async fn edit_running(
     }
     // SQL-safe: interpolates only the constant COLUMNS.
     let edited: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "UPDATE campaigns SET name = $2, failure_threshold = $3, failure_threshold_unit = $4
+        "UPDATE campaigns SET name = $2, failure_threshold = $3, failure_threshold_unit = $4,
+             recurring = $5
          WHERE id = $1 RETURNING {COLUMNS}"
     )))
     .bind(row.id)
     .bind(&new.name)
     .bind(new.failure_threshold.value as i32)
     .bind(new.failure_threshold.unit)
+    .bind(new.recurring)
     .fetch_one(&mut *conn)
     .await?;
     audit::record(
@@ -984,6 +1022,7 @@ async fn edit_running(
                 "state": row.state.as_str(),
                 "failure_threshold": new.failure_threshold,
                 "windows": windows,
+                "recurring": new.recurring,
             }),
         },
     )
@@ -1032,8 +1071,8 @@ async fn replace(
                  failure_threshold = $8, failure_threshold_unit = $9, sources_mode = $10,
                  agent_version = $11, include_os = $12, third_party = $13,
                  requested_server_ids = $14, requested_waves = $15, major_upgrade = $16,
-                 classifications = $17, hold = $18, software = $19
-             WHERE id = $20
+                 classifications = $17, hold = $18, software = $19, recurring = $20
+             WHERE id = $21
              RETURNING {COLUMNS}"
         ))),
         new,
@@ -1430,6 +1469,7 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
            AND (s.package_updates OR $4 OR NOT $5)
            AND ($5 OR (s.os_family = 'windows') = ANY($6))
            AND ($7::text IS NULL OR s.os_version = $7 OR s.os_version LIKE $7 || '.%')
+           AND ($8::text[] IS NULL OR s.os_family = ANY($8))
          ORDER BY s.hostname, s.peer_id",
     )
     .bind(new.customer_id)
@@ -1438,12 +1478,14 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
     .bind(new.agent_version.is_some() || software)
     .bind(new.spec.include_os && !software)
     .bind(if software {
-        // winget, on Windows servers only (ADR-0188).
-        vec![true]
+        vec![true, false]
     } else {
         platforms(&new.spec)
     })
     .bind(from)
+    // Software reaches the systems of its managers: winget Windows, apt
+    // the Debian family, dnf the RHEL family (ADR-0188).
+    .bind(new.software.as_ref().map(software_families))
     .fetch_all(&mut *conn)
     .await?;
     if targets.is_empty() {
@@ -1457,6 +1499,21 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
         )));
     }
     Ok(targets)
+}
+
+/// The OS families the managers of `software` install on.
+fn software_families(software: &SoftwareSpec) -> Vec<String> {
+    software
+        .managers()
+        .into_iter()
+        .filter_map(|manager| match manager {
+            PackageManager::Winget => Some("windows"),
+            PackageManager::Apt => Some("debian"),
+            PackageManager::Dnf => Some("rhel"),
+            _ => None,
+        })
+        .map(str::to_owned)
+        .collect()
 }
 
 /// For each selected manager, whether it is a Windows one: the
@@ -1553,6 +1610,7 @@ mod tests {
             agent_version: None,
             major_upgrade: None,
             software: None,
+            recurring: false,
             created_by: None,
         }
     }

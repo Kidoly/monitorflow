@@ -37,7 +37,7 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller MySQL et MariaDB](surveiller-mysql-mariadb.md) : Suivez les connexions, requêtes lentes, le buffer pool InnoDB et la réplication de MySQL et MariaDB, et soyez alerté quand la base ne répond plus, avec le contrôle prêt à l'emploi de MonitorFlow.
 - [Comment surveiller Redis](surveiller-redis.md) : Suivez la mémoire, les évictions, les clients, les sauvegardes et la réplication de Redis, et soyez alerté quand il ne répond plus, avec le contrôle Redis prêt à l'emploi de MonitorFlow.
 - [Comment surveiller MongoDB](surveiller-mongodb.md) : Soyez alerté quand MongoDB s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec les vérifications du service mongod et du port 27017.
-- [Comment surveiller SQL Server](surveiller-sql-server.md) : Soyez alerté quand une instance SQL Server s'arrête ou refuse les connexions sous Windows, avec les vérifications du service MSSQLSERVER et du port 1433.
+- [Comment surveiller SQL Server](surveiller-sql-server.md) : Suivez les connexions, lots de requêtes, la durée de vie des pages, les blocages, la taille des bases et des journaux et les réplicas Always On de SQL Server, et soyez alerté quand il ne répond plus, avec le contrôle prêt à l'emploi de MonitorFlow.
 
 ## Web et virtualisation
 
@@ -45,6 +45,8 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller Apache](surveiller-apache.md) : Soyez alerté quand le serveur web Apache s'arrête ou que les ports 80 et 443 ne répondent plus, sous Debian, Ubuntu, RHEL et Rocky.
 - [Comment surveiller un site web en HTTPS](surveiller-site-web-https.md) : Sachez quand votre site ne répond plus comme il le devrait : son code de réponse, le texte de la page, son temps de réponse, ses redirections et l'expiration de son certificat.
 - [Comment surveiller Docker](surveiller-docker.md) : Suivez chaque conteneur Docker ou Podman : s'il tourne, ses redémarrages, son contrôle de santé, son processeur et sa mémoire, et soyez alerté quand le moteur ou un conteneur s'arrête.
+- [Comment surveiller une application Java (JMX, Tomcat, Kafka)](surveiller-java-jmx.md) :Suivez la heap, le ramasse-miettes, les threads et les interblocages d'une JVM, les connecteurs de Tomcat et les partitions d'un broker Kafka via Jolokia, et soyez alerté quand elle manque de mémoire ou ne répond plus, avec le contrôle Java prêt à l'emploi de MonitorFlow.
+- [Comment surveiller Kubernetes](surveiller-kubernetes.md) : Suivez un cluster Kubernetes par son API avec un jeton en lecture seule : les nœuds et leurs conditions, les pods qui ne tournent pas ou redémarrent, les déploiements sans assez de réplicas prêts et les volume claims en attente.
 - [Comment surveiller Proxmox VE](surveiller-proxmox-ve.md) : Surveillez vos hôtes Proxmox VE : l'interface web sur le port 8006, le service de cluster, et l'espace disque, le CPU et la mémoire des VM.
 - [Comment surveiller VMware vSphere et Hyper-V](surveiller-vmware-hyper-v.md) : Surveillez les hôtes, clusters, machines virtuelles et banques de données d'un vCenter, d'un hôte ESXi ou d'un hôte Hyper-V, et reliez chaque machine virtuelle à son serveur.
 - [Comment surveiller les machines virtuelles AWS et Azure](surveiller-aws-azure.md) : Surveillez les instances EC2 d'un compte AWS et les machines virtuelles d'un abonnement Azure : leur état, leurs contrôles d'état, leur processeur, leur réseau et leurs disques, avec des identifiants en lecture seule, et reliez chacune à son serveur.

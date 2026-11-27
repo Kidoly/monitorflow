@@ -44,6 +44,7 @@ import {
   MAX_PARALLEL,
   releaseLabel,
   runsRelease,
+  softwareFamilies,
 } from "@/lib/campaigns";
 import { formatDuration } from "@/lib/format";
 import { administersCustomer, multiCustomer, multiSite, useMe } from "@/lib/me";
@@ -233,6 +234,12 @@ export function CampaignForm({
   const agentUpdate = draft.update === "agent";
   const wholeSystem = agentUpdate || major;
   const appsOnly = !wholeSystem && !softwareUpdate && draft.sources === "apps" ? draft.managers : null;
+  // Software goes to the systems of the managers of the entries chosen (ADR-0188).
+  const chosenManagers = [
+    ...(catalog?.software ?? []).filter((e) => draft.softwareIds.includes(e.id)).map((e) => e.manager),
+    ...(source?.software?.packages ?? []).filter((p) => draft.softwareIds.includes(p.catalog_id)).map((p) => p.manager),
+  ];
+  const families = softwareFamilies(chosenManagers);
   const targets = campaignTargets(
     inventory.servers,
     draft.customerId,
@@ -240,13 +247,13 @@ export function CampaignForm({
     draft.serverIds,
     agentUpdate,
     appsOnly,
-    softwareUpdate,
+    softwareUpdate && families,
   ).filter((s) => !major || runsRelease(s.os_version, draft.majorFrom));
   const noPackages = (s: Server) =>
     major
       ? !runsRelease(s.os_version, draft.majorFrom)
       : softwareUpdate
-        ? s.os_family !== "windows"
+        ? !families.includes(s.os_family)
         : appsOnly
           ? !appsOnly.some((m) => managerFits(m, s.os_family))
           : !agentUpdate && s.package_updates === false;
@@ -261,6 +268,8 @@ export function CampaignForm({
           name: draft.name,
           windows: toRequest(draft).windows,
           failure_threshold: toRequest(draft).failure_threshold,
+          // Changes while a run is under way, like the windows (ADR-0188).
+          ...((draft.recurring || source.recurring) && { recurring: draft.recurring && !source.major_upgrade }),
         }
       : toRequest(draft);
   // Locked, the batches stay those frozen: check them against the servers they hold.
@@ -549,6 +558,17 @@ export function CampaignForm({
               {t("campaigns.form.addWindow")}
             </Button>
           </div>
+          {!major && (
+            <>
+              <Switch
+                rowClassName={own.inline}
+                checked={draft.recurring}
+                onChange={(recurring) => set({ recurring })}
+                label={t("campaigns.form.recurring")}
+              />
+              <p className={own.note}>{t("campaigns.form.recurringNote")}</p>
+            </>
+          )}
         </Fieldset>
 
         <Fieldset legend={t("campaigns.form.threshold")}>
@@ -653,7 +673,8 @@ function SoftwareChoice({
                   />
                   {entry.name}
                   <span className={own.dim}>
-                    {entry.package_id} · {entry.source}
+                    {entry.package_id} · {entry.manager}
+                    {entry.manager === "winget" ? ` · ${entry.source}` : entry.mirror ? ` · ${entry.mirror}` : ""}
                   </span>
                 </label>
               </li>

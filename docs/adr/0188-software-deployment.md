@@ -1,7 +1,7 @@
 # ADR-0188: Software deployment and update approvals
 
 Date: 2026-11-24
-Status: accepted; Windows (Windows Update approvals and winget) delivered, Linux and MSI packages described below and still to come
+Status: accepted; Windows (Windows Update approvals and winget) delivered first, then Linux packages, packages from mirrors, recurring campaigns and turning software installs off from the server's page (amended 2026-11-25); MSI packages still to come
 
 ## Context
 
@@ -73,7 +73,7 @@ A new command kind, `software`, payload `SoftwareChange { action, manager, packa
 
 `allow_reboot` of a campaign applies to its software commands. The update service accepts a `reboot` step of a `software` command only when its payload allows it.
 
-**On Linux** the agent registers `software` as unsupported for now: "software installs are not supported on Linux yet".
+**On Linux**, see "Linux packages" below.
 
 ### Consent on the server
 
@@ -83,9 +83,9 @@ It is checked twice: the agent reports `software` as accepted or off in `Hello` 
 
 The server reads the report: a campaign gives a server that has not allowed it no command and an error naming the line to run, an agent that predates this decision an error saying it updates by itself, and a single command is refused with 409.
 
-**Default: off, and the Add servers checkbox unticked.** The AI commands checkbox is ticked by default (ADR-0175) because AI commands run as the agent's own unprivileged account and still go through risk rules and approvals. Installing software runs an installer of the publisher's choosing as LocalSystem: full control of the host. With the consent, a central server that is taken over could install any package of the server's winget sources; without it, it can only update what is installed, as before. That trade is the host administrator's to make, knowingly, per server. Existing installs never agreed and keep refusing until their administrator runs `software on`. The checkbox "Allow installing and removing software from the web interface" adds `SOFTWARE_FROM_WEB=1` to the Windows command; the Linux command will get `MF_SOFTWARE_FROM_WEB=1` with the Linux part.
+**Default: off, and the Add servers checkbox unticked.** The AI commands checkbox is ticked by default (ADR-0175) because AI commands run as the agent's own unprivileged account and still go through risk rules and approvals. Installing software runs an installer of the publisher's choosing as LocalSystem: full control of the host. With the consent, a central server that is taken over could install any package of the server's winget sources; without it, it can only update what is installed, as before. That trade is the host administrator's to make, knowingly, per server. Existing installs never agreed and keep refusing until their administrator runs `software on`. The checkbox "Allow installing and removing software from the web interface" adds `SOFTWARE_FROM_WEB=1` to the Windows command and `MF_SOFTWARE_FROM_WEB=1` to the Linux one.
 
-There is no switch on the server's page to turn software installs off from the web interface, unlike AI commands (ADR-0098): the consent is the only setting, and it lives on the host. A switch that only takes the power away may come later.
+The server's page can only take that power away (below, "Turning software installs off").
 
 ### API
 
@@ -108,15 +108,50 @@ Command parameters show `classifications`, `hold` and held apps of `apply_update
 - **Free package IDs in campaigns.** The catalogue is where an ID and a source are reviewed once.
 - **Consent from the central server, or ticked by default.** See above.
 
+## Linux packages
+
+Delivered with the amendment of 2026-11-25.
+
+**Catalogue.** An entry's manager is `winget`, `apt` or `dnf` (migration `20270105090000_software_deployment_rest`). apt and dnf entries name a package of the distribution in its grammar (`common::command::valid_package_name`: letters, digits and `.+_:-`, starting with a letter or digit and ending with one before any trailing `+`), so none is an option, a path, a glob, a group (`@core`) or a removal marker (`nginx-`), and have no source. The same package may be listed for apt and for dnf.
+
+**One campaign, each server its manager.** `PackageManager` gains `APT` (4) and `DNF` (5), the distributions' own managers, never accepted in a third-party selection (`third_party::is_third_party`). `software::manager_for` maps a platform to its manager: winget on Windows, apt on the Debian family, dnf on the RHEL family. A software campaign targets the servers of the families its entries are for, and each server's `software` command carries only the packages of its manager; a server none of them is for gets the error "none of this software is for this server's system". `check_change` refuses a change whose manager is not the platform's, on the API, the agent and the helper alike. So one campaign can install `nginx` on Debian and RHEL servers and `Git.Git` on Windows ones. As before a package update, a campaign takes a local snapshot of a Linux server's system volumes first where they allow one and no Proxmox snapshot applies (ADR-0094).
+
+**The helper.** `sudo -n /usr/bin/monitorflow-agent packages software`, one more exact line in `deploy/sudoers/monitorflow-agent`, reads the signed command on stdin. As root, before anything runs, it checks in order: `commands.software` read from `agent.toml` alone, without the environment, which only root writes; the web interface's "off" (below); the command, with its own trust anchor, for this machine, of kind `software`, unexpired and never run before (ADR-0108); and the change for its own distribution. It then runs fixed lines in the system's environment as sudo resets it:
+
+- apt: `apt-get -q update`, then `apt-get -q -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --no-upgrade install <names>`, or the same options with `remove <names>`, with `DEBIAN_FRONTEND=noninteractive`. `--no-upgrade` leaves an installed package at its version: updating it is an update campaign's job.
+- dnf: `dnf -q -y install <names>` or `dnf -q -y remove <names>`.
+
+Never `purge`, `autoremove`, a file or a URL. What is installed already (`dpkg-query`, `rpm -qa`) is skipped for an install, and what is not installed for a removal, each with a line, `nginx is installed already`, as on Windows; neither is an error. The packages left go in one transaction, so their dependencies resolve together; a failure fails the command with the tool's code. The agent then sends a package report and, with `allow_reboot`, restarts the host one minute later when it needs it.
+
+**The agent** reports `software` as `accepted`, `off` without the consent or once turned off, or `unsupported` when `sudo -n -l` says the sudo rules predate the helper, as for AI root actions (ADR-0181). Existing servers get the sudo line by running the install command again; until then campaigns skip them with that reason.
+
+**Consent.** `commands.software` in `agent.toml`, as on Windows, written by `sudo monitorflow-agent software on|off` (now on both systems), which the installer runs for `MF_SOFTWARE_FROM_WEB=1` or `0`. This replaces the systemd drop-in this decision first described: the helper reads the file and never the environment, as ADR-0181 and ADR-0182 do, so a drop-in would not have reached it.
+
+## Packages from mirrors
+
+An apt or dnf entry may name a mirror of the central server of its family (`mirror_id`, cleared if the mirror is removed), for software outside the distributions' repositories. Its URL and keys were reviewed when the mirror was added (ADR-0142); no free repository URL reaches a server.
+
+A campaign whose software names mirrors, without `sources`, gets them as `sources` in `add` mode, each pinned to its newest published snapshot when the campaign is saved; editing keeps those pins while the same mirrors are named. The runner then does what pinned update campaigns do (ADR-0038): `configure_sources` adds the mirrors, the `software` command follows once it succeeded, and the server's sources are put back afterwards. A software campaign may give `sources` itself, in `add` mode only: replacing a server's sources to install one package would cut it off from its distribution. As for pinned updates, every Linux server of the campaign must be of a family a pinned mirror covers. A single `software` command naming such an entry is refused: it cannot add the mirror first.
+
+Pinning the snapshot when the campaign is saved, rather than `current`, keeps what was reviewed: a recurring campaign installs from the same snapshot until it is edited. Retention and relays keep the snapshots a completed recurring campaign pins, as they keep those of unfinished campaigns (ADR-0074).
+
+## Recurring campaigns
+
+`campaigns.recurring` (`recurring` in the API): once a run completes, the runner runs the campaign again by itself at the first window that opens after that, exactly as "Run again" with every server does (ADR-0173): the run moves to the history, the targets are planned again, and it is `scheduled`. It is audited as `campaign.relaunch` by `campaign-runner`. "The next window" is one whose end differs from the end of the window open when the run completed (`campaign_window_end`), so a run that completes inside a window does not start again in it. A campaign with commands still in flight or sources to restore waits for the next step.
+
+A recurring campaign needs a weekly, monthly or yearly window; a major upgrade never recurs. A failed or stopped run ends the recurrence until someone runs the campaign again or edits it: a failure is for a person to look at. So does a run that can no longer be planned, every server removed for instance: the runner clears `recurring` and sets the campaign's error, "stopped recurring: …", audited as `campaign.update`. The flag can change at any time, even during a run.
+
+## Turning software installs off
+
+A new command kind, `software_off`, empty payload `SoftwareOff`. `POST /api/servers/{id}/software` with `{"on": false}` queues it for administrators of the server's site, its customer or everything, audited as `server.software_off`; it waits up to seven days for an offline server, and a newer request cancels one still queued. `{"on": true}` is always refused with 409 and the line to run on the server. `GET /api/servers/{id}` gains `software_off_change`, the last such command. The server's page shows whether software installs are allowed and offers "Turn off".
+
+The agent writes `<data_dir>/software-off` and reports `software` as `off` at once, reconnecting so the new `Hello` carries it (ADR-0098). The agent, the Linux helper and the Windows update service each refuse software changes while the file exists, whatever it holds or when it cannot be read. Nothing the central server sends removes it: `monitorflow-agent software on|off` on the host does, and the installer and the MSI property through it. The file is in the agent's own data directory, which its account can write: deleting it gives back exactly what `agent.toml` allows, never more, so the central server still cannot widen a server's rights. The agent reports `software_off` as accepted, so the server knows which agents obey it; older ones get 409.
+
+Unlike AI commands, there is no consent that lets the web interface turn software installs back on: installing software is full control of the host, and a central server that is taken over must not regain it by an "on" after an administrator turned it off.
+
 ## Still to come
 
-The roadmap line stays open for these, in this order:
-
-1. **Linux packages.** Catalogue entries of manager `apt` or `dnf`, names in the distributions' grammar (`common::command::valid_package_name`). A root helper `monitorflow-agent packages software`, one more exact sudo line in `deploy/sudoers/monitorflow-agent` (`monitorflow ALL=(root) NOPASSWD: /usr/bin/monitorflow-agent packages software`), reads the signed `software` command on stdin, checks it against its own anchor (ADR-0108) and its consent in `agent.toml`, and runs fixed command lines: `apt-get -q -y install <names>` and `apt-get -q -y remove <names>` with `DEBIAN_FRONTEND=noninteractive` and the options of ADR-0036, `dnf -q -y install|remove <names>`. Never `purge`, `autoremove` or a file path. Consent: `MF_SOFTWARE_FROM_WEB=1` with the installer, as a systemd drop-in like ADR-0098's.
-2. **Linux repositories.** A catalogue entry may need a repository: it names a mirror of the central server (ADR-0142), and a software campaign configures the server's sources first with `configure_sources` (ADR-0035) in `add` mode, as pinned campaigns do (ADR-0038), then restores them. No free repository URL reaches a server: mirrors are where keys and URLs are reviewed.
-3. **MSI packages on Windows.** A catalogue entry of manager `msi` holds an uploaded file stored by the central server, its SHA-256 and its ProductCode, and optional public properties from a checked grammar. The signed `software` command carries the URL and the SHA-256; the update service downloads it through the agent's upstream (relay mirror listener or central server), checks the digest, and runs `msiexec /i <file> /qn /norestart` with only those properties, or `msiexec /x {ProductCode} /qn /norestart` to remove it. MSI files carry no GPG signature, so the digest in the signed command is what protects them on plain HTTP listeners.
-4. **Recurring campaigns**: a campaign that runs again by itself at each window, for Windows updates and third-party apps kept up to date without anyone pressing "Run again" (ADR-0173). Today a campaign is one pass, run again by hand or through the API.
-5. **Turning software installs off from the server's page**, and the server's page showing whether software is allowed.
+**MSI packages on Windows.** A catalogue entry of manager `msi` holds an uploaded file stored by the central server, its SHA-256 and its ProductCode, and optional public properties from a checked grammar. The signed `software` command carries the URL and the SHA-256; the update service downloads it through the agent's upstream (relay mirror listener or central server), checks the digest, and runs `msiexec /i <file> /qn /norestart` with only those properties, or `msiexec /x {ProductCode} /qn /norestart` to remove it. MSI files carry no GPG signature, so the digest in the signed command is what protects them on plain HTTP listeners. It needs a file store on the central server and its copy on relays, which nothing has yet.
 
 ## Manual test
 
@@ -129,10 +164,20 @@ On a Windows Server 2025 virtual machine with the agent installed by the MSI wit
 5. `software off` as administrator, no restart: a new campaign's command fails with the update service's refusal; after `Restart-Service MonitorFlowAgent`, the campaign skips the server with "software installs are not allowed on this server".
 6. An update campaign approving `Definition Updates` only and holding one pending KB: only definition updates install, and the output says the KB is held.
 
+A Linux test, on Debian 13 and Rocky Linux 9 with the agent installed with `MF_SOFTWARE_FROM_WEB=1`:
+
+1. `agent.toml` has `software = true`; `sudo -u monitorflow sudo -n -l /usr/bin/monitorflow-agent packages software` succeeds; the server reports `software` as accepted.
+2. Entries `nginx` for apt and for dnf; one campaign over both servers installs it on each with its manager; a second run says `nginx is installed already`.
+3. "Turn off" on the server's page: the next campaign skips the server; `software-off` is in the data directory; `sudo monitorflow-agent software on` and a restart allow it again.
+4. A recurring campaign with a daily window runs again the next day by itself.
+
 ## Consequences
 
 - One campaign screen and one API deploy software, update Windows with approvals and holds, update third-party apps and agents.
 - A server installs software only where its administrator allowed it; existing servers do not until someone runs `software on` there. A compromised central server can install packages only on those servers, and only what their winget sources offer.
 - Approvals and holds reach only agents of this version or later; older Windows agents in a campaign that uses them are skipped until they update themselves, rather than install what is held.
-- Linux servers are not targets of software campaigns yet. A Linux agent refuses approvals and holds it cannot apply rather than ignore them; the server never sends it any.
+- Linux servers take software of the catalogue with apt or dnf where their administrator allowed it, from their own sources or a reviewed mirror. A compromised central server can install there only packages those sources offer. A Linux agent refuses approvals and holds it cannot apply rather than ignore them; the server never sends it any.
+- Administrators can take the right away from the server's page; giving it back always needs the host.
+- Campaigns can keep software installed and servers updated without anyone pressing "Run again".
+- `servers.command_kinds` gains `software_off`; `deploy/sudoers/monitorflow-agent` gains one line, which existing servers get by running the install command again.
 - `servers.command_kinds` gains `software`. The catalogue is one more table to back up with the database.

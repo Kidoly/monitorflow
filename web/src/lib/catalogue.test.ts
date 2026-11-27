@@ -56,7 +56,7 @@ describe("the check catalogue", () => {
     const find = (query: string) => ids(filterEntries(CATALOGUE, { ...NO_FILTERS, query }));
     expect(find("POSTGRES")).toEqual(["postgresql", "postgresql-service", "postgresql-port"]);
     expect(find("5432")).toEqual(["postgresql-port"]);
-    expect(find("databases windows")).toEqual(["postgresql", "mysql", "redis", "mssql-service", "mysql-port", "mssql-port"]);
+    expect(find("databases windows")).toEqual(["postgresql", "mysql", "mssql", "redis", "mssql-service", "mysql-port", "mssql-port"]);
     expect(find("Réseau")).toEqual([]);
     expect(find("fail2bän")).toEqual(["fail2ban-service"]);
     expect(find("nothing like this")).toEqual([]);

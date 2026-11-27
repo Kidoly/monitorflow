@@ -295,6 +295,8 @@ export interface ServerDetail extends Server {
   certificate: Certificate | null;
   /** The last time AI commands were turned on or off from the web interface; null if never (ADR-0098). */
   ai_commands_change?: AiCommandsChange | null;
+  /** The last time software installs were turned off from the web interface; null if never (ADR-0188). */
+  software_off_change?: SoftwareOffChange | null;
   /** What this person may do with remote terminals here (ADR-0190); absent from older servers. */
   remote_terminal?: RemoteTerminalAccess;
 }
@@ -305,17 +307,17 @@ export interface RemoteTerminalAccess {
   can_open: boolean;
   /** They may see the server's past sessions. */
   can_review: boolean;
-  /** New sessions are recorded. */
+  /** New terminals are recorded; desktops never are. */
   recorded: boolean;
   idle_timeout_minutes: number;
 }
 
-/** A remote terminal session (ADR-0190). */
+/** A remote terminal or desktop session (ADR-0190). */
 export interface RemoteSession {
   id: string;
   server_id: string;
   hostname: string;
-  kind: "terminal";
+  kind: "terminal" | "desktop";
   /** The username of who opened it. */
   requested_by: string;
   created_at: string;
@@ -360,6 +362,17 @@ export interface RemoteAccessSettings {
 export interface AiCommandsChange {
   command_id: string;
   on: boolean;
+  state: CommandState;
+  /** The username; null when the account is gone. */
+  requested_by: string | null;
+  issued_at: string;
+  finished_at: string | null;
+  error: string | null;
+}
+
+/** A `software_off` command: who asked to turn software installs off, and what came of it (ADR-0188). */
+export interface SoftwareOffChange {
+  command_id: string;
   state: CommandState;
   /** The username; null when the account is gone. */
   requested_by: string | null;
@@ -2176,7 +2189,7 @@ export interface IncidentDetail extends Incident {
   /** Oldest first; absent from servers before ADR-0080. */
   notification_groups?: NotificationGroup[];
   /** `page` or `link`: where it was acknowledged. */
-  acknowledged_via?: "page" | "link" | null;
+  acknowledged_via?: "page" | "link" | "psa" | null;
   /** Null when no follow-up started: a warning, or not sent yet. */
   follow_up?: FollowUp | null;
   /** While it says a parent is down: everything behind it, unreachable meanwhile (ADR-0152). */
@@ -3286,8 +3299,8 @@ export interface ThirdPartySelection {
   hold?: string[];
 }
 
-/** Software managers of the catalogue (ADR-0188): winget only for now. */
-export type SoftwareManager = "winget";
+/** Software managers of the catalogue (ADR-0188): winget on Windows, apt on Debian and Ubuntu, dnf on RHEL. */
+export type SoftwareManager = "winget" | "apt" | "dnf";
 
 /** One entry of the software catalogue (ADR-0188). */
 export interface SoftwareEntry {
@@ -3296,9 +3309,12 @@ export interface SoftwareEntry {
   customer_id: string | null;
   name: string;
   manager: SoftwareManager;
-  /** The winget ID, like `7zip.7zip`. */
+  /** The winget ID, like `7zip.7zip`, or the distribution's package name, like `nginx`. */
   package_id: string;
+  /** The winget source; empty for apt and dnf. */
   source: string;
+  /** apt and dnf: the mirror it installs from; null for the servers' own sources. Absent from older servers. */
+  mirror?: string | null;
   description: string;
   created_by: string | null;
   created_at: string;
@@ -3312,7 +3328,10 @@ export interface SoftwareRequest {
   name: string;
   manager?: SoftwareManager;
   package_id: string;
+  /** winget only. */
   source?: string;
+  /** apt and dnf only: a mirror of the same family. */
+  mirror?: string | null;
   description?: string;
 }
 
@@ -3328,7 +3347,15 @@ export interface SoftwareSelection {
 /** A software campaign as saved: its entries as they were resolved, kept if later deleted. */
 export interface CampaignSoftware {
   action: SoftwareAction;
-  packages: { catalog_id: string; name: string; manager: SoftwareManager; id: string; source: string }[];
+  packages: {
+    catalog_id: string;
+    name: string;
+    manager: SoftwareManager;
+    id: string;
+    source: string;
+    /** The mirror added to the servers' sources for it. */
+    mirror?: string;
+  }[];
 }
 
 /** Published mirror snapshots a campaign installs from (ADR-0038). */
@@ -3379,6 +3406,8 @@ export interface Campaign {
   progress: CampaignProgress;
   /** How many earlier runs `GET /api/campaigns/{id}/runs` lists (ADR-0173); absent from older servers. */
   previous_runs?: number;
+  /** Runs again by itself at each window once a run completed (ADR-0188); absent from older servers. */
+  recurring?: boolean;
   created_by: string | null;
   created_at: string;
   started_at: string | null;
@@ -3427,10 +3456,12 @@ export interface MajorUpgradeProgress {
   command_id: string;
   from: string;
   to: string;
-  phase: "starting" | "sources" | "refreshing" | "upgrading" | "full_upgrade" | "rebooting" | "done" | "failed";
+  phase: "starting" | "preupgrade" | "sources" | "refreshing" | "upgrading" | "full_upgrade" | "rebooting" | "done" | "failed";
   error: string | null;
   sources_restored: boolean;
   disabled_sources: string[];
+  /** leapp's report as it wrote it, inhibitors included; null outside the RHEL family. */
+  report?: string | null;
   started_at: string | null;
   updated_at: string | null;
 }
@@ -3550,8 +3581,10 @@ export interface CampaignRequest {
   classifications?: string[];
   /** Windows updates never installed: KB numbers or update IDs (ADR-0188). */
   hold?: string[];
-  /** A software campaign (ADR-0188): Windows servers only, no packages nor apps. */
+  /** A software campaign (ADR-0188): each server takes the entries of its manager; no packages nor apps. */
   software?: SoftwareSelection;
+  /** Run again by itself at each window (ADR-0188): needs a weekly, monthly or yearly window. */
+  recurring?: boolean;
 }
 
 /** A package of a server's latest report (ADR-0031). */
@@ -4136,6 +4169,17 @@ export interface PsaConnection {
   created_at: string;
   updated_at: string;
   tickets: PsaTicketSettings;
+  /** Where incidents of sites matched to nothing open tickets (ADR-0191). */
+  default_client: PsaDefaultClient;
+  assets: { asset_sync: boolean; asset_inactive_on_removal: boolean };
+}
+
+/** The client of sites matched to nothing; nulls open no ticket for them. */
+export interface PsaDefaultClient {
+  default_client_id: number | null;
+  default_client_name: string | null;
+  default_site_id: number | null;
+  default_site_name: string | null;
 }
 
 /** What tickets the PSA connection opens and how it closes them (ADR-0166). */
@@ -4147,6 +4191,14 @@ export interface PsaTicketSettings {
   /** Null adds a note only. */
   resolved_status_id: number | null;
   resolved_status_name: string | null;
+  /** Priorities of the ticket type's SLA per severity; null for HaloPSA's default. */
+  warning_priority_id: number | null;
+  warning_priority_name: string | null;
+  critical_priority_id: number | null;
+  critical_priority_name: string | null;
+  /** Statuses that mean closed: a ticket moved to one acknowledges its incident. */
+  closed_status_ids: number[];
+  acknowledge_on_assign: boolean;
 }
 
 export interface PsaTicketSettingsRequest {
@@ -4154,13 +4206,85 @@ export interface PsaTicketSettingsRequest {
   category: string | null;
   min_severity: "warning" | "critical";
   resolved_status_id: number | null;
+  warning_priority_id: number | null;
+  critical_priority_id: number | null;
+  closed_status_ids: number[];
+  acknowledge_on_assign: boolean;
+}
+
+/** A MonitorFlow customer and the PSA client it is matched to. */
+export interface PsaCustomerLink {
+  customer_id: string;
+  customer_name: string;
+  client_id: number | null;
+  client_name: string | null;
+  linked_at: string | null;
+  site_count: number;
+  matched_sites: number;
+}
+
+/** A PSA client whose name reads the same as an unmatched customer's. */
+export interface PsaSuggestion {
+  customer_id: string;
+  customer_name: string;
+  client_id: number;
+  client_name: string;
+}
+
+/** Where one system family's servers go as PSA assets. */
+export interface PsaAssetType {
+  family: "linux" | "windows";
+  type_id: number;
+  type_name: string;
+  /** `inventory_number` (the asset tag), a field id as text, or null. */
+  hostname_field: string | null;
+  serial_field: string | null;
+  manufacturer_field: string | null;
+  model_field: string | null;
+}
+
+export interface PsaAssetSettings {
+  asset_sync: boolean;
+  asset_inactive_on_removal: boolean;
+  types: PsaAssetType[];
+}
+
+export interface PsaAssetSettingsRequest {
+  asset_sync: boolean;
+  asset_inactive_on_removal: boolean;
+  types: Omit<PsaAssetType, "type_name">[];
+}
+
+/** A server and its PSA asset. */
+export interface PsaAssetLink {
+  server_id: string;
+  hostname: string;
+  site_name: string;
+  state: "proposed" | "create" | "linked" | "failed";
+  asset_id: number | null;
+  asset_name: string | null;
+  matched_by: "serial" | "hostname" | "created" | "chosen" | null;
+  deactivated: boolean;
+  error: string | null;
+  pushed_at: string | null;
+  updated_at: string;
+}
+
+export interface PsaAssetLinkList {
+  servers: PsaAssetLink[];
+  proposed: number;
+  linked: number;
+  failed: number;
 }
 
 /** One incident's ticket in the PSA. */
 export interface PsaTicket {
   incident_id: string;
   ticket_id: number | null;
-  state: "creating" | "open" | "closed" | "skipped" | "failed";
+  state: "creating" | "open" | "closed" | "skipped" | "failed" | "held" | "ended";
+  /** The PSA status when last read back. */
+  psa_status_id: number | null;
+  checked_at: string | null;
   error: string | null;
   metric: string;
   severity: string;
@@ -5670,6 +5794,38 @@ export const api = {
   psaTickets: (signal?: AbortSignal) => request<{ tickets: PsaTicket[] }>("/api/psa/tickets", { signal }),
 
   /** Signs in to the PSA with the form's values, the saved ones filling the gaps; changes nothing there. */
+  /** The priorities of a ticket type's SLA. */
+  psaPriorities: (ticketType: number | null, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/priorities${ticketType === null ? "" : `?ticket_type_id=${ticketType}`}`, { signal }),
+  psaCustomerLinks: (signal?: AbortSignal) =>
+    request<{ customers: PsaCustomerLink[] }>("/api/psa/customer-links", { signal }),
+  psaSuggestions: (signal?: AbortSignal) =>
+    request<{ suggestions: PsaSuggestion[] }>("/api/psa/customer-links/suggestions", { signal }),
+  linkPsaCustomer: (customer: string, client: number) =>
+    request<PsaCustomerLink>(`/api/psa/customer-links/${encodeURIComponent(customer)}`, {
+      method: "PUT",
+      body: { client_id: client },
+    }),
+  unlinkPsaCustomer: (customer: string) =>
+    request<void>(`/api/psa/customer-links/${encodeURIComponent(customer)}`, { method: "DELETE" }),
+  savePsaDefaultClient: (body: { client_id: number | null; psa_site_id: number | null }) =>
+    request<PsaConnection>("/api/psa/default-client", { method: "PUT", body }),
+  psaAssetTypes: (signal?: AbortSignal) => request<PsaRecordList>("/api/psa/asset-types", { signal }),
+  psaAssetFields: (type: number, signal?: AbortSignal) =>
+    request<PsaRecordList>(`/api/psa/asset-types/${type}/fields`, { signal }),
+  psaAssetSettings: (signal?: AbortSignal) => request<PsaAssetSettings>("/api/psa/asset-settings", { signal }),
+  savePsaAssetSettings: (body: PsaAssetSettingsRequest) =>
+    request<PsaAssetSettings>("/api/psa/asset-settings", { method: "PUT", body }),
+  psaAssetLinks: (signal?: AbortSignal) => request<PsaAssetLinkList>("/api/psa/asset-links", { signal }),
+  /** Confirms or chooses the server's asset; null creates a new one. */
+  linkPsaAsset: (server: string, asset: number | null) =>
+    request<PsaAssetLink>(`/api/psa/asset-links/${encodeURIComponent(server)}`, {
+      method: "PUT",
+      body: { asset_id: asset },
+    }),
+  unlinkPsaAsset: (server: string) =>
+    request<void>(`/api/psa/asset-links/${encodeURIComponent(server)}`, { method: "DELETE" }),
+  syncPsaAssets: () => request<{ queued: number }>("/api/psa/asset-links/sync", { method: "POST" }),
   testPsaConnection: (body: PsaConnectionRequest) =>
     request<PsaConnectionTest>("/api/psa/connection/test", { method: "POST", body }),
 
@@ -6364,16 +6520,27 @@ export const api = {
       body: { on },
     }),
 
+  /** Turns software installs off from the web interface; site administrators (ADR-0188). Never on. */
+  turnSoftwareOff: (serverId: string) =>
+    request<CommandDetail>(`/api/servers/${encodeURIComponent(serverId)}/software`, {
+      method: "POST",
+      body: { on: false },
+    }),
+
   /** The same for every server of every site the user administers. */
   switchAllAiCommands: (on: boolean) =>
     request<SiteSourcesChange>("/api/remediation/ai-commands", { method: "POST", body: { on } }),
 
-  /** Starts a remote terminal; the WebSocket at `socket` takes it on (ADR-0190). */
-  startRemoteSession: (serverId: string) =>
+  /** Starts a remote terminal or desktop; the WebSocket at `socket` takes it on (ADR-0190). */
+  startRemoteSession: (serverId: string, kind: RemoteSession["kind"] = "terminal") =>
     request<RemoteSessionStart>(`/api/servers/${encodeURIComponent(serverId)}/remote-sessions`, {
       method: "POST",
-      body: { kind: "terminal" },
+      body: { kind },
     }),
+
+  /** One remote session, as the server's list has it. */
+  remoteSession: (sessionId: string, signal?: AbortSignal) =>
+    request<RemoteSession>(`/api/remote-sessions/${encodeURIComponent(sessionId)}`, { signal }),
 
   /** The server's last remote sessions, newest first. */
   remoteSessions: (serverId: string, signal?: AbortSignal) =>

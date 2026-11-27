@@ -170,7 +170,9 @@ export const CATALOGUE: CatalogueEntry[] = [
   // Ready-made application checks, with their alerts (ADR-0183).
   plainKind({ id: "postgresql", purposes: ["databases", "performance", "availability"], systems: ANY, keywords: ["postgres", "sql", "database", "replication", "connections", "locks", "slow queries", "pg_stat"] }, "application", "postgresql"),
   plainKind({ id: "mysql", purposes: ["databases", "performance", "availability"], systems: ANY, keywords: ["mariadb", "sql", "database", "replication", "innodb", "slow queries", "connections"] }, "application", "mysql"),
+  plainKind({ id: "mssql", purposes: ["databases", "performance", "availability"], systems: ANY, keywords: ["sql server", "microsoft sql", "sql", "database", "always on", "availability group", "page life expectancy", "blocking", "deadlocks"] }, "application", "mssql"),
   plainKind({ id: "redis", purposes: ["databases", "performance", "availability"], systems: ANY, keywords: ["cache", "key value", "memory", "evictions", "valkey", "keydb"] }, "application", "redis"),
+  plainKind({ id: "jmx", purposes: ["performance", "availability"], systems: ANY, keywords: ["java", "jvm", "jmx", "jolokia", "heap", "garbage collection", "gc", "threads", "tomcat", "kafka", "spring boot"] }, "application", "jmx"),
   plainKind({ id: "docker", purposes: ["containers", "availability", "performance"], systems: LINUX, keywords: ["container", "containers", "restarts", "health", "podman", "compose"] }, "application", "docker"),
 
   // Linux services.

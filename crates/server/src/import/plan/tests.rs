@@ -2353,3 +2353,68 @@ fn application_checks_come_with_their_alerts() {
     assert_eq!(refused.hosts, ["db-device"]);
     assert_eq!(refused.note.as_ref().unwrap().code, "app_docker_agent");
 }
+
+/// A Kubernetes cluster is read from a probe only (ADR-0183): at a
+/// device's address, at the address of a server with an agent, or where
+/// the source said; it waits for its token and brings its alerts.
+#[test]
+fn kubernetes_checks_run_from_a_probe() {
+    use monitorflow_import::model::{App, AppKind};
+    let device = Host {
+        agentless: true,
+        addresses: vec!["10.0.0.70".into()],
+        ..host("3", "k8s-prod", Os::Unknown)
+    };
+    let mut elsewhere = App::new(AppKind::Kubernetes);
+    elsewhere.address = Some("10.0.0.71".into());
+    elsewhere.port = Some(16443);
+    let inventory = Inventory {
+        hosts: vec![host("1", "cp-01", Os::Debian), device],
+        checks: vec![
+            check("3", Watch::app(App::new(AppKind::Kubernetes)), None),
+            check("1", Watch::app(App::new(AppKind::Kubernetes)), None),
+            check("1", Watch::app(elsewhere), None),
+        ],
+        ..Inventory::default()
+    };
+    let planned = run(&inventory, &Existing::default());
+    let creates: Vec<(&Item, bool, Value)> = planned
+        .items
+        .iter()
+        .filter_map(|item| match &item.create {
+            Some(Create::Check {
+                kind,
+                probe,
+                params,
+                ..
+            }) if kind == "kubernetes" => Some((item, *probe, Value::Object(params.clone()))),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(creates.len(), 3, "{:#?}", planned.items);
+    assert!(creates.iter().all(|(_, probe, _)| *probe));
+    let params: Vec<&Value> = creates.iter().map(|(_, _, p)| p).collect();
+    assert!(params.contains(&&json!({})), "{params:?}");
+    assert!(params.contains(&&json!({"host": "10.0.0.5"})), "{params:?}");
+    assert!(
+        params.contains(&&json!({"host": "10.0.0.71", "port": "16443"})),
+        "{params:?}"
+    );
+    for (item, _, _) in &creates {
+        assert_eq!(item.list, List::Approximated);
+        assert_eq!(item.note.as_ref().unwrap().code, "app_kubernetes");
+    }
+    let alerts = planned
+        .items
+        .iter()
+        .filter(|i| {
+            i.id.starts_with("threshold:k8s-prod:monitorflow_kubernetes_")
+        })
+        .count();
+    assert_eq!(
+        alerts,
+        monitorflow_apps::templates::KUBERNETES_TEMPLATE
+            .alerts
+            .len()
+    );
+}

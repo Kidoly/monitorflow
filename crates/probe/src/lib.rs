@@ -49,7 +49,7 @@ pub trait ProbeFactory: Send + Sync + 'static {
 /// `snmp_custom` and the `snmp_read` tests of Test and Browse (ADR-0157),
 /// `vmware` of `monitorflow-vmware`, the scans' `discover` tests, and
 /// the application checks of `monitorflow-apps` that connect over the
-/// network (ADR-0183).
+/// network, Kubernetes among them (ADR-0183).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Builtin;
 
@@ -74,7 +74,7 @@ impl ProbeFactory for Builtin {
         if kind == monitorflow_vmware::KIND {
             return monitorflow_vmware::build(params);
         }
-        if monitorflow_apps::NETWORK_KINDS.contains(&kind) {
+        if monitorflow_apps::PROBE_KINDS.contains(&kind) {
             return monitorflow_apps::build(kind, params, monitorflow_apps::Place::Relay)
                 .map_err(|e| e.to_string());
         }
@@ -96,7 +96,10 @@ pub const PROBE_RUNS: &[&str] = &[
     monitorflow_vmware::KIND,
     monitorflow_apps::POSTGRESQL,
     monitorflow_apps::MYSQL,
+    monitorflow_apps::MSSQL,
     monitorflow_apps::REDIS,
+    monitorflow_apps::JMX,
+    monitorflow_apps::KUBERNETES,
 ];
 
 /// One check of a probe.

@@ -5,6 +5,7 @@ import {
   type Command,
   type InstallTarget,
   WINDOWS_ALLOW_COMMANDS,
+  WINDOWS_ALLOW_DESKTOP,
   WINDOWS_ALLOW_FROM_WEB,
   WINDOWS_ALLOW_TERMINAL,
   allowCommandsCommand,
@@ -172,6 +173,18 @@ describe("install commands", () => {
     expect(WINDOWS_ALLOW_TERMINAL).toContain("Restart-Service MonitorFlowAgent");
   });
 
+  it("allows a remote desktop only when asked, apart from terminals (ADR-0190)", () => {
+    const desktop = text(windowsInstallCommand(target(), "github", ORIGIN, "", false, false, false, false, true));
+    expect(desktop).toContain(`ENROLLMENT_TOKEN=${SECRET} REMOTE_DESKTOP=1`);
+    expect(desktop).not.toContain("REMOTE_TERMINAL");
+    expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", false, false, true))).not.toContain(
+      "REMOTE_DESKTOP",
+    );
+    expect(WINDOWS_ALLOW_DESKTOP).toBe(
+      `& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" remote-access desktop on\nRestart-Service MonitorFlowAgent`,
+    );
+  });
+
   it("lets the web interface install software on Windows when asked (ADR-0188)", () => {
     expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", true, false, false, true))).toContain(
       `ENROLLMENT_TOKEN=${SECRET} AI_COMMANDS_FROM_WEB=1 SOFTWARE_FROM_WEB=1`,
@@ -180,6 +193,13 @@ describe("install commands", () => {
       `ENROLLMENT_TOKEN=${SECRET} SOFTWARE_FROM_WEB=1`,
     );
     expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", true))).not.toContain("SOFTWARE");
+  });
+
+  it("lets the web interface install software on Linux when asked (ADR-0188)", () => {
+    expect(
+      text(linuxInstallCommand(target(), "github", ORIGIN, "", false, false, false, false, true)),
+    ).toBe(`curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_SOFTWARE_FROM_WEB=1 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`);
+    expect(text(linuxInstallCommand(target(), "github", ORIGIN, "", true))).not.toContain("SOFTWARE");
   });
 
   it("accepts only addresses and URLs that are safe in a shell command", () => {

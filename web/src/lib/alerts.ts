@@ -1,4 +1,4 @@
-import { t } from "@/i18n";
+import { type PlainKey, t } from "@/i18n";
 
 import {
   type Comparison,
@@ -508,6 +508,18 @@ function appTypes(device: boolean): CheckType[] {
     },
     {
       ...common,
+      kind: "mssql",
+      get label() {
+        return t("checks.type.mssql");
+      },
+      get fields(): CheckField[] {
+        const fields = connectionFields(1433, "monitorflow", device);
+        fields[2] = { ...fields[2]!, hint: t("checks.field.mssqlUserHint") };
+        return [...fields, tlsField()];
+      },
+    },
+    {
+      ...common,
       kind: "redis",
       get label() {
         return t("checks.type.redis");
@@ -516,8 +528,70 @@ function appTypes(device: boolean): CheckType[] {
         return connectionFields(6379, null, device);
       },
     },
+    {
+      ...common,
+      kind: "jmx",
+      get label() {
+        return t("checks.type.jmx");
+      },
+      get fields(): CheckField[] {
+        const hints: Record<string, string> = {
+          port: t("checks.field.jolokiaPortHint"),
+          user: t("checks.field.jolokiaUserHint"),
+          password: t("checks.field.jolokiaPasswordHint"),
+        };
+        return [
+          ...connectionFields(8778, null, device).map((f) => ({ ...f, hint: hints[f.key] ?? f.hint })),
+          {
+            key: "groups",
+            label: t("checks.field.jmxGroups"),
+            placeholder: "",
+            initial: "tomcat,kafka",
+            optional: true,
+            input: "select",
+            options: [
+              { value: "tomcat,kafka", label: t("checks.field.jmxGroupsBoth") },
+              { value: "tomcat", label: "Tomcat" },
+              { value: "kafka", label: "Kafka" },
+              { value: "none", label: t("checks.field.jmxGroupsNone") },
+            ],
+          },
+          { key: "path", label: t("checks.field.jolokiaPath"), placeholder: "/jolokia/", initial: "/jolokia/", optional: true, advanced: true },
+          {
+            key: "tls",
+            label: t("checks.field.tls"),
+            placeholder: "",
+            initial: "off",
+            optional: true,
+            advanced: true,
+            input: "select",
+            options: [
+              { value: "off", label: t("checks.field.tlsHttp") },
+              { value: "verify", label: t("checks.field.tlsVerify") },
+            ],
+          },
+        ];
+      },
+    },
   ];
-  if (device) return types;
+  // A cluster, read through its API from the central server or a relay.
+  const kubernetes: CheckType = {
+    ...common,
+    kind: "kubernetes",
+    get label() {
+      return t("checks.type.kubernetes");
+    },
+    get fields(): CheckField[] {
+      return [
+        hostField(),
+        { key: "port", label: t("checks.field.port"), placeholder: "6443", initial: "6443", check: portNumber },
+        { key: "token", label: t("checks.field.token"), placeholder: "", hint: t("checks.field.tokenHint"), input: "password" },
+        { key: "ca_certificate", label: t("checks.field.caCertificate"), placeholder: "LS0tLS1CRUdJTi…", hint: t("checks.field.caCertificateHint"), optional: true },
+        { key: "namespaces", label: t("checks.field.namespaces"), placeholder: "^(shop|billing)$", hint: t("checks.field.namespacesHint"), optional: true, advanced: true },
+      ];
+    },
+  };
+  if (device) return [...types, kubernetes];
   return [
     ...types,
     {
@@ -550,6 +624,15 @@ function appTypes(device: boolean): CheckType[] {
     },
   ];
 }
+
+/** The names of the application checks that connect to an address. */
+const APP_TITLES: Record<"postgresql" | "mysql" | "mssql" | "redis" | "jmx", PlainKey> = {
+  postgresql: "checks.type.postgresql",
+  mysql: "checks.type.mysql",
+  mssql: "checks.type.mssql",
+  redis: "checks.type.redis",
+  jmx: "checks.type.jmx",
+};
 
 /** What a device can be checked with, from the central server or a relay (ADR-0148). */
 /**
@@ -886,13 +969,19 @@ function ownTitle(sensor: EffectiveSensor): string {
       return t("cloud.check.azure");
     case "postgresql":
     case "mysql":
-    case "redis": {
-      const app = t(sensor.kind === "postgresql" ? "checks.type.postgresql" : sensor.kind === "mysql" ? "checks.type.mysql" : "checks.type.redis");
+    case "mssql":
+    case "redis":
+    case "jmx": {
+      const app = t(APP_TITLES[sensor.kind]);
       const host = remoteHost(params);
       return host ? t("checks.title.appOn", { app, host }) : app;
     }
     case "docker":
       return t("checks.type.docker");
+    case "kubernetes": {
+      const host = remoteHost(params);
+      return host ? t("checks.title.appOn", { app: t("checks.type.kubernetes"), host }) : t("checks.type.kubernetes");
+    }
     default:
       return sensor.name.charAt(0).toUpperCase() + sensor.name.slice(1);
   }

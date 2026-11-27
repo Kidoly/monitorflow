@@ -741,9 +741,10 @@ async fn vmware_hosts_become_a_vcenter_device() {
             && u.hosts == ["4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"]));
 }
 
-/// Database, Redis and Docker templates (ADR-0183): one ready-made check
+/// Database, Redis, Docker and Kubernetes templates (ADR-0183): one ready-made check
 /// per template on its host, where its macros say it connects, in place
-/// of the template's items and triggers; an ODBC template stays missing.
+/// of the template's items and triggers; an ODBC template stays missing,
+/// but SQL Server's.
 #[tokio::test]
 async fn application_templates_become_their_checks() {
     use monitorflow_import::model::{App, AppKind};
@@ -779,6 +780,48 @@ async fn application_templates_become_their_checks() {
         .find(|c| c.host == "app-01" && c.watch == Watch::app(App::new(AppKind::Docker)))
         .unwrap();
     assert_eq!(note(&docker.fidelity), Some("app_docker_template"));
+
+    // SQL Server's ODBC template reads what the check reads.
+    let mut mssql = App::new(AppKind::Mssql);
+    mssql.port = Some(1434);
+    mssql.user = Some("zbx_monitor".into());
+    let sql = inventory
+        .checks
+        .iter()
+        .find(|c| c.host == "sql-01" && c.watch == Watch::app(mssql.clone()))
+        .unwrap_or_else(|| panic!("{:#?}", inventory.checks));
+    assert_eq!(sql.origin.name, "MSSQL by ODBC");
+    assert_eq!(note(&sql.fidelity), Some("app_template"));
+
+    // JMX templates: one Java check, at Jolokia's port, not the Java
+    // gateway's.
+    let jvm: Vec<_> = inventory
+        .checks
+        .iter()
+        .filter(|c| c.host == "jvm-01")
+        .collect();
+    assert_eq!(jvm.len(), 1, "{jvm:#?}");
+    assert_eq!(jvm[0].watch, Watch::app(App::new(AppKind::Jmx)));
+    assert_eq!(note(&jvm[0].fidelity), Some("app_jmx_template"));
+    assert_eq!(jvm[0].origin.name, "Apache Tomcat by JMX");
+
+    // The Kubernetes templates: one check of the cluster at its API.
+    let mut cluster = App::new(AppKind::Kubernetes);
+    cluster.address = Some("192.0.2.70".into());
+    let kubernetes: Vec<_> = inventory
+        .checks
+        .iter()
+        .filter(|c| {
+            c.host == "k8s-prod"
+                && matches!(&c.watch, Watch::App(a) if a.kind == AppKind::Kubernetes)
+        })
+        .collect();
+    assert_eq!(kubernetes.len(), 1, "{kubernetes:#?}");
+    assert_eq!(kubernetes[0].watch, Watch::app(cluster));
+    assert_eq!(
+        note(&kubernetes[0].fidelity),
+        Some("app_kubernetes_template")
+    );
 
     // Neither the templates, their items and triggers, nor a host's own
     // item of the same plugin are listed as not movable.

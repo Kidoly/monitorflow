@@ -590,10 +590,11 @@ fn map_host(
         .extend(builtins.into_iter().chain(pending).map(|p| p.check));
     out.checks.extend(silent);
     for (kind, template) in apps {
-        let code = if kind == AppKind::Docker {
-            "app_docker_template"
-        } else {
-            "app_template"
+        let code = match kind {
+            AppKind::Docker => "app_docker_template",
+            AppKind::Jmx => "app_jmx_template",
+            AppKind::Kubernetes => "app_kubernetes_template",
+            _ => "app_template",
         };
         out.checks.push(Check {
             host: key.clone(),
@@ -610,12 +611,28 @@ fn map_host(
 /// Redis and Docker templates read by the agent, by their names since
 /// Zabbix 5.0 ("PostgreSQL by Zabbix agent 2", "Template DB MySQL").
 /// Those through ODBC query from the Zabbix server with a driver: not
-/// these.
+/// these, but for SQL Server, whose "MSSQL by ODBC" reads the counters
+/// the check reads, and which the check reaches as the server did. Its
+/// JMX templates, read through its Java gateway ("Generic Java JMX",
+/// "Apache Tomcat by JMX", "Apache Kafka by JMX"), become the Java check,
+/// which reads Jolokia instead. Its Kubernetes templates read the cluster
+/// over HTTP from the Zabbix server or a proxy ("Kubernetes cluster state
+/// by HTTP", "Kubernetes nodes by HTTP" and their siblings): one
+/// Kubernetes check for all of them.
 fn app_template(name: &str) -> Option<AppKind> {
     let name = name.to_ascii_lowercase();
+    if name.contains("jmx") {
+        return Some(AppKind::Jmx);
+    }
+    if name.contains("kubernetes") {
+        return Some(AppKind::Kubernetes);
+    }
     let agent = name.contains("zabbix agent")
         || name.starts_with("template db ")
         || name.starts_with("template app ");
+    if name.contains("mssql") || name.contains("sql server") {
+        return (agent || name.contains("odbc")).then_some(AppKind::Mssql);
+    }
     if !agent || name.contains("odbc") {
         return None;
     }
@@ -655,8 +672,11 @@ fn app_item(key: &str, apps: &[(AppKind, String)]) -> bool {
         root == match kind {
             AppKind::Postgresql => "pgsql",
             AppKind::Mysql => "mysql",
+            AppKind::Mssql => "mssql",
             AppKind::Redis => "redis",
+            AppKind::Jmx => "jmx",
             AppKind::Docker => "docker",
+            AppKind::Kubernetes => "kube",
         }
     })
 }
@@ -688,8 +708,28 @@ fn app_of(kind: AppKind, macros: &Macros) -> App {
             "{$MYSQL.PORT}",
             "{$MYSQL.USER}",
         ),
+        // `sqlserver://localhost:1433` of agent 2; the ODBC template
+        // connects to the host's interface, at `{$MSSQL.PORT}`.
+        AppKind::Mssql => (
+            first(&["{$MSSQL.URI}"]),
+            "",
+            "{$MSSQL.PORT}",
+            "{$MSSQL.USER}",
+        ),
         AppKind::Redis => (first(&["{$REDIS.CONN.URI}"]), "", "", ""),
-        AppKind::Docker => return app,
+        // The host's JMX interface is the Java gateway's RMI port, not
+        // Jolokia's: the check keeps Jolokia's own, 8778.
+        AppKind::Jmx | AppKind::Docker => return app,
+        AppKind::Kubernetes => (
+            first(&[
+                "{$KUBE.API.URL}",
+                "{$KUBE.API.ENDPOINT.URL}",
+                "{$KUBE.API.SERVER.URL}",
+            ]),
+            "",
+            "",
+            "",
+        ),
     };
     // A URI with an address; a socket or a named session says none.
     if let Some(uri) = uri.filter(|u| u.contains("://") && !u.starts_with("unix")) {
@@ -714,6 +754,9 @@ fn app_of(kind: AppKind, macros: &Macros) -> App {
     }
     if kind == AppKind::Postgresql {
         app.database = first(&["{$PG.DATABASE}", "{$PG.DB}"]);
+    }
+    if kind == AppKind::Kubernetes && app.port == Some(crate::model::KUBERNETES_PORT) {
+        app.port = None;
     }
     app
 }

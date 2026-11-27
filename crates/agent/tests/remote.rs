@@ -1,6 +1,7 @@
-//! Remote terminals end to end (ADR-0190): the server's hub and the
-//! agent's sessions over a real mTLS stream, with PostgreSQL and a real
-//! shell on a pseudo-terminal.
+//! Remote terminals and desktops end to end (ADR-0190): the server's hub
+//! and the agent's sessions over a real mTLS stream, with PostgreSQL, a
+//! real shell on a pseudo-terminal, and a fake RDP service behind the
+//! central server's RDCleanPath proxy.
 
 // The real server only builds on Unix (ADR-0047).
 #![cfg(unix)]
@@ -13,13 +14,17 @@ use std::time::Duration;
 use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers, Journal};
 use monitorflow_agent::os::{HostInfo, OsFamily};
-use monitorflow_agent::remote::{self, RemoteSessionHandler};
+use monitorflow_agent::remote::{self, Allowed, RemoteSessionHandler, Spawners};
 use monitorflow_agent::shutdown::{self, Trigger};
 use monitorflow_agent::stream::{Agent, StreamSettings};
-use monitorflow_common::command::REMOTE_SESSION;
+use monitorflow_common::command::{REMOTE_DESKTOP, REMOTE_SESSION};
 use monitorflow_common::tls;
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings as ServerDispatch};
 use monitorflow_server::grpc::{self, AgentStreamService, DbInventory, DbRelayPolicy};
+use monitorflow_server::remote::desktop::{
+    self,
+    ironrdp_rdcleanpath::{RDCleanPath, RDCleanPathPdu},
+};
 use monitorflow_server::remote::{token_hash, FromBrowser, RemoteHub, ToBrowser};
 use sqlx::PgPool;
 use support::{agent_config, record, Pki};
@@ -43,6 +48,16 @@ struct Setup {
 
 impl Setup {
     async fn start(pool: &PgPool, allowed: bool) -> Self {
+        let allowed = Allowed {
+            terminal: allowed,
+            desktop: false,
+        };
+        let unused = remote::desktop::connector("127.0.0.1:9".parse().unwrap());
+        Self::start_with(pool, allowed, unused).await
+    }
+
+    /// The agent with `allowed`, reaching its RDP service with `desktop`.
+    async fn start_with(pool: &PgPool, allowed: Allowed, desktop: remote::Spawner) -> Self {
         let site: Uuid =
             sqlx::query_scalar("INSERT INTO sites (name) VALUES ('paris') RETURNING id")
                 .fetch_one(pool)
@@ -100,13 +115,20 @@ impl Setup {
         let (remote, remote_end) = remote::link(
             allowed,
             Box::new(proof),
-            remote::platform_spawner(None),
+            Spawners {
+                terminal: remote::platform_spawner(None),
+                desktop,
+            },
             Arc::new(move |m| said.lock().unwrap().push(m)),
         );
         let mut handlers = Handlers::default();
         handlers.register(
             REMOTE_SESSION,
             Arc::new(RemoteSessionHandler::new(remote.clone())),
+        );
+        handlers.register(
+            REMOTE_DESKTOP,
+            Arc::new(RemoteSessionHandler::desktop(remote.clone())),
         );
         let dispatcher = Dispatcher::new(
             "web-01",
@@ -148,15 +170,20 @@ impl Setup {
 
     /// A session asked by alice, as `POST /api/servers/{id}/remote-sessions` stores it.
     async fn session(&self) -> Uuid {
+        self.session_of("terminal").await
+    }
+
+    async fn session_of(&self, kind: &str) -> Uuid {
         let id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO remote_sessions (id, server_id, kind, username, token_sha256,
                  token_expires_at, recorded, idle_timeout_seconds)
-             VALUES ($1, $2, 'terminal', 'alice', $3, now() + interval '1 minute', true, 900)",
+             VALUES ($1, $2, $4, 'alice', $3, now() + interval '1 minute', $4 = 'terminal', 900)",
         )
         .bind(id)
         .bind(self.server_id)
         .bind(token_hash(TOKEN))
+        .bind(kind)
         .execute(&self.pool)
         .await
         .unwrap();
@@ -275,5 +302,248 @@ db_tests! {
         assert_eq!(next(&mut to).await, ToBrowser::Closed(reason));
         assert_eq!(s.remote.open_sessions(), 0);
         assert!(s.announced.lock().unwrap().is_empty());
+    }
+}
+
+mod rdp {
+    //! A fake RDP service: it answers the X.224 request choosing TLS, does
+    //! TLS with a certificate of its own, as Windows does, then reads what
+    //! the client sends and answers with as many bytes as asked.
+
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::oneshot;
+
+    /// An X.224 connection request asking for TLS and CredSSP, as IronRDP
+    /// sends it.
+    pub const REQUEST: [u8; 19] = [3, 0, 0, 19, 14, 0xe0, 0, 0, 0, 0, 0, 1, 0, 8, 0, 3, 0, 0, 0];
+    /// The service's confirm: TLS.
+    pub const CONFIRM: [u8; 19] = [
+        3, 0, 0, 19, 14, 0xd0, 0, 0, 0x12, 0x34, 0, 2, 0, 8, 0, 1, 0, 0, 0,
+    ];
+
+    pub struct Service {
+        pub address: SocketAddr,
+        pub certificate: Vec<u8>,
+        /// The X.224 request and what came through TLS, once the client
+        /// sent `hello`.
+        pub seen: oneshot::Receiver<(Vec<u8>, Vec<u8>)>,
+    }
+
+    /// The `n`-th byte the service sends.
+    pub fn byte(n: usize) -> u8 {
+        (n % 251) as u8
+    }
+
+    /// Answers `hello` with `burst` bytes, then keeps the connection open.
+    pub async fn start(burst: usize) -> Service {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["web-01".to_owned()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        let certificate = cert.der().to_vec();
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![CertificateDer::from(certificate.clone())],
+            PrivateKeyDer::Pkcs8(key.serialize_der().into()),
+        )
+        .unwrap();
+        let (seen_tx, seen) = oneshot::channel();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0u8; REQUEST.len()];
+            socket.read_exact(&mut request).await.unwrap();
+            socket.write_all(&CONFIRM).await.unwrap();
+            let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+            let mut tls = acceptor.accept(socket).await.unwrap();
+            let mut hello = vec![0u8; 5];
+            tls.read_exact(&mut hello).await.unwrap();
+            let _ = seen_tx.send((request, hello));
+            let data: Vec<u8> = (0..burst).map(byte).collect();
+            tls.write_all(&data).await.unwrap();
+            tls.flush().await.unwrap();
+            // Until the client goes.
+            let mut rest = Vec::new();
+            let _ = tls.read_to_end(&mut rest).await;
+        });
+        Service {
+            address,
+            certificate,
+            seen,
+        }
+    }
+}
+
+/// The browser's side of a desktop: its RDCleanPath request, then RDP in
+/// the clear.
+struct Browser {
+    to_server: mpsc::Sender<Vec<u8>>,
+    from_server: mpsc::Receiver<Vec<u8>>,
+    task: tokio::task::JoinHandle<Result<String, desktop::DesktopError>>,
+}
+
+impl Setup {
+    fn desktop(&self, id: Uuid) -> Browser {
+        let first =
+            RDCleanPathPdu::new_request(rdp::REQUEST.to_vec(), "web-01".into(), TOKEN.into(), None)
+                .unwrap()
+                .to_der()
+                .unwrap();
+        let (to_server, from_browser) = mpsc::channel(64);
+        let (to_browser, from_server) = mpsc::channel(64);
+        let hub = self.hub.clone();
+        let task =
+            tokio::spawn(
+                async move { desktop::run(hub, id, &first, from_browser, to_browser).await },
+            );
+        Browser {
+            to_server,
+            from_server,
+            task,
+        }
+    }
+}
+
+async fn received(browser: &mut Browser) -> Vec<u8> {
+    tokio::time::timeout(TIMEOUT, browser.from_server.recv())
+        .await
+        .expect("the proxy answers")
+        .expect("the proxy runs")
+}
+
+db_tests! {
+    #[sqlx::test(migrations = "../server/migrations")]
+    async fn a_desktop_reaches_the_rdp_service_through_the_tunnel_at_the_browsers_pace(pool: PgPool) {
+        // More than the agent's window and than every buffer on the way.
+        const BURST: usize = 4 * 1024 * 1024;
+        let service = rdp::start(BURST).await;
+        let allowed = Allowed { terminal: false, desktop: true };
+        let s = Setup::start_with(&pool, allowed, remote::desktop::connector(service.address)).await;
+        let id = s.session_of("desktop").await;
+        // A terminal's hello cannot take a desktop's token.
+        assert!(s.hub.attach(id, TOKEN, 80, 24).await.is_err());
+        let mut browser = s.desktop(id);
+
+        let answer = RDCleanPathPdu::from_der(&received(&mut browser).await).unwrap();
+        let RDCleanPath::Response { x224_connection_response, server_cert_chain, server_addr } =
+            answer.into_enum().unwrap()
+        else {
+            panic!("not a response");
+        };
+        assert_eq!(x224_connection_response.as_bytes(), rdp::CONFIRM);
+        assert_eq!(server_cert_chain[0].as_bytes(), service.certificate.as_slice());
+        assert_eq!(server_addr, "127.0.0.1:3389");
+
+        browser.to_server.send(b"hello".to_vec()).await.unwrap();
+        let (request, hello) = tokio::time::timeout(TIMEOUT, service.seen).await.unwrap().unwrap();
+        assert_eq!(request, rdp::REQUEST);
+        assert_eq!(hello, b"hello");
+        // A slow browser: the agent waits for it instead of flooding.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let mut got = 0;
+        while got < BURST {
+            for byte in received(&mut browser).await {
+                assert_eq!(byte, rdp::byte(got), "at byte {got}");
+                got += 1;
+            }
+        }
+        assert_eq!(got, BURST);
+
+        drop(browser.to_server);
+        let reason = tokio::time::timeout(TIMEOUT, browser.task).await.unwrap().unwrap().unwrap();
+        assert_eq!(reason, "closed by alice");
+        let row: (String, bool, Option<String>, i64, i64) = sqlx::query_as(
+            "SELECT kind, recorded, close_reason, bytes_in, bytes_out FROM remote_sessions WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((row.0.as_str(), row.1, row.2.as_deref()), ("desktop", false, Some("closed by alice")));
+        assert!(row.3 > 0 && row.4 > BURST as i64, "{row:?}");
+        let recorded: i64 = sqlx::query_scalar("SELECT count(*) FROM remote_session_recordings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(recorded, 0);
+        let audit: Vec<(String, String)> = sqlx::query_as(
+            "SELECT action, details->>'kind' FROM audit_log WHERE action LIKE 'remote_session.%' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(audit, [("remote_session.open".into(), "desktop".into()),
+                           ("remote_session.close".into(), "desktop".into())]);
+        let command: (String, String) = sqlx::query_as(
+            "SELECT c.kind, c.state FROM commands c JOIN remote_sessions r ON r.command_id = c.id WHERE r.id = $1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(command, ("remote_desktop".into(), "succeeded".into()));
+
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        while s.remote.open_sessions() > 0 {
+            assert!(tokio::time::Instant::now() < deadline, "the agent kept the session");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let said = s.announced.lock().unwrap().clone();
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert!(said[0].contains("alice opened a remote desktop") && !said[0].contains("recorded"), "{said:?}");
+    }
+
+    #[sqlx::test(migrations = "../server/migrations")]
+    async fn a_desktop_needs_the_hosts_consent_and_its_token(pool: PgPool) {
+        // Terminals allowed, desktops not: the browser gets an RDCleanPath error.
+        let service = rdp::start(0).await;
+        let terminal_only = Allowed { terminal: true, desktop: false };
+        let s = Setup::start_with(&pool, terminal_only, remote::desktop::connector(service.address)).await;
+        let id = s.session_of("desktop").await;
+        let mut browser = s.desktop(id);
+        let answer = RDCleanPathPdu::from_der(&received(&mut browser).await).unwrap();
+        assert!(answer.error.is_some(), "{answer:?}");
+        let reason = tokio::time::timeout(TIMEOUT, browser.task).await.unwrap().unwrap().unwrap();
+        assert!(reason.contains("remote.desktop"), "{reason}");
+        assert!(s.announced.lock().unwrap().is_empty());
+
+        // A wrong token: refused before anything runs.
+        let id = s.session_of("desktop").await;
+        sqlx::query("UPDATE remote_sessions SET token_sha256 = sha256('other'::bytea) WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut browser = s.desktop(id);
+        let answer = RDCleanPathPdu::from_der(&received(&mut browser).await).unwrap();
+        assert_eq!(answer.error.unwrap().http_status_code, Some(401));
+        assert!(tokio::time::timeout(TIMEOUT, browser.task).await.unwrap().unwrap().is_err());
+    }
+
+    #[sqlx::test(migrations = "../server/migrations")]
+    async fn a_desktop_ends_with_why_when_no_service_listens(pool: PgPool) {
+        // Allowed, but nothing listens where the agent looks.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let nowhere = closed.local_addr().unwrap();
+        drop(closed);
+        let allowed = Allowed { terminal: false, desktop: true };
+        let s = Setup::start_with(&pool, allowed, remote::desktop::connector(nowhere)).await;
+        let id = s.session_of("desktop").await;
+        let mut browser = s.desktop(id);
+        let answer = RDCleanPathPdu::from_der(&received(&mut browser).await).unwrap();
+        assert!(answer.error.is_some(), "{answer:?}");
+        let reason = tokio::time::timeout(TIMEOUT, browser.task).await.unwrap().unwrap().unwrap();
+        assert!(reason.contains("cannot reach the remote desktop service"), "{reason}");
     }
 }

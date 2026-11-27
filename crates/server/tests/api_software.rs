@@ -281,7 +281,7 @@ db_tests! {
             let (status, body) = h.send("POST", &uri, &admin, Some(bad.clone())).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
         }
-        // Linux servers take no software yet.
+        // A winget entry is nothing for a Linux server.
         sqlx::query("UPDATE servers SET os_family = 'debian' WHERE id = $1")
             .bind(h.server)
             .execute(&pool)
@@ -353,5 +353,145 @@ db_tests! {
             "software": {"action": "install", "catalog_ids": [Uuid::nil()]}});
         let (status, _) = h.send("POST", "/api/campaigns", &admin, Some(mixed)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test]
+    async fn linux_entries_name_packages_and_maybe_a_mirror(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let global = h.login("root", Role::Administrator, GrantScope::Global).await;
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let mirror: Uuid = sqlx::query_scalar(
+            "INSERT INTO mirrors (name, family, upstream_url, distribution, components)
+             VALUES ('nginx-stable', 'apt', 'https://nginx.example/packages/debian', 'trixie',
+                     '{nginx}') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let add = |body: Value| h.send("POST", "/api/software", &global, Some(body));
+        let (status, nginx) = add(json!({"name": "nginx", "manager": "apt",
+            "package_id": "nginx", "mirror": "nginx-stable"})).await;
+        assert_eq!(status, StatusCode::CREATED, "{nginx}");
+        assert_eq!((nginx["source"].as_str(), nginx["mirror"].as_str()), (Some(""), Some("nginx-stable")));
+        // The same name for dnf is another entry.
+        let (status, httpd) = add(json!({"name": "nginx", "manager": "dnf", "package_id": "nginx"})).await;
+        assert_eq!(status, StatusCode::CREATED, "{httpd}");
+        assert_eq!(httpd["mirror"], Value::Null);
+        for bad in [
+            json!({"name": "x", "manager": "apt", "package_id": "--force-yes"}),
+            json!({"name": "x", "manager": "apt", "package_id": "./x.deb"}),
+            json!({"name": "x", "manager": "dnf", "package_id": "@core"}),
+            json!({"name": "x", "manager": "apt", "package_id": "x", "source": "winget"}),
+            // A mirror of another family, or none of that name.
+            json!({"name": "x", "manager": "dnf", "package_id": "x", "mirror": "nginx-stable"}),
+            json!({"name": "x", "manager": "apt", "package_id": "x", "mirror": "missing"}),
+            json!({"name": "x", "package_id": "a.b", "mirror": "nginx-stable"}),
+            json!({"name": "x", "manager": "snap", "package_id": "lxd"}),
+        ] {
+            let (status, body) = add(bad.clone()).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+        }
+
+        // A Debian server allowing software takes the apt entry alone.
+        sqlx::query("UPDATE servers SET os_family = 'debian' WHERE id = $1")
+            .bind(h.server)
+            .execute(&pool)
+            .await
+            .unwrap();
+        h.kinds(Some(json!({"software": "accepted"}))).await;
+        let uri = format!("/api/servers/{}/commands", h.server);
+        let both = json!({"kind": "software",
+            "software": {"action": "remove", "catalog_ids": [httpd["id"]]}});
+        let (status, body) = h.send("POST", &uri, &admin, Some(both)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("none of this software"), "{body}");
+        // An entry from a mirror needs a campaign, which adds the mirror.
+        let mirrored = json!({"kind": "software",
+            "software": {"action": "install", "catalog_ids": [nginx["id"]]}});
+        let (status, body) = h.send("POST", &uri, &admin, Some(mirrored)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("campaign"), "{body}");
+        sqlx::query("UPDATE software_catalog SET mirror_id = NULL WHERE id = $1")
+            .bind(nginx["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let plain = json!({"kind": "software",
+            "software": {"action": "install", "catalog_ids": [nginx["id"], httpd["id"]]}});
+        let (status, command) = h.send("POST", &uri, &admin, Some(plain)).await;
+        assert_eq!(status, StatusCode::CREATED, "{command}");
+        assert_eq!(command["parameters"]["manager"], "apt");
+        let change = SoftwareChange::decode(h.payload(&command).await.as_slice()).unwrap();
+        assert_eq!(change.packages.len(), 1);
+        assert_eq!((change.packages[0].id.as_str(), change.packages[0].source.as_str()), ("nginx", ""));
+
+        // A campaign of mirrored software pins the mirror's newest snapshot,
+        // which it needs first.
+        sqlx::query("UPDATE software_catalog SET mirror_id = $1")
+            .bind(mirror)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let campaign = json!({"customer_id": h.customer, "name": "nginx", "site_id": h.site,
+            "software": {"action": "install", "catalog_ids": [nginx["id"]]}});
+        let (status, body) = h.send("POST", "/api/campaigns", &admin, Some(campaign.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("no published snapshot"), "{body}");
+        sqlx::query("INSERT INTO mirror_snapshots (mirror_id, name, state, published_at)
+                     VALUES ($1, 's1', 'published', now() - interval '1 day'),
+                            ($1, 's2', 'published', now())")
+            .bind(mirror)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Then mirrors must be served by this server, as for any pin.
+        let (status, body) = h.send("POST", "/api/campaigns", &admin, Some(campaign)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("mirror"), "{body}");
+    }
+
+    #[sqlx::test]
+    async fn software_is_turned_off_from_the_web_never_on(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let operator = h.login("op", Role::Operator, GrantScope::Customer(h.customer)).await;
+        let uri = format!("/api/servers/{}/software", h.server);
+        let off = json!({"on": false});
+        let (status, _) = h.send("POST", &uri, &operator, Some(off.clone())).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        // An agent that does not know the command, then one already off.
+        h.kinds(Some(json!({"software": "accepted"}))).await;
+        let (status, body) = h.send("POST", &uri, &admin, Some(off.clone())).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("updates by itself"), "{body}");
+        h.kinds(Some(json!({"software": "off", "software_off": "accepted"}))).await;
+        let (status, body) = h.send("POST", &uri, &admin, Some(off.clone())).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("already off"), "{body}");
+
+        h.kinds(Some(json!({"software": "accepted", "software_off": "accepted"}))).await;
+        // On is the server's own administrator's, on the server.
+        let (status, body) = h.send("POST", &uri, &admin, Some(json!({"on": true}))).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("monitorflow-agent.exe software on"), "{body}");
+        let (status, first) = h.send("POST", &uri, &admin, Some(off.clone())).await;
+        assert_eq!(status, StatusCode::CREATED, "{first}");
+        assert_eq!(first["kind"], "software_off");
+        // A newer request replaces one still queued.
+        let (status, second) = h.send("POST", &uri, &admin, Some(off)).await;
+        assert_eq!(status, StatusCode::CREATED);
+        let states: Vec<String> = sqlx::query_scalar(
+            "SELECT state::text FROM commands WHERE server_id = $1 AND kind = 'software_off'
+             ORDER BY issued_at, id",
+        )
+        .bind(h.server)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(states.iter().filter(|s| *s == "cancelled").count(), 1, "{states:?}");
+        assert_eq!(h.audit_count("server.software_off").await, 2);
+        let (_, server) = h.send("GET", &format!("/api/servers/{}", h.server), &operator, None).await;
+        assert_eq!(server["software_off_change"]["command_id"], second["id"]);
+        assert_eq!(server["software_off_change"]["requested_by"], "admin");
     }
 }
