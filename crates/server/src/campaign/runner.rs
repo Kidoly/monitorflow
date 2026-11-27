@@ -17,7 +17,9 @@
 //! A major upgrade campaign (ADR-0182) sends `major_upgrade` instead,
 //! after a Proxmox or local snapshot, to as many servers of a batch at
 //! once as it allows; a server is done once it came back on the new
-//! release with its checks as they were ([`follow`]).
+//! release with its checks as they were ([`follow`]). Ubuntu and RHEL
+//! servers on the mirrors get their own sources back first, and the
+//! mirrors after ([`major_sources`]).
 //!
 //! A step only reads `commands` and the campaign's tables, so running it
 //! twice, or again after a restart, queues nothing twice.
@@ -28,10 +30,11 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::{
-    APPLY_UPDATES, CONFIGURE_SOURCES, MAJOR_UPGRADE, SELF_UPDATE, SOFTWARE, TAKE_SNAPSHOT,
+    APPLY_UPDATES, CONFIGURE_SOURCES, MAJOR_UPGRADE, REVERT_SOURCES, SELF_UPDATE, SOFTWARE,
+    TAKE_SNAPSHOT,
 };
 use monitorflow_common::config::ServerConfig;
-use monitorflow_common::proto::v1::TakeSnapshot;
+use monitorflow_common::proto::v1::{RevertSources, TakeSnapshot};
 use monitorflow_common::release::Version;
 use prost::Message;
 use serde_json::json;
@@ -39,6 +42,7 @@ use sqlx::{PgConnection, PgPool};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
+use super::major_sources;
 use super::model::{software_refusal, MajorUpgradeSpec, SourcesMode};
 use super::pin::{self, Configurer, Next, Pending, PinSources};
 use super::store::{
@@ -261,7 +265,9 @@ impl Runner {
         // SQL-safe: interpolates only the constant COLUMNS.
         let row: Option<CampaignRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM campaigns
-             WHERE id = $1 AND (state IN ('scheduled', 'running') OR sources_mode IS NOT NULL)
+             WHERE id = $1
+               AND (state IN ('scheduled', 'running') OR sources_mode IS NOT NULL
+                    OR major_upgrade IS NOT NULL)
              FOR UPDATE SKIP LOCKED"
         )))
         .bind(id)
@@ -275,11 +281,17 @@ impl Runner {
             let open = row.state.is_active() && window_ttl(&mut tx, &row, now).await?.is_some();
             restored = pin::restore(&mut tx, &row, open).await?;
         }
-        let mut snapshots = Vec::new();
-        let step = if row.state.is_active() {
-            if row.major_upgrade.is_some() {
+        if let Some(spec) = row.major_upgrade.as_ref().map(|m| &m.0) {
+            if row.state.is_active() {
                 follow(&mut tx, &row, now).await?;
             }
+            let back =
+                major_sources::mirrors_back(&mut tx, &self.pool, &row, spec, self.sources.as_ref())
+                    .await?;
+            restored.extend(back);
+        }
+        let mut snapshots = Vec::new();
+        let step = if row.state.is_active() {
             let context = Context {
                 now,
                 sources: self.sources.as_ref(),
@@ -552,11 +564,20 @@ async fn queue(
         }
         None => i64::MAX,
     };
+    // Ubuntu and the RHEL family on the mirrors: their own sources first.
+    let own_first = major.is_some_and(major_sources::needed);
+    let on_mirror = if own_first {
+        let ids: Vec<Uuid> = missing.iter().map(|t| t.server_id).collect();
+        major_sources::on_mirror(&mut *conn, &ids).await?
+    } else {
+        Default::default()
+    };
     let spec = row.spec();
     let software = row.software();
     let mut configurer = None;
     let mut peers = Vec::new();
     let (mut skipped, mut configured, mut snapshots, mut vm_snapshots) = (0, 0, 0, 0);
+    let mut own_sources = 0;
     for target in missing {
         if major.is_some() && target.fresh() && !target.revoked {
             if places == 0 {
@@ -566,9 +587,12 @@ async fn queue(
         }
         let next = match row.sources_mode {
             _ if target.revoked => Next::Fail("server revoked".into()),
-            _ if major.is_some() => {
-                target.before_major(major.is_some_and(|m| m.accept_limited_rollback), now)
-            }
+            _ if major.is_some() => own_first
+                .then(|| target.own_sources_first(on_mirror.contains(&target.server_id)))
+                .flatten()
+                .unwrap_or_else(|| {
+                    target.before_major(major.is_some_and(|m| m.accept_limited_rollback), now)
+                }),
             _ if !target.package_updates
                 && spec.include_os
                 && agent_version.is_none()
@@ -616,6 +640,7 @@ async fn queue(
                 skipped += 1;
                 continue;
             }
+            Next::OwnSources => Ok((REVERT_SOURCES, RevertSources {}.encode_to_vec())),
             Next::Snapshot => {
                 let name = local::campaign_name(row.id);
                 Ok((TAKE_SNAPSHOT, TakeSnapshot { name }.encode_to_vec()))
@@ -695,8 +720,12 @@ async fn queue(
             campaign_id: Some(row.id),
         };
         let command = CommandStore::enqueue_in(&mut *conn, &new).await?;
-        let update = if kind == CONFIGURE_SOURCES {
-            configured += 1;
+        let update = if kind == CONFIGURE_SOURCES || kind == REVERT_SOURCES {
+            if kind == REVERT_SOURCES {
+                own_sources += 1;
+            } else {
+                configured += 1;
+            }
             // Configured again after a restore: a new snapshot too.
             "UPDATE campaign_targets
              SET sources_command_id = $3, restore_command_id = NULL, snapshot_command_id = NULL
@@ -750,6 +779,7 @@ async fn queue(
             "wave": wave,
             "commands": peers.len(),
             "configure_sources": configured,
+            "revert_sources": own_sources,
             "take_snapshot": snapshots,
             "proxmox_snapshot": vm_snapshots,
             "skipped": skipped,
@@ -770,7 +800,8 @@ async fn upgrading(conn: &mut PgConnection, campaign: Uuid, wave: i32) -> Result
          WHERE t.campaign_id = $1 AND t.wave = $2 AND t.error IS NULL AND t.upgraded_at IS NULL
            AND ((t.command_id IS NOT NULL AND c.state NOT IN ('failed', 'expired', 'cancelled'))
                 OR (t.command_id IS NULL
-                    AND (t.snapshot_command_id IS NOT NULL OR t.vm_snapshot_state IS NOT NULL)))",
+                    AND (t.snapshot_command_id IS NOT NULL OR t.vm_snapshot_state IS NOT NULL
+                         OR t.sources_command_id IS NOT NULL)))",
     )
     .bind(campaign)
     .bind(wave)
@@ -817,7 +848,7 @@ pub fn judge(f: &Following, to: &str, failing: &[String], now: DateTime<Utc>) ->
         .progress
         .as_ref()
         .map(|p| &p.0)
-        .filter(|p| p.command_id == command);
+        .filter(|p| p.command_id == command && !p.preupgrade_only);
     if let Some(progress) = progress {
         if progress.phase == "failed" {
             let mut error = format!(
@@ -1038,6 +1069,7 @@ mod tests {
                     sources_restored: false,
                     disabled_sources: vec![],
                     report: None,
+                    preupgrade_only: false,
                     started_at: None,
                     updated_at: None,
                 })

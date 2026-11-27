@@ -302,6 +302,7 @@
 //! | PUT | `/api/servers/{id}/proxmox` | customer administrator | body [`proxmox::MappingRequest`]; 200 [`proxmox::ProxmoxView`] |
 //! | DELETE | `/api/servers/{id}/proxmox` | customer administrator | 204; 404 without a mapping |
 //! | GET | `/api/servers/{id}/proxmox/guests` | customer administrator | [`proxmox::GuestList`], see below |
+//! | POST | `/api/servers/{id}/major-upgrade/preupgrade` | administrator of the customer | 201 with the `leapp_preupgrade` command: `leapp preupgrade` alone on a server of the RHEL family, its report in the server's progress (ADR-0182); 409 saying why not |
 //! | GET | `/api/major-upgrades` | read | [`major_upgrades::MajorUpgradeList`]: per server, the next release, the checks before upgrading to it, the rollback and the last upgrade (ADR-0182); `customer_id`, `site_id`, `server_id` |
 //! | GET | `/api/servers/{id}/rollback` | read | [`rollback::RollbackView`]: what a change gets first, a Proxmox, LVM or ZFS snapshot or why none, and the local snapshots with when they are deleted (ADR-0094) |
 //! | GET | `/api/notifications/channels` | any administrator | [`notifications::ChannelList`]: the channels of what the user administers, without secrets, with `has_secret` and the last error (ADR-0060, ADR-0078) |
@@ -1682,6 +1683,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers/{id}/third-party", get(third_party::list))
         .route("/api/servers/{id}/rollback", get(rollback::get))
         .route("/api/major-upgrades", get(major_upgrades::list))
+        .route(
+            "/api/servers/{id}/major-upgrade/preupgrade",
+            post(major_upgrades::preupgrade),
+        )
         .route(
             "/api/servers/{id}/commands",
             get(commands::list).post(commands::create),

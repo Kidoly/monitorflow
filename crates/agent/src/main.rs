@@ -1131,6 +1131,7 @@ fn platform_handlers(
     if latest_report.is_none() {
         for (kind, what) in [
             (command::MAJOR_UPGRADE, "major upgrades"),
+            (command::LEAPP_PREUPGRADE, "leapp preupgrade"),
             (command::APPLY_UPDATES, "package updates"),
             (command::CONFIGURE_SOURCES, "package sources"),
             (command::REVERT_SOURCES, "package sources"),
@@ -1175,8 +1176,18 @@ fn major_upgrade_handler(
             command::MAJOR_UPGRADE,
             Arc::new(Unsupported::new("major upgrades", "this distribution yet")),
         );
+    }
+    // leapp is the RHEL family's only.
+    if host.os_family != os::OsFamily::Rhel {
+        handlers.register(
+            command::LEAPP_PREUPGRADE,
+            Arc::new(Unsupported::new("leapp preupgrade", "this distribution")),
+        );
+    }
+    if !matches!(host.os_family, os::OsFamily::Debian | os::OsFamily::Rhel) {
         return;
     }
+    let rhel = host.os_family == os::OsFamily::Rhel;
     tokio::spawn(handler::watch(
         reports.clone(),
         STATE_DIR.into(),
@@ -1190,6 +1201,16 @@ fn major_upgrade_handler(
         false,
     ));
     handlers.register(command::MAJOR_UPGRADE, slot);
+    if rhel {
+        handlers.register(
+            command::LEAPP_PREUPGRADE,
+            Arc::new(MajorUpgradeHandler::preupgrade(
+                tools.clone(),
+                reports.clone(),
+                false,
+            )),
+        );
+    }
     if allowed {
         // Asked once, like the root actions' rule: an old sudoers file
         // keeps the kind refused, with the reason in the log.
@@ -1197,6 +1218,16 @@ fn major_upgrade_handler(
             tokio::runtime::Handle::current().block_on(handler::sudo_rule(&tools))
         });
         if rule {
+            if rhel {
+                handlers.register(
+                    command::LEAPP_PREUPGRADE,
+                    Arc::new(MajorUpgradeHandler::preupgrade(
+                        tools.clone(),
+                        reports.clone(),
+                        true,
+                    )),
+                );
+            }
             handlers.register(
                 command::MAJOR_UPGRADE,
                 Arc::new(MajorUpgradeHandler::new(tools, reports, true)),
@@ -1271,9 +1302,26 @@ fn signed_command(
     config: &Path,
     kind: &str,
 ) -> anyhow::Result<monitorflow_common::proto::v1::Command> {
+    signed_command_of(config, &[kind])
+}
+
+/// [`signed_command`] for a helper that serves several kinds: the kind
+/// the request names, if it is one of `kinds`, which the check then
+/// verifies with the rest of the signed command.
+#[cfg(unix)]
+fn signed_command_of(
+    config: &Path,
+    kinds: &[&str],
+) -> anyhow::Result<monitorflow_common::proto::v1::Command> {
     use monitorflow_agent::helper_trust::{authorize, HelperRequest, Place};
 
     let request = HelperRequest::read(&mut std::io::stdin().lock())?;
+    let named = request.command.as_ref().map(|c| c.kind.as_str());
+    let kind = kinds
+        .iter()
+        .copied()
+        .find(|k| Some(*k) == named)
+        .unwrap_or(kinds[0]);
     let config: AgentConfig = config::load(config)?;
     let place = Place::agent(&config.tls_paths());
     let now = monitorflow_agent::self_update::unix_ms();
@@ -1289,7 +1337,7 @@ async fn major_upgrade(config: PathBuf, step: Option<MajorUpgradeStep>) -> anyho
     use monitorflow_agent::major_upgrade::checks::Host;
     use monitorflow_agent::major_upgrade::helper::{self, Paths, System};
     use monitorflow_agent::major_upgrade::state::STATE_DIR;
-    use monitorflow_common::command::MAJOR_UPGRADE;
+    use monitorflow_common::command::{LEAPP_PREUPGRADE, MAJOR_UPGRADE};
     use monitorflow_common::major_upgrade::Method;
 
     if let Some(MajorUpgradeStep::Checks) = step {
@@ -1332,7 +1380,7 @@ async fn major_upgrade(config: PathBuf, step: Option<MajorUpgradeStep>) -> anyho
         .await?;
     }
     let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<helper::Started> {
-        let command = signed_command(&config, MAJOR_UPGRADE)?;
+        let command = signed_command_of(&config, &[MAJOR_UPGRADE, LEAPP_PREUPGRADE])?;
         if !helper::consent(&config).map_err(anyhow::Error::msg)? {
             anyhow::bail!(
                 "major upgrades are not allowed on this server: {}",
@@ -1341,11 +1389,21 @@ async fn major_upgrade(config: PathBuf, step: Option<MajorUpgradeStep>) -> anyho
         }
         let running = os::detect_from(None).os_version;
         let upgrade = helper::requested(&command.payload, &running).map_err(anyhow::Error::msg)?;
+        let now = monitorflow_agent::self_update::unix_ms();
+        if command.kind == LEAPP_PREUPGRADE {
+            return helper::start_preupgrade(
+                &command.command_id,
+                upgrade,
+                &Host::new(upgrade.method),
+                dir,
+                now,
+            )
+            .map_err(anyhow::Error::msg);
+        }
         let upgradable = match upgrade.method {
             Method::Leapp => dnf_upgradable(true)?,
             Method::Apt | Method::ReleaseUpgrade => apt_upgradable(true)?,
         };
-        let now = monitorflow_agent::self_update::unix_ms();
         helper::start(
             &command.command_id,
             upgrade,

@@ -296,6 +296,16 @@ pub fn evaluate(
     });
     checks.push(match (&plan.refusal, method) {
         (Some(why), _) => check("sources", FAILED, why.clone(), vec![]),
+        (None, Method::ReleaseUpgrade | Method::Leapp) if plan.mirrored => check(
+            "sources",
+            WARNING,
+            format!(
+                "the server takes its packages from the MonitorFlow mirrors, which {} does not use: the campaign puts its own sources back before the upgrade, and the mirrors of {} after it when they carry it",
+                super::sources::tool(method),
+                upgrade.to_label()
+            ),
+            vec![],
+        ),
         (None, Method::Apt) => check(
             "sources",
             OK,
@@ -400,8 +410,8 @@ fn release_offered(probe: &dyn Probe, upgrade: &Upgrade) -> UpgradeCheck {
 }
 
 /// The RHEL family: leapp, its actors for the step and, on a derivative,
-/// the ELevate data.
-fn leapp_installed(probe: &dyn Probe, upgrade: &Upgrade) -> UpgradeCheck {
+/// the ELevate data. The only check `leapp preupgrade` alone needs.
+pub fn leapp_installed(probe: &dyn Probe, upgrade: &Upgrade) -> UpgradeCheck {
     let missing = probe.missing(&leapp_packages(upgrade));
     if missing.is_empty() {
         return check(

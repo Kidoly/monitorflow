@@ -14,6 +14,10 @@ package monitorflow.v1;
 // then starts the upgrade in a transient systemd unit. The command
 // succeeds once the upgrade started; its progress comes in the package
 // reports.
+//
+// Commands of kind "leapp_preupgrade" carry it too: `leapp preupgrade`
+// alone on the RHEL family, in the same unit, which writes leapp's report
+// and changes nothing (ADR-0182).
 message MajorUpgrade {
   string from = 1;
   string to = 2;
@@ -65,4 +69,7 @@ message MajorUpgradeProgress {
   // leapp's report, as `leapp preupgrade` and `leapp upgrade` wrote it in
   // /var/log/leapp/leapp-report.txt; empty outside the RHEL family.
   string report = 10;
+  // A `leapp_preupgrade` command, not an upgrade: `done` means leapp's
+  // report is ready and found no inhibitor; the release did not change.
+  bool preupgrade_only = 11;
 }

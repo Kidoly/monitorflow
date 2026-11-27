@@ -253,6 +253,12 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
             Ok(p) => json!({"from": p.from, "to": p.to, "impact": "high_impact"}),
             Err(_) => Value::Null,
         },
+        // `POST .../major-upgrade/preupgrade` only: leapp's report, nothing
+        // changed (ADR-0182).
+        command::LEAPP_PREUPGRADE => match MajorUpgrade::decode(payload) {
+            Ok(p) => json!({"from": p.from, "to": p.to}),
+            Err(_) => Value::Null,
+        },
         _ => Value::Null,
     }
 }

@@ -3462,6 +3462,8 @@ export interface MajorUpgradeProgress {
   disabled_sources: string[];
   /** leapp's report as it wrote it, inhibitors included; null outside the RHEL family. */
   report?: string | null;
+  /** `leapp preupgrade` alone, not an upgrade: `done` means no inhibitor, and the release did not change. */
+  preupgrade_only?: boolean;
   started_at: string | null;
   updated_at: string | null;
 }
@@ -3482,6 +3484,8 @@ export interface ServerUpgrade {
   progress: MajorUpgradeProgress | null;
   reported_at: string | null;
   can_upgrade: boolean;
+  /** The user may run `leapp preupgrade` alone on it now (RHEL family, ADR-0182). */
+  can_preupgrade?: boolean;
 }
 
 /** A past run of a campaign, as it ended (ADR-0173). */
@@ -6354,6 +6358,10 @@ export const api = {
     request<SourcesStatus>(`/api/servers/${encodeURIComponent(id)}/sources`, {
       signal,
     }),
+
+  /** Runs `leapp preupgrade` alone on the server; its report comes back in its major upgrade progress (ADR-0182). */
+  leappPreupgrade: (id: string) =>
+    request<CommandDetail>(`/api/servers/${encodeURIComponent(id)}/major-upgrade/preupgrade`, { method: "POST" }),
 
   /** Points the server at the mirrors of its distribution; 409 says why not. */
   useMirror: (id: string) =>

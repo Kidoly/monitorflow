@@ -101,6 +101,8 @@ pub(super) enum Next {
     Restart,
     /// A Proxmox snapshot first, taken by a task of the runner (ADR-0182).
     VmSnapshot,
+    /// Its own sources back before a major upgrade (ADR-0182).
+    OwnSources,
     /// Gets no update, for this reason.
     Fail(String),
     /// Leave the campaign: the host cannot take it (ADR-0063).
@@ -220,7 +222,9 @@ impl Pending {
     /// Whether nothing started for this server yet: it takes one of the
     /// batch's places for servers upgrading at once.
     pub(super) fn fresh(&self) -> bool {
-        self.snapshot_command_id.is_none() && self.vm_snapshot_state.is_none()
+        self.snapshot_command_id.is_none()
+            && self.vm_snapshot_state.is_none()
+            && self.configure_state.is_none()
     }
 }
 
@@ -347,7 +351,10 @@ pub(super) async fn restore(
 /// The command putting `server`'s sources back as they were before any
 /// campaign: its last source command that succeeded outside campaigns,
 /// or a revert when that was a revert or there was none.
-async fn previous(conn: &mut PgConnection, server: Uuid) -> Result<(String, Vec<u8>), sqlx::Error> {
+pub(super) async fn previous(
+    conn: &mut PgConnection,
+    server: Uuid,
+) -> Result<(String, Vec<u8>), sqlx::Error> {
     let last: Option<(String, Vec<u8>)> = sqlx::query_as(
         "SELECT kind, payload FROM commands
          WHERE server_id = $1 AND campaign_id IS NULL AND state = 'succeeded'

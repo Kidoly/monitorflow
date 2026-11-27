@@ -7,7 +7,7 @@
 use utoipa::OpenApi;
 
 use super::openapi::{Common, ErrorBody};
-use super::{campaigns, major_upgrades};
+use super::{campaigns, commands, major_upgrades};
 use crate::campaign::{
     CampaignState, FailureThreshold, FailureUnit, MajorUpgradeSpec, PinnedMirror, RunSettings,
     SoftwareItem, SoftwareSpec, SourcesMode, SourcesPin, UpdateSpec, WaveSpec, Window,
@@ -19,7 +19,7 @@ use crate::commands::major_upgrade::{Check, Progress};
     paths(
         list_campaigns, create_campaign, campaign, update_campaign, delete_campaign,
         start_campaign, pause_campaign, resume_campaign, stop_campaign, relaunch_campaign,
-        campaign_runs, list_major_upgrades,
+        campaign_runs, list_major_upgrades, leapp_preupgrade,
     ),
     components(schemas(
         CampaignState, FailureThreshold, FailureUnit, PinnedMirror, SourcesMode, SourcesPin,
@@ -560,17 +560,24 @@ fn campaign_runs() {}
 /// List the servers that can move to the next release
 ///
 /// For each server the caller sees on a release MonitorFlow can upgrade
-/// from (Debian 12 for now), or with a major upgrade recorded: the next
+/// from (Debian 12, Ubuntu LTS, RHEL 8 and 9, Rocky Linux 8, AlmaLinux 8
+/// and 9), or with a major upgrade recorded: the next
 /// release, every check before upgrading to it, the rollback it would
 /// get, and the progress of its last upgrade (ADR-0182). The central
 /// server's checks come first (`allowed`: the server allows major upgrades
 /// from the web interface; `agent_version`: its agent knows the target;
-/// `mirror`: the mirrors carry the target when the server uses them), then
-/// the agent's (`up_to_date`, `held_packages`, `broken_packages`,
-/// `free_space`, `reboot_pending`, `sources`, `third_party_sources`). A
-/// `warning` never blocks; `ready` is false while any check `failed`. The
-/// agent runs its checks again just before the upgrade. Upgrades
-/// themselves are campaigns with `major_upgrade`.
+/// `mirror`: the mirrors carry the target when the server uses them; on
+/// Ubuntu and the RHEL family, a `warning` when they do not, as the
+/// campaign puts the server's own sources back for the upgrade and keeps
+/// them until the mirrors carry the new release), then the agent's
+/// (`up_to_date`, `held_packages`, `broken_packages`, `free_space`,
+/// `reboot_pending`, `sources`, `release_offered` on Ubuntu, `leapp` on the
+/// RHEL family, `third_party_sources`). A `warning` never blocks; `ready`
+/// is false while any check `failed`. The agent runs its checks again just
+/// before the upgrade. Upgrades themselves are campaigns with
+/// `major_upgrade`; `leapp preupgrade` alone is `POST
+/// /servers/{id}/major-upgrade/preupgrade`, whose report comes back in
+/// `progress` with `preupgrade_only`.
 ///
 /// Needs any role on the servers' sites and the key area "updates".
 #[utoipa::path(get, path = "/api/v1/major-upgrades", tag = "campaigns",
@@ -605,10 +612,60 @@ fn campaign_runs() {}
                              "detail": "LVM snapshot of / and /var", "left_out": null, "method": "lvm"},
                 "progress": null,
                 "reported_at": "2026-11-23T06:00:00Z",
-                "can_upgrade": true
+                "can_upgrade": true,
+                "can_preupgrade": false
             }]})),
         (status = 400, body = ErrorBody, description = "`invalid`: an unknown parameter or a bad ID"),
         (status = 403, body = ErrorBody, description = "`forbidden`: the caller has no role. \
 `api_key_scope`: the key lacks the area"),
     ))]
 fn list_major_upgrades() {}
+
+/// Run leapp preupgrade alone on a server
+///
+/// Queues a `leapp_preupgrade` command for the next release of a server of
+/// the RHEL family (RHEL, Rocky Linux, AlmaLinux), before any campaign
+/// (ADR-0182). Its agent's root helper checks the signed command, that the
+/// server allows major upgrades from the web interface, that leapp and its
+/// data are installed and that no upgrade is running, then runs `leapp
+/// preupgrade` alone in the upgrade's unit: it writes leapp's report and
+/// changes nothing on the server. The report comes back in the server's
+/// `progress` of `GET /major-upgrades`, with `preupgrade_only` set:
+/// `done` when leapp found no inhibitor, `failed` with the inhibitors'
+/// titles otherwise. The command succeeds once leapp started; it waits an
+/// hour for an offline server. Audited as `command.create`.
+///
+/// Needs the administrator role on the server's customer as a whole, never
+/// a site's, as for a major upgrade campaign. Through an API key, the
+/// "updates" area. `can_preupgrade` of `GET /major-upgrades` says whether
+/// the caller may run it now.
+#[utoipa::path(post, path = "/api/v1/servers/{id}/major-upgrade/preupgrade", tag = "campaigns",
+    params(("id" = uuid::Uuid, Path, description = "The server's `id`")),
+    responses(
+        (status = 201, description = "Command queued", body = commands::CommandDetail, example = json!({
+            "id": "b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e",
+            "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+            "kind": "leapp_preupgrade",
+            "parameters": {"from": "rocky 8", "to": "rocky 9"},
+            "state": "queued",
+            "issued_at": "2026-11-27T10:00:00Z",
+            "expires_at": "2026-11-27T11:00:00Z",
+            "sent_at": null,
+            "started_at": null,
+            "finished_at": null,
+            "exit_code": null,
+            "error": null,
+            "requested_by": "0d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a",
+            "stdout": "",
+            "stderr": ""
+        })),
+        (status = 400, body = ErrorBody, description = "`invalid`: a bad ID"),
+        (status = 403, body = ErrorBody, description = "`forbidden`: the caller does not administer \
+the server's customer as a whole. `api_key_scope`: the key lacks the area"),
+        (status = 404, body = ErrorBody, description = "`not_found`: no such server, or of a site the \
+caller cannot read"),
+        (status = 409, body = ErrorBody, description = "`conflict`, saying why in a sentence: the \
+server is not of the RHEL family, MonitorFlow knows no next release for it, it does not allow major \
+upgrades from the web interface, its agent predates this command, or it is removed"),
+    ))]
+fn leapp_preupgrade() {}
