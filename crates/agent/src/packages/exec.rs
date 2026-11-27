@@ -117,7 +117,8 @@ impl Tools {
 
     /// Runs `program args` as the current user with `env` added: the root
     /// helper running a package manager. No timeout, as for
-    /// [`Self::privileged`].
+    /// [`Self::privileged`]. On Linux the program gets only `PATH` and
+    /// `env`, as under sudo, whatever the helper's own environment holds.
     pub async fn direct(
         &self,
         env: &[(&str, &str)],
@@ -125,7 +126,7 @@ impl Tools {
         args: &[String],
     ) -> Result<Run, PackageError> {
         let line = format!("{} {}", program.display(), args.join(" "));
-        run(program, args, env, line, None, None).await
+        run_with(program, args, env, line, None, None, cfg!(unix)).await
     }
 
     /// Runs `program args` as the agent's user, in the C locale, within
@@ -145,6 +146,10 @@ impl Tools {
     }
 }
 
+/// The `PATH` a package manager gets from the root helper, as sudo's
+/// `secure_path` gives it.
+const SAFE_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 async fn run(
     program: &Path,
     args: &[String],
@@ -153,7 +158,24 @@ async fn run(
     limit: Option<Duration>,
     input: Option<&[u8]>,
 ) -> Result<Run, PackageError> {
+    run_with(program, args, env, line, limit, input, false).await
+}
+
+/// [`run`], with `clean` starting `program` from an empty environment
+/// holding only [`SAFE_PATH`] and `env`.
+async fn run_with(
+    program: &Path,
+    args: &[String],
+    env: &[(&str, &str)],
+    line: String,
+    limit: Option<Duration>,
+    input: Option<&[u8]>,
+    clean: bool,
+) -> Result<Run, PackageError> {
     let mut command = tokio::process::Command::new(program);
+    if clean {
+        command.env_clear().env("PATH", SAFE_PATH);
+    }
     command
         .args(args)
         .envs(env.iter().copied())
