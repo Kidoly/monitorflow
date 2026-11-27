@@ -650,6 +650,10 @@ impl Ctx {
             ApiSettings {
                 proxmox_enabled: true,
                 proxmox_clusters: vec!["pve".into()],
+                // Uploads land in a directory of the test's own.
+                software_files: monitorflow_server::software_files::Store::in_mirror_dir(
+                    &std::env::temp_dir().join(format!("mf-tenancy-{}", std::process::id())),
+                ),
                 ..ApiSettings::default()
             },
         )
@@ -1395,6 +1399,43 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             .await
             .unwrap();
             assert_eq!(added, 0);
+        }
+        // An upload names no customer; a file of B's catalogue cannot be
+        // named by A without uploading it (ADR-0188).
+        ("POST", "/api/software/files") => {
+            let sha256 = format!("{:0>64}", Uuid::new_v4().simple().to_string());
+            sqlx::query("INSERT INTO software_files (sha256, size) VALUES ($1, 1)")
+                .bind(&sha256)
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO software_catalog (customer_id, name, manager, package_id, source,
+                     file_sha256)
+                 VALUES ($1, 'Theirs', 'msi', '{6F1C2E7A-3B9D-4C55-A0E2-8D4F7B1A9C30}', '', $2)",
+            )
+            .bind(b.customer)
+            .bind(&sha256)
+            .execute(&ctx.pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                ctx.status(method, path, Some(json!({}))).await,
+                StatusCode::BAD_REQUEST
+            );
+            let body = json!({ "customer_id": a.customer, "name": "x", "manager": "msi",
+                               "file_sha256": sha256 });
+            assert_eq!(
+                ctx.status("POST", "/api/software", Some(body)).await,
+                StatusCode::BAD_REQUEST
+            );
+            let named: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM software_catalog WHERE file_sha256 = $1")
+                    .bind(&sha256)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(named, 1);
         }
         ("GET", "/api/remediation/rules") => {
             let (status, body) = ctx.call(method, path, None).await;

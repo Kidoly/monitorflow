@@ -527,8 +527,8 @@ export function draftFromCampaign(campaign: CampaignDetail): CampaignDraft {
 }
 
 /** The system each software manager installs on (ADR-0188). */
-const FAMILY_OF: Record<SoftwareManager, string> = { winget: "windows", apt: "debian", dnf: "rhel" };
-const SOFTWARE_FAMILIES: readonly string[] = Object.values(FAMILY_OF);
+const FAMILY_OF: Record<SoftwareManager, string> = { winget: "windows", msi: "windows", apt: "debian", dnf: "rhel" };
+const SOFTWARE_FAMILIES: readonly string[] = [...new Set(Object.values(FAMILY_OF))];
 
 /** The OS families software of `managers` goes to; every one when none is chosen yet. */
 export function softwareFamilies(managers: SoftwareManager[]): readonly string[] {

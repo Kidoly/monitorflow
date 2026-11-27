@@ -246,6 +246,7 @@ db_tests! {
                 id: "7zip.7zip".into(),
                 source: "winget".into(),
                 mirror: None,
+            msi: None,
             }],
         });
         let id = f.start(&install).await;
@@ -317,6 +318,7 @@ db_tests! {
             id: id.into(),
             source: source.into(),
             mirror: None,
+            msi: None,
         };
         let mut install = f.campaign(Vec::new());
         install.spec = UpdateSpec::default();

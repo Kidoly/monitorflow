@@ -22,9 +22,10 @@ mod store;
 
 pub use model::{
     plan_waves, software_refusal, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime,
-    MajorUpgradeSpec, PinnedMirror, PlanError, SoftwareItem, SoftwareSpec, SourcesMode, SourcesPin,
-    ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_PACKAGES, MAX_TARGETS, MAX_WAVES,
-    MAX_WINDOWS, NO_APPROVALS, NO_THIRD_PARTY,
+    MajorUpgradeSpec, MsiItem, MsiPropertyItem, MsiSources, PinnedMirror, PlanError, SoftwareItem,
+    SoftwareSpec, SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
+    MAX_PACKAGES, MAX_TARGETS, MAX_WAVES, MAX_WINDOWS, MSI, MSI_TOO_OLD, NO_APPROVALS, NO_MSI_URL,
+    NO_SOFTWARE_FOR, NO_THIRD_PARTY,
 };
 pub use pin::write_pins;
 pub use runner::{Runner, Step, MIN_WINDOW_LEFT, POLL};

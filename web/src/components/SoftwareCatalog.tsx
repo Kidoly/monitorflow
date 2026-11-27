@@ -1,13 +1,15 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from "react";
 
 import { t } from "@/i18n";
 import {
   type Customer,
   type Me,
   type Mirror,
+  type MsiProperty,
   type SoftwareEntry,
+  type SoftwareFile,
   type SoftwareManager,
   type SoftwareRequest,
   api,
@@ -15,6 +17,7 @@ import {
   isAbortError,
 } from "@/lib/api";
 import { validLinuxPackage, validWingetId } from "@/lib/campaigns";
+import { formatBytes } from "@/lib/format";
 import { administersCustomer, administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH } from "@/lib/routes";
 
@@ -32,7 +35,29 @@ const MAX_DESCRIPTION = 500;
 const SOURCE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** The managers of the catalogue, in the order the select offers them. */
-const MANAGERS: SoftwareManager[] = ["winget", "apt", "dnf"];
+const MANAGERS: SoftwareManager[] = ["winget", "msi", "apt", "dnf"];
+/** A ProductCode, as Windows Installer writes it. */
+const PRODUCT_CODE = /^\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}$/;
+/** Public properties MonitorFlow may pass to msiexec, and those it never sets (ADR-0188). */
+const PROPERTY_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
+const RESERVED = new Set(["ACTION", "ADVERTISE", "MSIPATCHREMOVE", "PATCH", "REBOOT", "REBOOTPROMPT", "REINSTALL", "REINSTALLMODE", "REMOVE", "TRANSFORMS"]);
+const PROPERTY_VALUE = /^[ -!#-:<-~]{0,256}$/;
+const MAX_PROPERTIES = 32;
+
+/** `NAME=value; NAME2=value` as properties; null when a part is not `NAME=value`. */
+export function parseProperties(text: string): MsiProperty[] | null {
+  const properties: MsiProperty[] = [];
+  for (const part of text.split(";")) {
+    if (!part.trim()) continue;
+    const at = part.indexOf("=");
+    if (at < 0) return null;
+    properties.push({ name: part.slice(0, at).trim(), value: part.slice(at + 1).trim() });
+  }
+  return properties;
+}
+
+/** Properties as the field shows them. */
+export const formatProperties = (properties: MsiProperty[]) => properties.map((p) => `${p.name}=${p.value}`).join("; ");
 
 /** The value of the customer select for an entry shared by every customer. */
 const SHARED = "";
@@ -47,6 +72,9 @@ interface Draft {
   source: string;
   /** apt and dnf: a mirror name, or "" for the servers' own sources. */
   mirror: string;
+  /** msi: the uploaded file, and its properties as `NAME=value; ...`. */
+  file: SoftwareFile | null;
+  properties: string;
   description: string;
 }
 
@@ -58,6 +86,8 @@ const emptyDraft = (customerId: string): Draft => ({
   packageId: "",
   source: "winget",
   mirror: "",
+  file: null,
+  properties: "",
   description: "",
 });
 
@@ -70,10 +100,17 @@ export function softwareRequest(draft: Draft): SoftwareRequest {
     package_id: draft.packageId.trim(),
     description: draft.description.trim(),
   };
-  // winget installs from a source; apt and dnf from the servers' sources or a mirror.
-  return draft.manager === "winget"
-    ? { ...common, source: draft.source.trim() }
-    : { ...common, mirror: draft.mirror || null };
+  // winget installs from a source; MSI from its uploaded file; apt and dnf from the servers' sources or a mirror.
+  if (draft.manager === "winget") return { ...common, source: draft.source.trim() };
+  if (draft.manager === "msi") {
+    return {
+      ...common,
+      package_id: common.package_id.toUpperCase(),
+      file_sha256: draft.file?.sha256 ?? "",
+      properties: parseProperties(draft.properties) ?? [{ name: "", value: draft.properties }],
+    };
+  }
+  return { ...common, mirror: draft.mirror || null };
 }
 
 /** The errors the API would answer for `request`; empty when it looks valid. */
@@ -81,7 +118,16 @@ export function checkSoftware(request: SoftwareRequest): string[] {
   const errors: string[] = [];
   const name = [...request.name].length;
   if (name < 1 || name > MAX_NAME) errors.push(t("campaigns.software.check.name"));
-  if ((request.manager ?? "winget") === "winget") {
+  if (request.manager === "msi") {
+    if (!request.file_sha256) errors.push(t("campaigns.software.check.file"));
+    if (request.package_id && !PRODUCT_CODE.test(request.package_id)) errors.push(t("campaigns.software.check.productCode"));
+    const properties = request.properties ?? [];
+    const names = properties.map((p) => p.name);
+    const bad = properties.some((p) => !PROPERTY_NAME.test(p.name) || RESERVED.has(p.name) || !PROPERTY_VALUE.test(p.value));
+    if (bad || properties.length > MAX_PROPERTIES || new Set(names).size !== names.length) {
+      errors.push(t("campaigns.software.check.properties"));
+    }
+  } else if ((request.manager ?? "winget") === "winget") {
     if (!validWingetId(request.package_id)) errors.push(t("campaigns.software.check.package"));
     const source = request.source ?? "";
     if (!SOURCE.test(source) || source.toLowerCase() === "msstore") errors.push(t("campaigns.software.check.source"));
@@ -90,6 +136,13 @@ export function checkSoftware(request: SoftwareRequest): string[] {
   }
   if ([...(request.description ?? "")].length > MAX_DESCRIPTION) errors.push(t("campaigns.software.check.description"));
   return errors;
+}
+
+/** What the page says of an uploaded file: its name or product, version and size. */
+function fileLabel(file: SoftwareFile): string {
+  const name = file.file_name || file.product_name || file.sha256.slice(0, 12);
+  const version = file.product_version ? ` ${file.product_version}` : "";
+  return `${name}${version} (${formatBytes(file.size)})`;
 }
 
 /** Whether `me` may change `entry`: global administrators the shared ones, customer administrators their own. */
@@ -173,6 +226,7 @@ function Catalog({
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const showCustomers = multiCustomer(me);
   const customerName = (id: string | null) =>
     id === null ? t("campaigns.software.shared") : (customers.find((c) => c.id === id)?.name ?? id);
@@ -207,6 +261,26 @@ function Catalog({
     }
   }
 
+  async function upload(event: ChangeEvent<HTMLInputElement>) {
+    const chosen = event.target.files?.[0];
+    if (!chosen) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const file = await api.uploadSoftwareFile(chosen, chosen.name);
+      setDraft((d) => ({
+        ...d,
+        file,
+        name: d.name || file.product_name.slice(0, MAX_NAME),
+        packageId: file.product_code ?? d.packageId,
+      }));
+    } catch (e) {
+      setError(t("campaigns.software.uploadFailed", { error: describeError(e) }));
+    } finally {
+      setUploading(false);
+    }
+  }
+
   function edit(entry: SoftwareEntry) {
     setDraft({
       id: entry.id,
@@ -216,6 +290,8 @@ function Catalog({
       packageId: entry.package_id,
       source: entry.manager === "winget" ? entry.source : "winget",
       mirror: entry.mirror ?? "",
+      file: entry.file ?? null,
+      properties: formatProperties(entry.properties ?? []),
       description: entry.description,
     });
     setSubmitted(false);
@@ -235,7 +311,19 @@ function Catalog({
       key: "from",
       header: t("campaigns.software.column.from"),
       cell: (e) =>
-        e.manager === "winget" ? e.source : e.mirror ? <code>{e.mirror}</code> : <span className={own.dim}>{t("campaigns.software.ownSources")}</span>,
+        e.manager === "winget" ? (
+          e.source
+        ) : e.manager === "msi" ? (
+          e.file ? (
+            fileLabel(e.file)
+          ) : (
+            <Missing word="none" className={own.dim} />
+          )
+        ) : e.mirror ? (
+          <code>{e.mirror}</code>
+        ) : (
+          <span className={own.dim}>{t("campaigns.software.ownSources")}</span>
+        ),
     },
     ...(showCustomers
       ? [
@@ -332,20 +420,35 @@ function Catalog({
                 </select>
               </label>
               <label className={own.fld}>
-                {t("campaigns.software.column.package")}
+                {draft.manager === "msi" ? t("campaigns.software.productCode") : t("campaigns.software.column.package")}
                 <input
                   className={fieldClass}
                   value={draft.packageId}
                   onChange={(e) => set({ packageId: e.target.value })}
                   placeholder={t(
-                    draft.manager === "winget" ? "campaigns.software.packagePlaceholder" : "campaigns.software.linuxPlaceholder",
+                    draft.manager === "winget"
+                      ? "campaigns.software.packagePlaceholder"
+                      : draft.manager === "msi"
+                        ? "campaigns.software.productCodePlaceholder"
+                        : "campaigns.software.linuxPlaceholder",
                   )}
                   spellCheck={false}
                   autoCapitalize="none"
                   required
                 />
               </label>
-              {draft.manager === "winget" ? (
+              {draft.manager === "msi" ? (
+                <label className={own.fld}>
+                  {t("campaigns.software.file")}
+                  <input
+                    className={fieldClass}
+                    type="file"
+                    accept=".msi,application/x-msi"
+                    onChange={upload}
+                    disabled={uploading}
+                  />
+                </label>
+              ) : draft.manager === "winget" ? (
                 <label className={own.fld}>
                   {t("campaigns.software.column.source")}
                   <input
@@ -395,6 +498,28 @@ function Catalog({
                 </label>
               )}
             </div>
+            {draft.manager === "msi" && (
+              <>
+                <p className={own.note}>
+                  {uploading
+                    ? t("campaigns.software.uploading")
+                    : draft.file
+                      ? t("campaigns.software.uploaded", { file: fileLabel(draft.file) })
+                      : t("campaigns.software.msiHint")}
+                </p>
+                <label className={own.fld}>
+                  {t("campaigns.software.properties")}
+                  <input
+                    className={fieldClass}
+                    value={draft.properties}
+                    onChange={(e) => set({ properties: e.target.value })}
+                    placeholder={t("campaigns.software.propertiesPlaceholder")}
+                    spellCheck={false}
+                    autoCapitalize="none"
+                  />
+                </label>
+              </>
+            )}
             <label className={own.fld}>
               {t("campaigns.software.column.description")}
               <input
@@ -415,7 +540,7 @@ function Catalog({
             )}
             {error && <Banner tone="bad">{error}</Banner>}
             <div className={own.row}>
-              <Button variant="k" type="submit" disabled={busy}>
+              <Button variant="k" type="submit" disabled={busy || uploading}>
                 {editing ? t("campaigns.software.save") : t("campaigns.software.add")}
               </Button>
               {editing && <Button onClick={reset}>{t("campaigns.software.cancel")}</Button>}

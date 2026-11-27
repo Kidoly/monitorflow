@@ -5,6 +5,9 @@
 //! - `/dnf/<mirror>/<snapshot>/` and `/dnf/<mirror>/current/`
 //! - `/keys/monitorflow-archive.asc`
 //! - `/agent/<version>/`: signed agent releases for self-updates (ADR-0053)
+//! - `/software/<sha256>.msi`: MSI files of the software catalogue, which
+//!   the signed `software` command names by digest (ADR-0188); a relay
+//!   fetches one it lacks from its upstream
 //! - `/index.json`, see [`Index`]
 //!
 //! GET and HEAD only, no directory listings, and any path segment
@@ -42,6 +45,8 @@ use super::{
 
 /// Directory and URL path of the agent releases.
 pub const AGENT_DIR: &str = "agent";
+/// Directory and URL path of the MSI files of the software catalogue.
+pub const SOFTWARE_DIR: &str = "software";
 
 /// The served directories: one per family, and the public key file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +61,9 @@ pub struct Served {
     pub public_key: PathBuf,
     /// Agent releases, one directory per version (ADR-0053).
     pub agent: PathBuf,
+    /// MSI files by SHA-256 (ADR-0188): uploaded on the server, absent on
+    /// relays, which keep what they fetch in the on-demand store.
+    pub software: PathBuf,
 }
 
 impl Served {
@@ -67,6 +75,7 @@ impl Served {
             dnf: root.join(Family::Dnf.as_str()),
             public_key: root.join("keys").join(PUBLIC_KEY),
             agent: root.join(AGENT_DIR),
+            software: root.join(SOFTWARE_DIR),
         }
     }
 
@@ -108,6 +117,19 @@ pub fn router_with(served: &Served, ondemand: Option<OnDemand>) -> Router {
                 fixed: Some(PUBLIC_KEY),
                 family: None,
                 ondemand: None,
+            }),
+        )
+        .route(
+            &format!("/{SOFTWARE_DIR}/{{name}}"),
+            get(software).with_state(Software {
+                tree: Tree {
+                    base: served.base.clone(),
+                    root: served.software.clone(),
+                    fixed: None,
+                    family: None,
+                    ondemand: None,
+                },
+                ondemand: ondemand.clone(),
             }),
         )
         .route(INDEX_PATH, get(index).with_state(served.clone()))
@@ -274,6 +296,60 @@ async fn on_demand(tree: &Tree, named: &Path) -> Result<Option<PathBuf>, DemandE
     ondemand
         .package(family, mirror, &snapshot, &dir, rest)
         .await
+}
+
+/// The MSI files and, on a relay, what fetches those it lacks.
+#[derive(Debug, Clone)]
+struct Software {
+    tree: Tree,
+    ondemand: Option<OnDemand>,
+}
+
+/// `/software/<sha256>.msi`: the uploaded file, else on a relay the one
+/// the on-demand store holds or fetches, checked against the digest.
+async fn software(
+    State(software): State<Software>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    request: Request,
+) -> Response {
+    let Some(sha256) = name
+        .strip_suffix(".msi")
+        .filter(|h| crate::software::valid_sha256(h))
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (tree, wanted) = (software.tree.clone(), PathBuf::from(&name));
+    let found = tokio::task::spawn_blocking(move || tree.contained(&wanted)).await;
+    let found = match found {
+        Ok(Some(found)) => found,
+        _ => {
+            let Some(ondemand) = &software.ondemand else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            match ondemand.software(sha256).await {
+                Ok(Some(path)) => Contained { path, _open: None },
+                Ok(None) | Err(DemandError::Missing) => {
+                    return StatusCode::NOT_FOUND.into_response()
+                }
+                Err(DemandError::Upstream(_)) => return StatusCode::BAD_GATEWAY.into_response(),
+                Err(DemandError::Local(error)) => {
+                    tracing::warn!(%error, "cannot serve an MSI file");
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            }
+        }
+    };
+    let mime = mime_guess::from_path(&name).first_or_octet_stream();
+    match ServeFile::new_with_mime(&found.path, &mime)
+        .try_call(request)
+        .await
+    {
+        Ok(response) => response.map(Body::new),
+        Err(error) => {
+            tracing::warn!(%error, "cannot serve an MSI file");
+            StatusCode::NOT_FOUND.into_response()
+        }
+    }
 }
 
 async fn index(State(served): State<Served>) -> Response {

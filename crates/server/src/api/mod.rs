@@ -292,6 +292,7 @@
 //! | GET | `/api/software` | any role | [`software::Catalog`]: the software catalogue, shared entries and those of visible customers; `?customer_id=` narrows (ADR-0188) |
 //! | POST | `/api/software` | customer administrator, global for a shared entry | body [`software::EntryRequest`]; 201 [`software::Entry`]; 409 when the package is listed already |
 //! | PUT, DELETE | `/api/software/{id}` | as POST | body [`software::EntryRequest`]; 200 [`software::Entry`], or 204 |
+//! | POST | `/api/software/files` | customer administrator | body an MSI file; `?file_name=`; 201 [`software::SoftwareFile`]; 409 past 20 GiB in all (ADR-0188) |
 //! | GET | `/api/remediation/rules` | customer role | [`remediation::RuleList`], see below |
 //! | POST | `/api/remediation/rules` | customer administrator | body [`remediation::RuleRequest`]; 201 the stored rule |
 //! | DELETE | `/api/remediation/rules/{id}` | customer administrator | 204 |
@@ -969,6 +970,8 @@ pub struct ApiSettings {
     /// Where agents download releases from, and the server's cache of
     /// them (ADR-0053).
     pub agent_releases: agent_releases::Sources,
+    /// MSI files of the software catalogue (ADR-0188).
+    pub software_files: crate::software_files::Store,
     /// Server updates through the updater container (ADR-0056).
     pub server_update: server_update::ServerUpdateSettings,
     /// What the configuration sets about install sources (ADR-0054).
@@ -998,6 +1001,7 @@ impl ApiSettings {
             )),
             live: agent_releases.live.clone(),
             agent_releases,
+            software_files: crate::software_files::Store::in_mirror_dir(&config.mirror_dir()),
             server_update: server_update::ServerUpdateSettings::from_config(config),
             agent_install: settings::InstallConfig::from_config(config),
             auto_update_enabled: config.auto_update.enabled,
@@ -1782,6 +1786,13 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/campaigns/{id}/relaunch", post(campaigns::relaunch))
         .route("/api/campaigns/{id}/runs", get(campaigns::runs))
         .route("/api/software", get(software::list).post(software::create))
+        .route(
+            "/api/software/files",
+            // A little over the largest file, so the handler says why.
+            post(software::upload).layer(DefaultBodyLimit::max(
+                (crate::software_files::MAX_FILE_BYTES + 1) as usize,
+            )),
+        )
         .route(
             "/api/software/{id}",
             put(software::update).delete(software::delete),

@@ -3299,8 +3299,26 @@ export interface ThirdPartySelection {
   hold?: string[];
 }
 
-/** Software managers of the catalogue (ADR-0188): winget on Windows, apt on Debian and Ubuntu, dnf on RHEL. */
-export type SoftwareManager = "winget" | "apt" | "dnf";
+/** Software managers of the catalogue (ADR-0188): winget and MSI files on Windows, apt on Debian and Ubuntu, dnf on RHEL. */
+export type SoftwareManager = "winget" | "msi" | "apt" | "dnf";
+
+/** A public property passed to `msiexec` at every install of an MSI entry. */
+export interface MsiProperty {
+  name: string;
+  value: string;
+}
+
+/** An uploaded MSI file (ADR-0188), as `POST /api/software/files` answers. */
+export interface SoftwareFile {
+  sha256: string;
+  size: number;
+  file_name: string;
+  /** Read from the file; null when it has none. */
+  product_code: string | null;
+  product_name: string;
+  product_version: string;
+  manufacturer: string;
+}
 
 /** One entry of the software catalogue (ADR-0188). */
 export interface SoftwareEntry {
@@ -3315,6 +3333,10 @@ export interface SoftwareEntry {
   source: string;
   /** apt and dnf: the mirror it installs from; null for the servers' own sources. Absent from older servers. */
   mirror?: string | null;
+  /** msi: the uploaded file; null otherwise. Absent from older servers. */
+  file?: SoftwareFile | null;
+  /** msi: public properties passed to msiexec. */
+  properties?: MsiProperty[];
   description: string;
   created_by: string | null;
   created_at: string;
@@ -3332,6 +3354,10 @@ export interface SoftwareRequest {
   source?: string;
   /** apt and dnf only: a mirror of the same family. */
   mirror?: string | null;
+  /** msi only: the SHA-256 of an uploaded file. */
+  file_sha256?: string;
+  /** msi only: public properties passed to msiexec. */
+  properties?: MsiProperty[];
   description?: string;
 }
 
@@ -3355,6 +3381,8 @@ export interface CampaignSoftware {
     source: string;
     /** The mirror added to the servers' sources for it. */
     mirror?: string;
+    /** msi: the file and properties, as resolved. */
+    msi?: { sha256: string; size: number; properties: MsiProperty[] };
   }[];
 }
 
@@ -6245,6 +6273,13 @@ export const api = {
     request<SoftwareEntry>(`/api/software/${encodeURIComponent(id)}`, { method: "PUT", body }),
 
   deleteSoftware: (id: string) => request<void>(`/api/software/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Uploads an MSI file for the catalogue; its ProductCode is read from it (ADR-0188). */
+  uploadSoftwareFile: (file: Blob, fileName: string) =>
+    request<SoftwareFile>(`/api/software/files?file_name=${encodeURIComponent(fileName)}`, {
+      method: "POST",
+      file,
+    }),
 
   /** 409 when the campaign's state does not allow `action`. */
   campaignAction: (id: string, action: CampaignAction) =>

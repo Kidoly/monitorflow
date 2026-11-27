@@ -9,8 +9,9 @@ use utoipa::OpenApi;
 use super::openapi::{Common, ErrorBody};
 use super::{campaigns, major_upgrades};
 use crate::campaign::{
-    CampaignState, FailureThreshold, FailureUnit, MajorUpgradeSpec, PinnedMirror, RunSettings,
-    SoftwareItem, SoftwareSpec, SourcesMode, SourcesPin, UpdateSpec, WaveSpec, Window,
+    CampaignState, FailureThreshold, FailureUnit, MajorUpgradeSpec, MsiItem, MsiPropertyItem,
+    PinnedMirror, RunSettings, SoftwareItem, SoftwareSpec, SourcesMode, SourcesPin, UpdateSpec,
+    WaveSpec, Window,
 };
 use crate::commands::major_upgrade::{Check, Progress};
 
@@ -26,7 +27,7 @@ use crate::commands::major_upgrade::{Check, Progress};
         UpdateSpec, WaveSpec, Window, campaigns::Progress, campaigns::TargetView,
         campaigns::WaveView, campaigns::RelaunchServers, RunSettings, MajorUpgradeSpec, Check,
         Progress, major_upgrades::ServerUpgrade, major_upgrades::MajorUpgradeList, SoftwareSpec,
-        SoftwareItem,
+        SoftwareItem, MsiItem, MsiPropertyItem,
     )),
     modifiers(&Common),
     tags(

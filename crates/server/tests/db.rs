@@ -269,6 +269,7 @@ db_tests! {
                 "snmp_mib_objects",
                 "snmp_mibs",
                 "software_catalog",
+                "software_files",
                 "thresholds",
                 "user_contacts",
                 "user_preferences",

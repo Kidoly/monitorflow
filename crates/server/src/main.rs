@@ -537,6 +537,11 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("reading the server settings")?;
     api_settings.live.clone().spawn(pool.clone());
+    // MSI files nothing names any more (ADR-0188).
+    monitorflow_server::software_files::spawn_sweeper(
+        pool.clone(),
+        api_settings.software_files.clone(),
+    );
     // Update campaigns (ADR-0033) queue through the same dispatcher, and
     // pin snapshots with the mirrors' key and public URL (ADR-0038).
     let campaigns = Runner::new(pool.clone())
