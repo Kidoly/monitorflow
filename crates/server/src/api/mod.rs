@@ -61,7 +61,7 @@
 //! | POST | `/api/virtual-objects/{id}/install-agent` | admin | 201 [`servers::ServerView`]: a server waiting for its agent, named after the virtual machine and tied to it; audited |
 //! | POST | `/api/devices/vmware/test` | modify | body [`devices::VmwareTestRequest`]; 200 [`devices::VmwareTested`]: what a vCenter or ESXi host answers, its certificate, and the login when it is trusted |
 //! | GET, PUT, DELETE | `/api/devices/{id}/vmware` | read, modify | [`crate::vmware::View`] without the password; body [`crate::vmware::CredentialsRequest`]; audited |
-//! | POST | `/api/devices/cloud/test` | modify | body [`devices::CloudTestRequest`]; 200 [`devices::CloudTested`]: whether an AWS account or Azure subscription signs in, its machines and metrics (ADR-0183) |
+//! | POST | `/api/devices/cloud/test` | modify | body [`devices::CloudTestRequest`]; 200 [`devices::CloudTested`]: whether an AWS account, Azure subscription or Google Cloud project signs in, its machines and metrics (ADR-0183) |
 //! | GET, PUT, DELETE | `/api/devices/{id}/cloud` | read, modify | [`crate::cloud::View`] without the secret; body [`crate::cloud::CredentialsRequest`]; audited |
 //! | GET, POST | `/api/devices/{id}/snmp-checks` | read, modify | [`snmp_checks::CheckList`]; body [`snmp_checks::CheckRequest`], 201 [`snmp_checks::CheckView`]: a custom SNMP check with its channels' limits (ADR-0157); audited |
 //! | PUT, DELETE | `/api/devices/{id}/snmp-checks/{name}` | modify | the same body; [`snmp_checks::CheckView`]; 204; audited |

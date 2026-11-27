@@ -956,7 +956,7 @@ pub fn probe_kind(kind: &str) -> bool {
 }
 
 const PROBE_KINDS_TEXT: &str =
-    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql`, `mssql`, `redis`, `jmx`, `kubernetes`, `aws` and `azure`";
+    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql`, `mssql`, `redis`, `jmx`, `kubernetes`, `aws`, `azure` and `gcp`";
 
 async fn create(
     state: &ApiState,

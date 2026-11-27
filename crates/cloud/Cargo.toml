@@ -4,17 +4,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "AWS EC2 and Azure virtual machines through their APIs, read by the central server (ADR-0183)"
+description = "AWS EC2, Azure and Google Compute Engine virtual machines through their APIs, read by the central server (ADR-0183)"
 
 # A sensor of `monitorflow-sensors`, kept apart so agents and relays do
 # not carry cloud API clients. Requests are signed here (SigV4 with ring,
-# OAuth client credentials for Azure) instead of pulling in the SDKs.
+# OAuth client credentials for Azure, an RS256 JWT for Google Cloud)
+# instead of pulling in the SDKs.
 
 [dependencies]
 monitorflow-sensors.workspace = true
 # Its bounded XML reader, for EC2 and CloudWatch answers.
 monitorflow-vmware.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 chrono.workspace = true
 percent-encoding.workspace = true
 reqwest.workspace = true

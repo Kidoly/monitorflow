@@ -1,8 +1,9 @@
-//! Cloud accounts (ADR-0183): the virtual machines of an AWS account or
-//! an Azure subscription, their state, status checks and basic metrics,
-//! read through the providers' APIs by the central server.
+//! Cloud accounts (ADR-0183): the virtual machines of an AWS account, an
+//! Azure subscription or a Google Cloud project, their state, status
+//! checks and basic metrics, read through the providers' APIs by the
+//! central server.
 //!
-//! Two kinds, `aws` and `azure`. A collection lists the account's
+//! Three kinds, `aws`, `azure` and `gcp`. A collection lists the account's
 //! machines and writes them as the `vm` samples of
 //! `monitorflow_sensors::virt`, so the server's inventory and matching of
 //! ADR-0156 take them as they take a vCenter's, plus `up`: 1 when every
@@ -12,7 +13,10 @@
 //! Parameters: for `aws`, `key_id` and `secret` (an access key of a user
 //! with read-only rights) and `regions` (comma separated); for `azure`,
 //! `tenant`, `key_id` (the application's client ID), `secret` (its client
-//! secret) and `subscription`. `what` is `inventory` (the default) or
+//! secret) and `subscription`; for `gcp`, `secret` (a service account's
+//! JSON key), `project` (the key's own when left out) and `key_id` (the
+//! service account's address, which must be the key's when given).
+//! `what` is `inventory` (the default) or
 //! `test`, which signs in and counts the machines, for "Add a device".
 //! The server keeps the credentials sealed and adds them to the check it
 //! runs; [`SECRET_PARAMS`] are never stored with the check nor shown. No
@@ -20,6 +24,7 @@
 
 pub mod aws;
 pub mod azure;
+pub mod gcp;
 pub mod http;
 pub mod sensor;
 
@@ -35,12 +40,21 @@ pub use sensor::CloudSensor;
 pub const AWS: &str = "aws";
 /// The kind of Azure subscription checks.
 pub const AZURE: &str = "azure";
+/// The kind of Google Cloud project checks.
+pub const GCP: &str = "gcp";
 /// Every kind of this crate.
-pub const KINDS: [&str; 2] = [AWS, AZURE];
+pub const KINDS: [&str; 3] = [AWS, AZURE, GCP];
 /// Parameters that hold secrets.
 pub const SECRET_PARAMS: [&str; 1] = ["secret"];
 /// Parameters of the credentials, secret or not.
-pub const CREDENTIAL_PARAMS: [&str; 5] = ["key_id", "secret", "regions", "tenant", "subscription"];
+pub const CREDENTIAL_PARAMS: [&str; 6] = [
+    "key_id",
+    "secret",
+    "regions",
+    "tenant",
+    "subscription",
+    "project",
+];
 /// Most machines read per account.
 pub const MAX_VMS: usize = 2000;
 /// Most AWS regions per account.
@@ -79,6 +93,10 @@ pub enum Account {
         secret: String,
         subscription: String,
     },
+    Gcp {
+        key: gcp::Key,
+        project: String,
+    },
 }
 
 impl std::fmt::Debug for Account {
@@ -101,6 +119,11 @@ impl std::fmt::Debug for Account {
                 .field("tenant", tenant)
                 .field("client_id", client_id)
                 .field("subscription", subscription)
+                .finish_non_exhaustive(),
+            Self::Gcp { key, project } => f
+                .debug_struct("Gcp")
+                .field("email", &key.email)
+                .field("project", project)
                 .finish_non_exhaustive(),
         }
     }
@@ -135,6 +158,7 @@ pub fn parse(kind: &str, params: &BTreeMap<String, String>) -> Result<Target, St
     let allowed: &[&str] = match kind {
         AWS => &["key_id", "secret", "regions"],
         AZURE => &["tenant", "key_id", "secret", "subscription"],
+        GCP => &["key_id", "secret", "project"],
         _ => return Err(format!("`{}` is not a cloud kind", kind.escape_debug())),
     };
     if let Some(unknown) = params
@@ -185,6 +209,43 @@ pub fn parse(kind: &str, params: &BTreeMap<String, String>) -> Result<Target, St
                 secret: value("secret")?,
                 regions,
             }
+        }
+        GCP => {
+            let text = params
+                .get("secret")
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .ok_or("parameter `secret` is required")?;
+            let key = gcp::read_key(text).map_err(|e| format!("parameter `secret`: {e}"))?;
+            if let Some(given) = params
+                .get("key_id")
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            {
+                if !given.eq_ignore_ascii_case(&key.email) {
+                    return Err(
+                        "parameter `key_id` must be the key's service account (`client_email`)"
+                            .into(),
+                    );
+                }
+            }
+            let project = match params
+                .get("project")
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            {
+                Some(project) => project.to_owned(),
+                None => key
+                    .project
+                    .clone()
+                    .ok_or("parameter `project` is required")?,
+            };
+            if !gcp::valid_project(&project) {
+                return Err(
+                    "parameter `project` must be a project ID, like `my-project-123`".into(),
+                );
+            }
+            Account::Gcp { key, project }
         }
         _ => {
             let tenant = value("tenant")?.to_ascii_lowercase();
@@ -341,6 +402,43 @@ mod tests {
         ] {
             assert!(parse(AZURE, &bad).is_err(), "{bad:?}");
         }
-        assert!(parse("gcp", &BTreeMap::new()).is_err());
+        assert!(parse("oracle", &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn gcp_parameters_are_checked() {
+        let key = include_str!("../tests/fixtures/gcp_key.json");
+        let target = parse(GCP, &params(&[("secret", key)])).unwrap();
+        let Account::Gcp { key: read, project } = &target.account else {
+            panic!("{target:?}")
+        };
+        assert_eq!(project, "example-project");
+        assert_eq!(read.email, "reader@example-project.iam.gserviceaccount.com");
+        assert!(!format!("{target:?}").contains("PRIVATE"));
+        let other = parse(
+            GCP,
+            &params(&[
+                ("secret", key),
+                ("project", "another-project"),
+                ("key_id", "Reader@example-project.iam.gserviceaccount.com"),
+            ]),
+        )
+        .unwrap();
+        assert!(
+            matches!(other.account, Account::Gcp { ref project, .. } if project == "another-project")
+        );
+        for bad in [
+            params(&[("project", "example-project")]),
+            params(&[("secret", "{}")]),
+            params(&[("secret", key), ("project", "Bad/Project")]),
+            params(&[
+                ("secret", key),
+                ("key_id", "other@example-project.iam.gserviceaccount.com"),
+            ]),
+            params(&[("secret", key), ("regions", "x")]),
+        ] {
+            let error = parse(GCP, &bad).unwrap_err();
+            assert!(!error.contains("PRIVATE KEY"), "{error}");
+        }
     }
 }

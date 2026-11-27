@@ -76,9 +76,10 @@ pub struct DeviceRequest {
     /// `POST /api/devices/vmware/test`. Stored sealed, never returned.
     #[serde(default)]
     pub vmware: Option<vmware::CredentialsRequest>,
-    /// For a cloud account (ADR-0183): an AWS account or an Azure
-    /// subscription, read with read-only credentials. The device then
-    /// gets its `aws` or `azure` check every 5 minutes on the central
+    /// For a cloud account (ADR-0183): an AWS account, an Azure
+    /// subscription or a Google Cloud project, read with read-only
+    /// credentials. The device then gets its `aws`, `azure` or `gcp`
+    /// check every 5 minutes on the central
     /// server, which lists its virtual machines, with the alerts that
     /// come with it. Test them first with `POST /api/devices/cloud/test`.
     /// The secret is stored sealed, never returned. Not with `snmp`,
@@ -1041,7 +1042,8 @@ pub struct CloudTested {
     /// Machines the credentials see, and how many run.
     pub vms: u64,
     pub running: u64,
-    /// Whether metrics (CloudWatch, Azure Monitor) could be read; `null`
+    /// Whether metrics (CloudWatch, Azure Monitor, Cloud Monitoring) could
+    /// be read; `null`
     /// when there was nothing to ask.
     pub metrics: Option<bool>,
     /// Why metrics could not be read, or another call that failed

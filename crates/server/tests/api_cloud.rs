@@ -242,6 +242,51 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn google_cloud_projects_keep_their_key_sealed(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let paris = site(&pool, "paris").await;
+        let operator = session(&pool, "operator", Role::Operator, Some(paris)).await;
+        let viewer = session(&pool, "viewer", Role::Viewer, Some(paris)).await;
+        let key = include_str!("../../cloud/tests/fixtures/gcp_key.json");
+        let body = json!({"site_id": paris, "name": "GCP production", "cloud": {"provider": "gcp", "secret": key}});
+        let (status, device) = call(&pool, &operator, "POST", "/api/devices", Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "{device}");
+        assert_eq!(device["address"], "compute.googleapis.com");
+        let id = device["id"].as_str().unwrap().to_owned();
+        let (_, thresholds) = call(&pool, &viewer, "GET", &format!("/api/servers/{id}/thresholds"), None).await;
+        let metrics: Vec<&str> = thresholds["entries"].as_array().unwrap().iter().map(|t| t["metric"].as_str().unwrap()).collect();
+        assert_eq!(metrics, ["monitorflow_gcp_up"]);
+
+        let uri = format!("/api/devices/{id}/cloud");
+        let (status, view) = call(&pool, &viewer, "GET", &uri, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(view["key_id"], "reader@example-project.iam.gserviceaccount.com");
+        assert_eq!(view["project"], "example-project");
+        assert_eq!(view["secret_set"], true);
+        assert!(!view.to_string().contains("PRIVATE KEY"));
+        let stored: String = sqlx::query_scalar("SELECT secret FROM cloud_credentials").fetch_one(&pool).await.unwrap();
+        assert!(stored.starts_with("mfs1:") && !stored.contains("PRIVATE KEY"));
+        let audit: Vec<String> = sqlx::query_scalar("SELECT details::text FROM audit_log").fetch_all(&pool).await.unwrap();
+        assert!(!audit.is_empty() && audit.iter().all(|d| !d.contains("PRIVATE KEY")), "{audit:?}");
+
+        // Another project keeps the key; the store hands it to the check.
+        let (status, view) = call(&pool, &operator, "PUT", &uri, Some(json!({"project": "another-project"}))).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["project"], "another-project");
+        let sets = ProbeStore::new(pool.clone()).load().await.unwrap();
+        let check = sets["central"].checks.iter().find(|c| c.kind == "gcp").unwrap();
+        assert_eq!(check.config.params["project"], "another-project");
+        assert!(monitorflow_cloud::parse("gcp", &check.config.params).is_ok());
+        let (status, error) = call(&pool, &operator, "PUT", &uri,
+            Some(json!({"key_id": "other@example-project.iam.gserviceaccount.com"}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(error["error"].as_str().unwrap().contains("secret"), "{error}");
+        let (status, error) = call(&pool, &operator, "POST", "/api/devices",
+            Some(json!({"site_id": paris, "name": "bad", "cloud": {"provider": "gcp", "secret": "{}"}}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+    }
+
+    #[sqlx::test]
     async fn cloud_machines_join_the_inventory(pool: PgPool) {
         let paris = site(&pool, "paris").await;
         let viewer = session(&pool, "viewer", Role::Viewer, Some(paris)).await;
