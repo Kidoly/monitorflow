@@ -39301,10 +39301,12 @@
                 "example": {
                   "bytes_in": 412,
                   "bytes_out": 18734,
+                  "clipboard": false,
                   "close_reason": "closed by alice",
                   "closed_at": "2026-11-23T09:41:15Z",
                   "created_at": "2026-11-23T09:30:00Z",
                   "duration_seconds": 673,
+                  "file_transfer": false,
                   "hostname": "web-1",
                   "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
                   "kind": "terminal",
@@ -39519,7 +39521,7 @@
           "servers"
         ],
         "summary": "Get a remote session's recording",
-        "description": "What a recorded session printed, in order, each chunk with its time after the session opened: written into a terminal of the session's size, it shows what the person saw. Keystrokes are not kept apart: what the terminal echoed is in it, and what it did not, such as a password, is not.\n\n**Who**: administrators of the server's site. **Area**: `servers`. Audited as `remote_session.recording_read`.",
+        "description": "A terminal's: what it printed, in order, each chunk with its time after the session opened: written into a terminal of the session's size, it shows what the person saw. Keystrokes are not kept apart: what the terminal echoed is in it, and what it did not, such as a password, is not.\n\nA desktop's: the pictures of its screen in `frames`, `chunks` empty. The central server decodes the screen from the RDP it carries and keeps a picture at most once a second, of the part that changed, and of the whole screen at the start, when its size changes and once a minute while it changes. Get each with `GET /api/v1/remote-sessions/{id}/recording/frames/{seq}` and draw it at `x`, `y`: from a picture of the whole screen (`width` and `height` equal to `screen_width` and `screen_height`) on, they show what the screen showed. A desktop's recording stops at 256 MiB of pictures, and the session with it.\n\n**Who**: administrators of the server's site. **Area**: `servers`. Audited as `remote_session.recording_read`.",
         "operationId": "recording",
         "parameters": [
           {
@@ -39552,13 +39554,16 @@
                       "data": "dXB0aW1lDQogMDk6MzA6MDYgdXAgMyBkYXlzDQo="
                     }
                   ],
+                  "frames": [],
                   "session": {
                     "bytes_in": 412,
                     "bytes_out": 18734,
+                    "clipboard": false,
                     "close_reason": "closed by alice",
                     "closed_at": "2026-11-23T09:41:15Z",
                     "created_at": "2026-11-23T09:30:00Z",
                     "duration_seconds": 673,
+                    "file_transfer": false,
                     "hostname": "web-1",
                     "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
                     "kind": "terminal",
@@ -39642,13 +39647,125 @@
         }
       }
     },
+    "/api/v1/remote-sessions/{id}/recording/frames/{seq}": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Get a picture of a desktop's recording",
+        "description": "One picture of a recorded desktop's screen, as a PNG: the part `x`, `y`, `width`, `height` its entry in the recording's `frames` gives.\n\n**Who**: administrators of the server's site. **Area**: `servers`. Reading the recording is audited once, as `remote_session.recording_read`, not each picture.",
+        "operationId": "frame",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The session",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "description": "The picture's `seq`",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The picture",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "$ref": "#/components/schemas/Png"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator there: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session or picture, not recorded, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/remote-sessions/{id}/socket": {
       "get": {
         "tags": [
           "servers"
         ],
         "summary": "Open a remote session's WebSocket",
-        "description": "The session's terminal, as a WebSocket (`Upgrade: websocket`). No key or cookie is needed: the first message must be a text message with the session's one-time token and the terminal's size, `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`, within 10 seconds.\n\nThen, from the central server: text messages `{\"type\": \"waiting\"}` while the agent opens the terminal, `{\"type\": \"opened\"}` once it did, `{\"type\": \"closed\", \"reason\": \"…\"}` at the end; and binary messages with what the terminal prints. To it: binary messages with keystrokes, and text messages `{\"type\": \"resize\", \"cols\": 100, \"rows\": 30}` or `{\"type\": \"close\"}`. Messages are at most 64 KiB.\n\nThe session closes after the idle time of the settings without keystrokes, when the shell exits, when the agent's connection drops, and after 12 hours.\n\n**A desktop's WebSocket** (`kind` `desktop`) is IronRDP's RDCleanPath protocol instead, in binary messages only: the first is a DER `RDCleanPathPdu` request whose `proxy_auth` is the token and whose `x224_connection_pdu` is the client's X.224 connection request; its `destination` is ignored. The central server answers with the RDCleanPath response (the service's X.224 confirm and its TLS certificates, for network level authentication) or an error, then carries RDP both ways, the TLS with the host's service done on the central server's side. The WebSocket closes with why the session ended as its reason. The idle time counts from the last bytes the browser sent.",
+        "description": "The session's terminal, as a WebSocket (`Upgrade: websocket`). No key or cookie is needed: the first message must be a text message with the session's one-time token and the terminal's size, `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`, within 10 seconds.\n\nThen, from the central server: text messages `{\"type\": \"waiting\"}` while the agent opens the terminal, `{\"type\": \"opened\"}` once it did, `{\"type\": \"closed\", \"reason\": \"…\"}` at the end; and binary messages with what the terminal prints. To it: binary messages with keystrokes, and text messages `{\"type\": \"resize\", \"cols\": 100, \"rows\": 30}` or `{\"type\": \"close\"}`. Messages are at most 64 KiB.\n\nThe session closes after the idle time of the settings without keystrokes, when the shell exits, when the agent's connection drops, and after 12 hours.\n\n**A desktop's WebSocket** (`kind` `desktop`) is IronRDP's RDCleanPath protocol instead, in binary messages only: the first is a DER `RDCleanPathPdu` request whose `proxy_auth` is the token and whose `x224_connection_pdu` is the client's X.224 connection request; its `destination` is ignored. The central server answers with the RDCleanPath response (the service's X.224 confirm and its TLS certificates, for network level authentication) or an error, then carries RDP both ways, the TLS with the host's service done on the central server's side. The WebSocket closes with why the session ended as its reason. The idle time counts from the last bytes the browser sent. The central server passes whole RDP PDUs only, and drops what the session does not allow on the `cliprdr` channel (the clipboard, file contents) and, without file transfers, the `rdpdr` channel.",
         "operationId": "socket",
         "parameters": [
           {
@@ -44636,10 +44753,12 @@
                   {
                     "bytes_in": 412,
                     "bytes_out": 18734,
+                    "clipboard": false,
                     "close_reason": "closed by alice",
                     "closed_at": "2026-11-23T09:41:15Z",
                     "created_at": "2026-11-23T09:30:00Z",
                     "duration_seconds": 673,
+                    "file_transfer": false,
                     "hostname": "web-1",
                     "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
                     "kind": "terminal",
@@ -44727,7 +44846,7 @@
           "servers"
         ],
         "summary": "Start a remote terminal or desktop",
-        "description": "Starts a terminal on the server, through its agent's connection and its relay: no port to open and nothing to install. Answers the session and a one-time `token`, valid one minute: open the WebSocket at `socket` and send it first, with the terminal's size, as `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. Only then does the central server send the agent a signed `remote_session` command, which opens a login shell as the agent's own user, or on Linux as the account the host's administrator chose (`MF_REMOTE_TERMINAL_USER`); the central server cannot choose it.\n\nThe host must have allowed it: `command_kinds.remote_session` of the server is `accepted` where its administrator ran the installer with `MF_REMOTE_TERMINAL=1`, or `monitorflow-agent remote-access terminal on`. The central server cannot allow it by itself. While the session is open, people logged in on the server are told who opened it and whether it is recorded.\n\nWith `{\"kind\": \"desktop\"}`, on a Windows server, it is the host's own Remote Desktop service instead: the agent connects to `127.0.0.1:3389`, and to nothing else, and the WebSocket speaks the RDCleanPath protocol of IronRDP's web client, the `token` as its `proxy_auth` (see the socket). The host must have allowed desktops apart: `command_kinds.remote_desktop` is `accepted` where its administrator installed with `REMOTE_DESKTOP=1` or ran `monitorflow-agent.exe remote-access desktop on`. The person signs in to Windows as usual; MonitorFlow neither asks for nor keeps Windows passwords. Desktops are never recorded.\n\n**Who**: the role `GET /api/v1/settings/remote-access` names, or above, on the server's site. **Area**: `servers`. Audited as `remote_session.start`, then `remote_session.open` and `remote_session.close` with its duration. **Not safe to repeat**: each call starts another session.",
+        "description": "Starts a terminal on the server, through its agent's connection and its relay: no port to open and nothing to install. Answers the session and a one-time `token`, valid one minute: open the WebSocket at `socket` and send it first, with the terminal's size, as `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. Only then does the central server send the agent a signed `remote_session` command, which opens a login shell as the agent's own user, or on Linux as the account the host's administrator chose (`MF_REMOTE_TERMINAL_USER`); the central server cannot choose it.\n\nThe host must have allowed it: `command_kinds.remote_session` of the server is `accepted` where its administrator ran the installer with `MF_REMOTE_TERMINAL=1`, or `monitorflow-agent remote-access terminal on`. The central server cannot allow it by itself. While the session is open, people logged in on the server are told who opened it and whether it is recorded.\n\nWith `{\"kind\": \"desktop\"}`, on a Windows server, it is the host's own Remote Desktop service instead: the agent connects to `127.0.0.1:3389`, and to nothing else, and the WebSocket speaks the RDCleanPath protocol of IronRDP's web client, the `token` as its `proxy_auth` (see the socket). The host must have allowed desktops apart: `command_kinds.remote_desktop` is `accepted` where its administrator installed with `REMOTE_DESKTOP=1` or ran `monitorflow-agent.exe remote-access desktop on`. The person signs in to Windows as usual; MonitorFlow neither asks for nor keeps Windows passwords. Where `record` is on, the central server records the desktop's screen from the RDP it carries (see the recording). The session keeps whether its clipboard and its file transfers pass (`clipboard`, `file_transfer`), as the settings say when it starts; the central server lets through only that, and audits each copy as `remote_session.clipboard` and each file as `remote_session.file`, with their direction, kind or name and size, never what they hold.\n\n**Who**: the role `GET /api/v1/settings/remote-access` names, or above, on the server's site. **Area**: `servers`. Audited as `remote_session.start`, then `remote_session.open` and `remote_session.close` with its duration. **Not safe to repeat**: each call starts another session.",
         "operationId": "start",
         "parameters": [
           {
@@ -44777,10 +44896,12 @@
                   "session": {
                     "bytes_in": 0,
                     "bytes_out": 0,
+                    "clipboard": false,
                     "close_reason": null,
                     "closed_at": null,
                     "created_at": "2026-11-23T09:30:00Z",
                     "duration_seconds": null,
+                    "file_transfer": false,
                     "hostname": "web-1",
                     "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
                     "kind": "terminal",
@@ -49794,7 +49915,7 @@
           "settings"
         ],
         "summary": "Get the remote access settings",
-        "description": "Who may open remote terminals and desktops, whether terminals are recorded, when an idle session closes and how long recordings are kept. Each host must also allow terminals and desktops itself, each apart, which no setting here can change.\n\n**Who**: global administrators. **Area**: `administration`.",
+        "description": "Who may open remote terminals and desktops, whether they are recorded, when an idle session closes, how long recordings are kept, and whether desktops share the clipboard (`desktop_clipboard`, on by default) and copy files (`desktop_files`, off by default) with the browser, both ways. Each host must also allow terminals and desktops itself, each apart, which no setting here can change.\n\n**Who**: global administrators. **Area**: `administration`.",
         "operationId": "get_settings",
         "responses": {
           "200": {
@@ -49805,6 +49926,8 @@
                   "$ref": "#/components/schemas/RemoteAccessSettings"
                 },
                 "example": {
+                  "desktop_clipboard": true,
+                  "desktop_files": false,
                   "idle_timeout_minutes": 15,
                   "min_role": "administrator",
                   "record": true,
@@ -49888,7 +50011,7 @@
           "settings"
         ],
         "summary": "Change the remote access settings",
-        "description": "Replaces the settings. `min_role` is the lowest role, on a server's site, that may open a terminal or a desktop there: `operator`, `approver` or `administrator`; `null` lets nobody. New sessions follow the new values; open ones keep theirs.\n\n**Who**: global administrators. **Area**: `administration`. Audited as `settings.remote_access`.",
+        "description": "Replaces the settings. `min_role` is the lowest role, on a server's site, that may open a terminal or a desktop there: `operator`, `approver` or `administrator`; `null` lets nobody. `record` keeps what terminals print and the screen of desktops. `desktop_clipboard` and `desktop_files` take their defaults when left out. New sessions follow the new values; open ones keep theirs.\n\n**Who**: global administrators. **Area**: `administration`. Audited as `settings.remote_access`.",
         "operationId": "set_settings",
         "parameters": [
           {
@@ -49910,6 +50033,8 @@
                 "$ref": "#/components/schemas/RemoteAccessSettings"
               },
               "example": {
+                "desktop_clipboard": true,
+                "desktop_files": false,
                 "idle_timeout_minutes": 15,
                 "min_role": "administrator",
                 "record": true,
@@ -49928,6 +50053,8 @@
                   "$ref": "#/components/schemas/RemoteAccessSettings"
                 },
                 "example": {
+                  "desktop_clipboard": true,
+                  "desktop_files": false,
                   "idle_timeout_minutes": 15,
                   "min_role": "administrator",
                   "record": true,
@@ -62822,6 +62949,64 @@
           "network_device"
         ]
       },
+      "DesktopFrame": {
+        "type": "object",
+        "description": "One picture of a desktop's recording (ADR-0192).",
+        "required": [
+          "seq",
+          "at_ms",
+          "x",
+          "y",
+          "width",
+          "height",
+          "screen_width",
+          "screen_height",
+          "bytes"
+        ],
+        "properties": {
+          "at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds after the session opened."
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The size of its PNG, in bytes."
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "screen_height": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "screen_width": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The size of the whole screen when it was taken. A picture as large\nas it starts the screen again."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Its number, for `GET /api/v1/remote-sessions/{id}/recording/frames/{seq}`."
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "x": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The part of the screen the picture covers, in pixels."
+          },
+          "y": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "DetectRequest": {
         "type": "object",
         "description": "Body of `POST /api/devices/detect`.",
@@ -71935,6 +72120,11 @@
           }
         }
       },
+      "Png": {
+        "type": "string",
+        "format": "binary",
+        "description": "A PNG picture."
+      },
       "PreviewIncident": {
         "type": "object",
         "description": "An incident the rule would have opened.",
@@ -74953,6 +75143,14 @@
           "retention_days"
         ],
         "properties": {
+          "desktop_clipboard": {
+            "type": "boolean",
+            "description": "Whether desktops share the clipboard with the browser, both ways:\ntext, pictures and the rest but files. On when left out."
+          },
+          "desktop_files": {
+            "type": "boolean",
+            "description": "Whether files are copied between the browser and desktops, both\nways. Off when left out."
+          },
           "idle_timeout_minutes": {
             "type": "integer",
             "format": "int32",
@@ -74971,7 +75169,7 @@
           },
           "record": {
             "type": "boolean",
-            "description": "Whether what terminals print is kept, for replay by the site's\nadministrators. Desktops are never recorded."
+            "description": "Whether sessions are recorded, for replay by the site's\nadministrators: what terminals print, and the screen of desktops."
           },
           "retention_days": {
             "type": "integer",
@@ -74986,7 +75184,8 @@
         "description": "Answer of `GET /api/remote-sessions/{id}/recording`.",
         "required": [
           "session",
-          "chunks"
+          "chunks",
+          "frames"
         ],
         "properties": {
           "chunks": {
@@ -74994,7 +75193,14 @@
             "items": {
               "$ref": "#/components/schemas/RecordingChunk"
             },
-            "description": "In order; replaying them into a terminal of the session's size\nshows what it showed."
+            "description": "A terminal's, in order; replaying them into a terminal of the\nsession's size shows what it showed. Empty for a desktop."
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesktopFrame"
+            },
+            "description": "A desktop's pictures, in order; drawing each at its place, from a\npicture of the whole screen on, shows what the screen showed.\nEmpty for a terminal."
           },
           "session": {
             "$ref": "#/components/schemas/RemoteSession"
@@ -75013,7 +75219,9 @@
           "created_at",
           "recorded",
           "bytes_in",
-          "bytes_out"
+          "bytes_out",
+          "clipboard",
+          "file_transfer"
         ],
         "properties": {
           "bytes_in": {
@@ -75025,6 +75233,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Bytes the terminal printed, or the RDP service sent."
+          },
+          "clipboard": {
+            "type": "boolean",
+            "description": "A desktop's clipboard passes, as the settings said when it started\n(ADR-0192); always false for a terminal."
           },
           "close_reason": {
             "type": [
@@ -75052,6 +75264,10 @@
             ],
             "format": "int64",
             "description": "From opening to closing, or to now while open; `null` if it never\nopened."
+          },
+          "file_transfer": {
+            "type": "boolean",
+            "description": "A desktop's file transfers pass; always false for a terminal."
           },
           "hostname": {
             "type": "string"
@@ -75119,7 +75335,9 @@
           "can_open",
           "can_review",
           "recorded",
-          "idle_timeout_minutes"
+          "idle_timeout_minutes",
+          "desktop_clipboard",
+          "desktop_files"
         ],
         "properties": {
           "can_open": {
@@ -75130,13 +75348,21 @@
             "type": "boolean",
             "description": "Whether this person may see the past sessions of this server."
           },
+          "desktop_clipboard": {
+            "type": "boolean",
+            "description": "Whether new desktops share the clipboard (ADR-0192)."
+          },
+          "desktop_files": {
+            "type": "boolean",
+            "description": "Whether new desktops copy files."
+          },
           "idle_timeout_minutes": {
             "type": "integer",
             "format": "int32"
           },
           "recorded": {
             "type": "boolean",
-            "description": "Whether new terminals are recorded. Desktops never are."
+            "description": "Whether new terminals and desktops are recorded."
           }
         }
       },

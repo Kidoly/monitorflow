@@ -87,6 +87,9 @@ pub struct Attached {
     pub requested_by: Option<Uuid>,
     pub recorded: bool,
     pub idle_timeout_seconds: i32,
+    /// A desktop's clipboard and file transfers pass (ADR-0192).
+    pub clipboard: bool,
+    pub file_transfer: bool,
     #[sqlx(skip)]
     pub cols: u32,
     #[sqlx(skip)]
@@ -161,7 +164,8 @@ impl RemoteHub {
              WHERE r.id = $1 AND s.id = r.server_id AND r.token_sha256 = $2 AND r.kind = $3
                AND r.connected_at IS NULL AND r.closed_at IS NULL AND r.token_expires_at > now()
              RETURNING r.id, r.kind, r.server_id, s.peer_id, s.hostname, r.username,
-                       r.requested_by, r.recorded, r.idle_timeout_seconds",
+                       r.requested_by, r.recorded, r.idle_timeout_seconds,
+                       r.clipboard, r.file_transfer",
         )
         .bind(session)
         .bind(token_hash(token))
@@ -186,8 +190,10 @@ impl RemoteHub {
             bytes_in: 0,
             bytes_out: 0,
         };
+        // A desktop's output is TLS: its proxy records the screen
+        // (`super::rdp::recorder`).
         let mut recording = Recording {
-            on: attached.recorded,
+            on: attached.recorded && attached.is_terminal(),
             seq: 0,
             pending: Vec::new(),
             pending_at_ms: 0,
@@ -626,7 +632,7 @@ impl RemoteHub {
 }
 
 /// An audit entry of `attached`, as its user.
-async fn audit(
+pub(crate) async fn audit(
     tx: &mut sqlx::PgConnection,
     attached: &Attached,
     action: &str,

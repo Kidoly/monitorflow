@@ -307,9 +307,13 @@ export interface RemoteTerminalAccess {
   can_open: boolean;
   /** They may see the server's past sessions. */
   can_review: boolean;
-  /** New terminals are recorded; desktops never are. */
+  /** New terminals and desktops are recorded (ADR-0192). */
   recorded: boolean;
   idle_timeout_minutes: number;
+  /** New desktops share the clipboard with the browser (ADR-0192). */
+  desktop_clipboard: boolean;
+  /** New desktops copy files with the browser. */
+  desktop_files: boolean;
 }
 
 /** A remote terminal or desktop session (ADR-0190). */
@@ -330,6 +334,10 @@ export interface RemoteSession {
   recorded: boolean;
   bytes_in: number;
   bytes_out: number;
+  /** A desktop's clipboard passes, as the settings said when it started (ADR-0192). */
+  clipboard: boolean;
+  /** A desktop's file transfers pass. */
+  file_transfer: boolean;
 }
 
 /** Answer of `POST /api/servers/{id}/remote-sessions`. */
@@ -345,8 +353,25 @@ export interface RemoteSessionStart {
 /** What a recorded session printed. */
 export interface RemoteRecording {
   session: RemoteSession;
-  /** In order; `data` is base64. */
+  /** A terminal's, in order; `data` is base64. */
   chunks: { at_ms: number; data: string }[];
+  /** A desktop's pictures, in order (ADR-0192). */
+  frames: DesktopFrame[];
+}
+
+/** One picture of a desktop's recording: the part of the screen it covers (ADR-0192). */
+export interface DesktopFrame {
+  seq: number;
+  at_ms: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** The whole screen's size when it was taken. */
+  screen_width: number;
+  screen_height: number;
+  /** The size of its PNG. */
+  bytes: number;
 }
 
 /** `GET /api/settings/remote-access` (ADR-0190). */
@@ -356,6 +381,10 @@ export interface RemoteAccessSettings {
   record: boolean;
   idle_timeout_minutes: number;
   retention_days: number;
+  /** Desktops share the clipboard with the browser, both ways (ADR-0192). */
+  desktop_clipboard: boolean;
+  /** Desktops copy files with the browser, both ways. */
+  desktop_files: boolean;
 }
 
 /** An `ai_commands` command: who asked to turn AI commands on or off, and what came of it (ADR-0098). */
@@ -6553,6 +6582,22 @@ export const api = {
   /** What a recorded session printed; site administrators. */
   remoteRecording: (sessionId: string, signal?: AbortSignal) =>
     request<RemoteRecording>(`/api/remote-sessions/${encodeURIComponent(sessionId)}/recording`, { signal }),
+
+  /** One picture of a desktop's recording, a PNG. */
+  remoteDesktopFrame: async (sessionId: string, seq: number, signal?: AbortSignal): Promise<Blob> => {
+    let response: Response;
+    try {
+      response = await fetch(
+        `/api/remote-sessions/${encodeURIComponent(sessionId)}/recording/frames/${encodeURIComponent(seq)}`,
+        { credentials: "same-origin", signal },
+      );
+    } catch (cause) {
+      if (isAbortError(cause)) throw cause;
+      throw new ApiError(0, "network error", { cause });
+    }
+    if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+    return response.blob();
+  },
 
   remoteAccessSettings: (signal?: AbortSignal) =>
     request<RemoteAccessSettings>("/api/settings/remote-access", { signal }),

@@ -12,13 +12,18 @@ use super::remote_sessions;
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(start, list, detail, close, recording, socket, get_settings, set_settings),
-    components(schemas(ErrorBody)),
+    paths(start, list, detail, close, recording, frame, socket, get_settings, set_settings),
+    components(schemas(ErrorBody, Png)),
     modifiers(&Common),
 )]
 pub struct Doc;
 
 const SESSION: &str = "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e";
+
+/// A PNG picture.
+#[derive(utoipa::ToSchema)]
+#[schema(value_type = String, format = Binary)]
+struct Png(Vec<u8>);
 
 fn session() -> Value {
     json!({
@@ -26,13 +31,13 @@ fn session() -> Value {
         "requested_by": "alice", "created_at": "2026-11-23T09:30:00Z",
         "opened_at": "2026-11-23T09:30:02Z", "closed_at": "2026-11-23T09:41:15Z",
         "close_reason": "closed by alice", "duration_seconds": 673, "recorded": true,
-        "bytes_in": 412, "bytes_out": 18734
+        "bytes_in": 412, "bytes_out": 18734, "clipboard": false, "file_transfer": false
     })
 }
 
 fn settings() -> Value {
     json!({"min_role": "administrator", "record": true, "idle_timeout_minutes": 15,
-           "retention_days": 90})
+           "retention_days": 90, "desktop_clipboard": true, "desktop_files": false})
 }
 
 #[utoipa::path(post, path = "/api/v1/servers/{id}/remote-sessions", tag = "servers",
@@ -52,7 +57,11 @@ agent connects to `127.0.0.1:3389`, and to nothing else, and the WebSocket speak
 IronRDP's web client, the `token` as its `proxy_auth` (see the socket). The host must have allowed desktops \
 apart: `command_kinds.remote_desktop` is `accepted` where its administrator installed with \
 `REMOTE_DESKTOP=1` or ran `monitorflow-agent.exe remote-access desktop on`. The person signs in to Windows as \
-usual; MonitorFlow neither asks for nor keeps Windows passwords. Desktops are never recorded.\n\n\
+usual; MonitorFlow neither asks for nor keeps Windows passwords. Where `record` is on, the central server \
+records the desktop's screen from the RDP it carries (see the recording). The session keeps whether its \
+clipboard and its file transfers pass (`clipboard`, `file_transfer`), as the settings say when it starts; the \
+central server lets through only that, and audits each copy as `remote_session.clipboard` and each file as \
+`remote_session.file`, with their direction, kind or name and size, never what they hold.\n\n\
 **Who**: the role `GET /api/v1/settings/remote-access` names, or above, on the server's site. **Area**: \
 `servers`. Audited as `remote_session.start`, then `remote_session.open` and `remote_session.close` with \
 its duration. **Not safe to repeat**: each call starts another session.",
@@ -131,9 +140,15 @@ fn close() {}
 
 #[utoipa::path(get, path = "/api/v1/remote-sessions/{id}/recording", tag = "servers",
     summary = "Get a remote session's recording",
-    description = "What a recorded session printed, in order, each chunk with its time after the session \
+    description = "A terminal's: what it printed, in order, each chunk with its time after the session \
 opened: written into a terminal of the session's size, it shows what the person saw. Keystrokes are not \
 kept apart: what the terminal echoed is in it, and what it did not, such as a password, is not.\n\n\
+A desktop's: the pictures of its screen in `frames`, `chunks` empty. The central server decodes the screen \
+from the RDP it carries and keeps a picture at most once a second, of the part that changed, and of the \
+whole screen at the start, when its size changes and once a minute while it changes. Get each with \
+`GET /api/v1/remote-sessions/{id}/recording/frames/{seq}` and draw it at `x`, `y`: from a picture of the \
+whole screen (`width` and `height` equal to `screen_width` and `screen_height`) on, they show what the \
+screen showed. A desktop's recording stops at 256 MiB of pictures, and the session with it.\n\n\
 **Who**: administrators of the server's site. **Area**: `servers`. Audited as \
 `remote_session.recording_read`.",
     params(("id" = uuid::Uuid, Path, description = "The session")),
@@ -142,12 +157,28 @@ kept apart: what the terminal echoed is in it, and what it did not, such as a pa
             example = json!({"session": session(), "chunks": [
                 {"at_ms": 120, "data": "YWxpY2VAd2ViLTE6fiQg"},
                 {"at_ms": 4310, "data": "dXB0aW1lDQogMDk6MzA6MDYgdXAgMyBkYXlzDQo="}
-            ]})),
+            ], "frames": []})),
         (status = 403, description = "Not an administrator there: `forbidden`", body = ErrorBody),
         (status = 404, description = "No such session, not recorded, or outside the key's reach: \
 `not_found`", body = ErrorBody),
     ))]
 fn recording() {}
+
+#[utoipa::path(get, path = "/api/v1/remote-sessions/{id}/recording/frames/{seq}", tag = "servers",
+    summary = "Get a picture of a desktop's recording",
+    description = "One picture of a recorded desktop's screen, as a PNG: the part `x`, `y`, `width`, \
+`height` its entry in the recording's `frames` gives.\n\n\
+**Who**: administrators of the server's site. **Area**: `servers`. Reading the recording is audited once, \
+as `remote_session.recording_read`, not each picture.",
+    params(("id" = uuid::Uuid, Path, description = "The session"),
+           ("seq" = i32, Path, description = "The picture's `seq`")),
+    responses(
+        (status = 200, description = "The picture", content_type = "image/png", body = Png),
+        (status = 403, description = "Not an administrator there: `forbidden`", body = ErrorBody),
+        (status = 404, description = "No such session or picture, not recorded, or outside the key's \
+reach: `not_found`", body = ErrorBody),
+    ))]
+fn frame() {}
 
 #[utoipa::path(get, path = "/api/v1/remote-sessions/{id}/socket", tag = "servers",
     summary = "Open a remote session's WebSocket",
@@ -166,7 +197,9 @@ only: the first is a DER `RDCleanPathPdu` request whose `proxy_auth` is the toke
 server answers with the RDCleanPath response (the service's X.224 confirm and its TLS certificates, for \
 network level authentication) or an error, then carries RDP both ways, the TLS with the host's service done \
 on the central server's side. The WebSocket closes with why the session ended as its reason. The idle time \
-counts from the last bytes the browser sent.",
+counts from the last bytes the browser sent. The central server passes whole RDP PDUs only, and drops what the \
+session does not allow on the `cliprdr` channel (the clipboard, file contents) and, without file transfers, the \
+`rdpdr` channel.",
     params(("id" = uuid::Uuid, Path, description = "The session")),
     responses(
         (status = 101, description = "Switching to the WebSocket protocol"),
@@ -178,8 +211,10 @@ fn socket() {}
 
 #[utoipa::path(get, path = "/api/v1/settings/remote-access", tag = "settings",
     summary = "Get the remote access settings",
-    description = "Who may open remote terminals and desktops, whether terminals are recorded, when an \
-idle session closes and how long recordings are kept. Each host must also allow terminals and desktops \
+    description = "Who may open remote terminals and desktops, whether they are recorded, when an \
+idle session closes, how long recordings are kept, and whether desktops share the clipboard \
+(`desktop_clipboard`, on by default) and copy files (`desktop_files`, off by default) with the browser, both \
+ways. Each host must also allow terminals and desktops \
 itself, each apart, which no setting here can change.\n\n\
 **Who**: global administrators. **Area**: `administration`.",
     responses(
@@ -192,8 +227,9 @@ fn get_settings() {}
 #[utoipa::path(put, path = "/api/v1/settings/remote-access", tag = "settings",
     summary = "Change the remote access settings",
     description = "Replaces the settings. `min_role` is the lowest role, on a server's site, that may open \
-a terminal or a desktop there: `operator`, `approver` or `administrator`; `null` lets nobody. New sessions follow \
-the new values; open ones keep theirs.\n\n\
+a terminal or a desktop there: `operator`, `approver` or `administrator`; `null` lets nobody. `record` keeps \
+what terminals print and the screen of desktops. `desktop_clipboard` and `desktop_files` take their defaults when \
+left out. New sessions follow the new values; open ones keep theirs.\n\n\
 **Who**: global administrators. **Area**: `administration`. Audited as `settings.remote_access`.",
     request_body(content = remote_sessions::RemoteAccessSettings, example = json!(settings())),
     responses(

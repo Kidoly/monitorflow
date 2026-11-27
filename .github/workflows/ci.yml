@@ -157,6 +157,24 @@ jobs:
           name: monitorflow-agent-windows-x86_64-msi
           path: target/msi/*.msi
           if-no-files-found: error
+  # A remote desktop against a real Windows host (ADR-0192): this runner's
+  # own Remote Desktop, turned on for the test, reached through the agent's
+  # tunnel to 127.0.0.1:3389 by IronRDP's client, which signs in with
+  # network level authentication and waits for the first picture.
+  windows-remote-desktop:
+    runs-on: windows-latest
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: choco install protoc --no-progress -y
+      - run: cargo test -p monitorflow-agent --test desktop_rdp --no-run
+      - name: Open a remote desktop on this runner
+        shell: pwsh
+        run: deploy/windows/rdp-test.ps1
   web:
     runs-on: ubuntu-latest
     defaults:
