@@ -6,6 +6,8 @@
 // The real server only builds on Unix (ADR-0047).
 #![cfg(unix)]
 
+#[path = "support/rdp_client.rs"]
+mod rdp_client;
 mod support;
 
 use std::sync::{Arc, Mutex};
@@ -626,5 +628,140 @@ db_tests! {
         assert!(answer.error.is_some(), "{answer:?}");
         let reason = tokio::time::timeout(TIMEOUT, browser.task).await.unwrap().unwrap().unwrap();
         assert!(reason.contains("cannot reach the remote desktop service"), "{reason}");
+    }
+}
+
+/// A picture of a desktop's recording: its place, the screen's size and
+/// the PNG.
+type Picture = (i32, i32, i32, i32, i32, i32, Vec<u8>);
+
+/// A real RDP service through the proxy, as the web client reaches it:
+/// `MF_RDP_PORT` on loopback, with the account `rdp_client` reads.
+/// `MF_RDP_SAVE_TO` keeps the first whole picture there, to look at.
+#[sqlx::test(migrations = "../server/migrations")]
+#[ignore = "needs an RDP service on 127.0.0.1:MF_RDP_PORT, and DATABASE_URL"]
+async fn a_real_rdp_service_is_recorded_through_the_proxy(pool: PgPool) {
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], rdp_client::port()));
+    let allowed = Allowed {
+        terminal: false,
+        desktop: true,
+    };
+    let s = Setup::start_with(&pool, allowed, remote::desktop::connector(address)).await;
+    let id = s.session_of("desktop").await;
+    sqlx::query("UPDATE remote_sessions SET recorded = true WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (to_server, from_browser) = mpsc::channel::<Vec<u8>>(64);
+    let (to_browser, mut from_server) = mpsc::channel::<Vec<u8>>(64);
+    let (first_tx, first_rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
+    let hub = s.hub.clone();
+    let task = tokio::spawn(async move {
+        let first = first_rx.await.unwrap();
+        desktop::run(hub, id, &first, from_browser, to_browser).await
+    });
+    // The browser's WebSocket as a stream for the client: the proxy's
+    // first answer to the RDCleanPath request, then RDP both ways.
+    let (client, browser) = tokio::io::duplex(64 * 1024);
+    let (answer_tx, answer_rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
+    let (mut browser_read, mut browser_write) = tokio::io::split(browser);
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        let Some(answer) = from_server.recv().await else {
+            return;
+        };
+        let _ = answer_tx.send(answer);
+        while let Some(bytes) = from_server.recv().await {
+            if browser_write.write_all(&bytes).await.is_err() {
+                break;
+            }
+        }
+    });
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut buffer = vec![0u8; 16 * 1024];
+        while let Ok(n) = browser_read.read(&mut buffer).await {
+            if n == 0 || to_server.send(buffer[..n].to_vec()).await.is_err() {
+                break;
+            }
+        }
+    });
+    let request = |x224: Vec<u8>| async move {
+        let pdu = RDCleanPathPdu::new_request(x224, "web-01".into(), TOKEN.into(), None)
+            .unwrap()
+            .to_der()
+            .unwrap();
+        first_tx.send(pdu).unwrap();
+        let answer = answer_rx.await.map_err(|_| "the proxy closed".to_owned())?;
+        match RDCleanPathPdu::from_der(&answer).unwrap().into_enum() {
+            Ok(RDCleanPath::Response {
+                x224_connection_response,
+                server_cert_chain,
+                ..
+            }) => Ok((
+                x224_connection_response.as_bytes().to_vec(),
+                server_cert_chain[0].as_bytes().to_vec(),
+            )),
+            other => Err(format!("the proxy refused: {other:?}")),
+        }
+    };
+    let account = rdp_client::Account::from_env();
+    let screen = tokio::time::timeout(
+        rdp_client::TIMEOUT,
+        rdp_client::through_cleanpath(request, client, &account),
+    )
+    .await
+    .expect("the first picture within the time")
+    .expect("connected and drawn");
+    eprintln!(
+        "first picture: {} by {}, {} pixels lit",
+        screen.width, screen.height, screen.lit
+    );
+    // A second for the recorder's next picture, then the end.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    s.hub.close(id, "alice").await.unwrap();
+    let reason = tokio::time::timeout(TIMEOUT, task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(reason, "closed by alice");
+    let frames: Vec<Picture> = sqlx::query_as(
+        "SELECT x, y, width, height, screen_width, screen_height, image
+         FROM remote_desktop_frames WHERE session_id = $1 ORDER BY seq",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    for f in &frames {
+        eprintln!(
+            "picture at {},{} of {} by {} on {} by {}: {} bytes",
+            f.0,
+            f.1,
+            f.2,
+            f.3,
+            f.4,
+            f.5,
+            f.6.len()
+        );
+    }
+    let whole = frames
+        .iter()
+        .find(|f| f.0 == 0 && f.1 == 0 && (f.2, f.3) == (f.4, f.5));
+    let whole = whole.expect("a picture of the whole screen");
+    assert_eq!(
+        (whole.4, whole.5),
+        (i32::from(screen.width), i32::from(screen.height))
+    );
+    if let Ok(dir) = std::env::var("MF_RDP_SAVE_TO") {
+        let last = frames
+            .iter()
+            .rev()
+            .find(|f| f.0 == 0 && f.1 == 0 && (f.2, f.3) == (f.4, f.5))
+            .unwrap();
+        std::fs::write(std::path::Path::new(&dir).join("first.png"), &whole.6).unwrap();
+        std::fs::write(std::path::Path::new(&dir).join("last.png"), &last.6).unwrap();
     }
 }

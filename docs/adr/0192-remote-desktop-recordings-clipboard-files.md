@@ -1,7 +1,7 @@
 # ADR-0192: Remote desktops, the rest: recordings, clipboard and files
 
 Date: 2026-11-27
-Status: accepted; recordings implemented. Completes ADR-0190's "Still to come" for desktops.
+Status: accepted; recordings and the test against a real Windows host implemented. Completes ADR-0190's "Still to come" for desktops.
 
 ## Context
 
@@ -33,12 +33,19 @@ The proxy cuts each direction into whole PDUs (CredSSP messages, the Early User 
 
 **Replay.** `GET /api/v1/remote-sessions/{id}/recording` answers `frames`, each picture's place and size, beside the terminals' `chunks`; `GET /api/v1/remote-sessions/{id}/recording/frames/{seq}` answers one PNG, for the same people, its reading audited once with the recording. The page draws them on a canvas the width of the page, from the last whole picture before the position, with play, pause, a position and a speed (1×, 2×, 4×, 8×) on one line.
 
+### A real Windows host in CI
+
+The tests of ADR-0190 use a fake RDP service. A CI job, `windows-remote-desktop`, runs against a real one: GitHub's `windows-latest` runner, whose own Remote Desktop `deploy/windows/rdp-test.ps1` turns on, with network level authentication required as on a server's default, and a local account it makes for the test, in Remote Desktop Users only, its random password masked in the log and the account removed after. No self-hosted runner, nothing reachable from outside: the test stays on the runner's loopback.
+
+`crates/agent/tests/desktop_rdp.rs` opens a desktop as the agent does, with the agent's own `RemoteSessionHandler` and its connection to `127.0.0.1:3389`, sealed frames and window included, and plays the central server's part with IronRDP's client crates (`ironrdp-connector` 0.12, `ironrdp-tokio`, `ironrdp-session`, test dependencies only): X.224, TLS, CredSSP with the local account, the connection sequence, then pictures until at least 1% of the screen is drawn. The central server does not build on Windows (ADR-0047), so its proxy is not in that test; `crates/agent/tests/remote.rs` has the same client through the proxy, with recording on, for a real RDP service on Linux (an xrdp container, run by hand), ignored by default.
+
 ### Rejected
 
 - **Recording in the browser** (the canvas, or a `MediaRecorder` upload): made by the person recorded, who can stop it or send something else.
 - **Keeping the RDP stream for replay**: needs an RDP decoder in the browser that starts without a connection, decodes at every replay, and is larger than pictures for a busy screen.
 - **Video (H.264, VP9, WebM)**: a native encoder on the central server, and blurred text.
 - **A setting of its own for recording desktops**: one `record` for both kinds, as ADR-0190 keeps one setting for who may reach a server.
+- **A self-hosted Windows runner, or a Windows VM in a Linux job**: a machine to keep, or nested virtualization the hosted runners do not offer; the hosted Windows runner has Remote Desktop, off.
 
 ## Consequences
 

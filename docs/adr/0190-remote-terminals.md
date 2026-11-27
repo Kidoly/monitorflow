@@ -120,5 +120,5 @@ The service's certificate is not checked against an authority: Windows makes its
 - A session waits for the agent's command queue: a terminal asked while a long command runs, an update for example, opens when it ends, or fails after two minutes.
 - `servers.command_kinds` gains `remote_desktop`. Windows agents older than it show the tab with "cannot open remote desktops yet"; they update by themselves. Linux agents report it unsupported.
 - Administrators reach a Windows server's desktop from its page without opening port 3389 anywhere, with a client of a few MB loaded only on that tab, and nothing to run on the central server besides itself.
-- Still to come: the clipboard and file transfers of IronRDP's client, Windows terminals as another account, and a check against a real Windows host in CI (the tests use a fake RDP service, TLS included). Recording desktops came with ADR-0192.
+- Still to come: the clipboard and file transfers of IronRDP's client, and Windows terminals as another account. Recording desktops and a test against a real Windows host in CI came with ADR-0192.
 - Migrations: `20261220000000_remote_sessions` (the settings, the sessions and their recordings), `20270104000000_remote_desktop` (the kind `desktop`, never recorded).

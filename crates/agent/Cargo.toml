@@ -67,6 +67,15 @@ tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 pem.workspace = true
 uuid.workspace = true
+# The test against a real RDP service (tests/desktop_rdp.rs, ADR-0192).
+ironrdp-connector.workspace = true
+ironrdp-tokio.workspace = true
+ironrdp-session.workspace = true
+ironrdp-pdu.workspace = true
+ironrdp-core.workspace = true
+ironrdp-graphics.workspace = true
+x509-parser.workspace = true
+tokio-rustls.workspace = true
 
 # The integration tests run a real server, which only builds on Unix.
 [target.'cfg(unix)'.dev-dependencies]
@@ -74,5 +83,3 @@ monitorflow-server = { path = "../server" }
 sqlx.workspace = true
 # For the fake VictoriaMetrics shared with the server's tests.
 axum.workspace = true
-# The fake RDP service of the remote desktop test speaks TLS.
-tokio-rustls.workspace = true
