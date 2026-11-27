@@ -190,7 +190,13 @@ fn answers_out_of_bounds_are_refused() {
 
 #[test]
 fn the_login_and_its_password() {
-    let login = login7("db.example.com", "monitorflow", "a");
+    let login = login7(&Login7 {
+        version: TDS_74,
+        server: "db.example.com",
+        user: "monitorflow",
+        password: "a",
+        sspi: None,
+    });
     let length = u32::from_le_bytes([login[0], login[1], login[2], login[3]]) as usize;
     assert_eq!(length, login.len());
     assert_eq!(&login[4..8], &TDS_74.to_le_bytes());
@@ -206,6 +212,62 @@ fn the_login_and_its_password() {
     assert_eq!(field(2), &[0xB3, 0xA5]);
     assert_eq!(field(4), utf16("db.example.com").as_slice());
     assert_eq!(field(8), utf16("master").as_slice());
+    // No integrated security, no SSPI.
+    assert_eq!(login[25] & 0x80, 0);
+    assert_eq!(&login[80..82], &[0; 2]);
+}
+
+/// A Windows sign-in: no user nor password, integrated security on, the
+/// first SSPI token in the login, and the instance after the host.
+#[test]
+fn a_windows_login_carries_its_token() {
+    let token = [0x4E, 0x54, 0x4C, 0x4D, 0x53, 0x53, 0x50, 0];
+    let login = login7(&Login7 {
+        version: TDS_80,
+        server: "db.example.com\\SALES",
+        user: "",
+        password: "",
+        sspi: Some(&token),
+    });
+    assert_eq!(&login[4..8], &TDS_80.to_le_bytes());
+    assert_eq!(login[25] & 0x80, 0x80);
+    let word = |at: usize| usize::from(u16::from_le_bytes([login[at], login[at + 1]]));
+    // User and password: empty.
+    assert_eq!(word(42), 0);
+    assert_eq!(word(46), 0);
+    assert_eq!(
+        &login[word(52)..word(52) + word(54) * 2],
+        utf16("db.example.com\\SALES").as_slice()
+    );
+    // SSPI, its length in bytes, after the client ID.
+    let (offset, length) = (word(78), word(80));
+    assert_eq!(&login[offset..offset + length], &token);
+    assert_eq!(&login[90..94], &[0; 4]);
+    // A token too long for two bytes: its length in the long field.
+    let long = vec![7u8; 70_000];
+    let login = login7(&Login7 {
+        version: TDS_74,
+        server: "db",
+        user: "",
+        password: "",
+        sspi: Some(&long),
+    });
+    assert_eq!(u16::from_le_bytes([login[80], login[81]]), 0xFFFF);
+    assert_eq!(
+        u32::from_le_bytes([login[90], login[91], login[92], login[93]]),
+        70_000
+    );
+}
+
+#[test]
+fn the_server_s_sspi_token_is_kept() {
+    let mut challenge = Tokens::default();
+    challenge.0.push(0xED);
+    challenge.0.extend_from_slice(&3u16.to_le_bytes());
+    challenge.0.extend_from_slice(b"abc");
+    let answer = parse_tokens(&challenge.0).unwrap();
+    assert_eq!(answer.sspi.as_deref(), Some(&b"abc"[..]));
+    assert!(!answer.logged_in);
 }
 
 #[tokio::test]
@@ -222,6 +284,12 @@ async fn messages_are_cut_into_packets() {
     let second = &packets[4096..];
     assert_eq!(&second[..2], &[packet::SQL_BATCH, 1]);
     assert_eq!(second[6], 2);
+    // Nothing to send is still a packet.
+    let mut packets = Vec::new();
+    send(&mut packets, packet::SSPI, &[], &mut id)
+        .await
+        .unwrap();
+    assert_eq!(packets, [packet::SSPI, 1, 0, 8, 0, 0, 3, 0]);
 }
 
 /// The server end of a session: reads one message, answers with
@@ -243,6 +311,7 @@ fn prelogin_answer(encryption: u8) -> Vec<u8> {
 fn plain() -> Login<'static> {
     Login {
         host: "127.0.0.1",
+        instance: None,
         user: "monitorflow",
         password: "pw",
         encryption: Encryption::Off,
@@ -254,7 +323,7 @@ fn plain() -> Login<'static> {
 async fn a_session_without_encryption() {
     let (client, mut server) = tokio::io::duplex(64 * 1024);
     let task = tokio::spawn(async move {
-        let mut client = Client::over(client, &plain()).await?;
+        let mut client = Client::over(client, &plain(), None).await?;
         let rows = client.query("SELECT 1").await?;
         client.close().await;
         Ok::<_, TdsError>(rows)
@@ -279,7 +348,7 @@ async fn a_session_without_encryption() {
 #[tokio::test]
 async fn a_refused_login_says_so() {
     let (client, mut server) = tokio::io::duplex(64 * 1024);
-    let task = tokio::spawn(async move { Client::over(client, &plain()).await.map(|_| ()) });
+    let task = tokio::spawn(async move { Client::over(client, &plain(), None).await.map(|_| ()) });
     exchange(&mut server, 0x04, &prelogin_answer(encrypt::NOT_SUP)).await;
     let refused = Tokens::default()
         .message(0xAA, 18456, "Login failed for user 'monitorflow'.")
@@ -299,13 +368,13 @@ async fn encryption_is_never_dropped_silently() {
         encryption: Encryption::Unverified,
         ..plain()
     };
-    let task = tokio::spawn(async move { Client::over(client, &login).await.map(|_| ()) });
+    let task = tokio::spawn(async move { Client::over(client, &login, None).await.map(|_| ()) });
     let request = exchange(&mut server, 0x04, &prelogin_answer(encrypt::NOT_SUP)).await;
     assert_eq!(parse_prelogin(&request).unwrap().encryption, encrypt::ON);
     assert!(matches!(task.await.unwrap(), Err(TdsError::Tls(_))));
     // Required by the server and turned off by the check.
     let (client, mut server) = tokio::io::duplex(64 * 1024);
-    let task = tokio::spawn(async move { Client::over(client, &plain()).await.map(|_| ()) });
+    let task = tokio::spawn(async move { Client::over(client, &plain(), None).await.map(|_| ()) });
     exchange(&mut server, 0x04, &prelogin_answer(encrypt::REQ)).await;
     let error = task.await.unwrap().unwrap_err();
     assert!(error.to_string().contains("requires encryption"), "{error}");
@@ -348,4 +417,196 @@ async fn the_handshake_travels_in_prelogin_packets() {
     let mut raw = [0u8; 3];
     far.read_exact(&mut raw).await.unwrap();
     assert_eq!(&raw, b"raw");
+}
+
+/// Tokens SSPI would give, and the server's it was given.
+struct FakeSspi {
+    out: Vec<Vec<u8>>,
+    seen: Vec<Option<Vec<u8>>>,
+}
+
+#[async_trait::async_trait]
+impl sspi::Sspi for FakeSspi {
+    async fn step(&mut self, challenge: Option<Vec<u8>>) -> Result<Vec<u8>, TdsError> {
+        self.seen.push(challenge);
+        Ok(self.out.remove(0))
+    }
+}
+
+fn sspi_token(bytes: &[u8]) -> Tokens {
+    let mut tokens = Tokens::default();
+    tokens.0.push(0xED);
+    tokens
+        .0
+        .extend_from_slice(&u16::try_from(bytes.len()).unwrap().to_le_bytes());
+    tokens.0.extend_from_slice(bytes);
+    tokens
+}
+
+/// NTLM's three messages: the first in the login, the server's
+/// challenge back, the answer in an SSPI packet, then the login's
+/// acknowledgement.
+#[tokio::test]
+async fn a_windows_sign_in_exchanges_tokens() {
+    let (client, mut server) = tokio::io::duplex(64 * 1024);
+    let task = tokio::spawn(async move {
+        let mut fake = FakeSspi {
+            out: vec![b"negotiate".to_vec(), b"authenticate".to_vec()],
+            seen: Vec::new(),
+        };
+        let login = Login {
+            user: "",
+            password: "",
+            instance: Some("SALES"),
+            ..plain()
+        };
+        let client = Client::over(client, &login, Some(&mut fake)).await?;
+        client.close().await;
+        Ok::<_, TdsError>(fake.seen)
+    });
+    exchange(&mut server, 0x04, &prelogin_answer(encrypt::NOT_SUP)).await;
+    let login = exchange(&mut server, 0x04, &sspi_token(b"challenge").0).await;
+    assert_eq!(login[25] & 0x80, 0x80);
+    let word = |at: usize| usize::from(u16::from_le_bytes([login[at], login[at + 1]]));
+    assert_eq!(&login[word(78)..word(78) + word(80)], b"negotiate");
+    assert_eq!(
+        &login[word(52)..word(52) + word(54) * 2],
+        utf16("127.0.0.1\\SALES").as_slice()
+    );
+    // The answer comes in a packet of type SSPI.
+    let mut head = [0u8; HEADER];
+    server.read_exact(&mut head).await.unwrap();
+    assert_eq!(head[0], packet::SSPI);
+    let mut body = vec![0u8; usize::from(u16::from_be_bytes([head[2], head[3]])) - HEADER];
+    server.read_exact(&mut body).await.unwrap();
+    assert_eq!(body, b"authenticate");
+    let mut id = 1;
+    let ack = Tokens::default().login_ack().done();
+    send(&mut server, 0x04, &ack.0, &mut id).await.unwrap();
+    let seen = task.await.unwrap().unwrap();
+    assert_eq!(seen, vec![None, Some(b"challenge".to_vec())]);
+}
+
+/// A server that keeps asking is given up on, not answered forever.
+#[tokio::test]
+async fn an_endless_sign_in_ends() {
+    let (client, mut server) = tokio::io::duplex(64 * 1024);
+    let task = tokio::spawn(async move {
+        let mut fake = FakeSspi {
+            out: vec![Vec::new(); MAX_SSPI_ROUNDS + 1],
+            seen: Vec::new(),
+        };
+        Client::over(client, &plain(), Some(&mut fake))
+            .await
+            .map(|_| ())
+    });
+    exchange(&mut server, 0x04, &prelogin_answer(encrypt::NOT_SUP)).await;
+    for _ in 0..MAX_SSPI_ROUNDS {
+        exchange(&mut server, 0x04, &sspi_token(b"again").0).await;
+    }
+    let error = task.await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("did not end"), "{error}");
+}
+
+/// A server's TLS settings, its certificate issued by a CA of the test's
+/// own for `localhost`, and the roots that trust it.
+fn tls_server(alpn: &[&[u8]]) -> (tokio_rustls::TlsAcceptor, Arc<RootCertStore>) {
+    use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
+    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+    let mut ca = CertificateParams::default();
+    ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let ca = CertifiedIssuer::self_signed(ca, KeyPair::generate().unwrap()).unwrap();
+    let key = KeyPair::generate().unwrap();
+    let leaf = CertificateParams::new(vec!["localhost".to_owned()])
+        .unwrap()
+        .signed_by(&key, &ca)
+        .unwrap();
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+    let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(vec![leaf.der().clone()], key)
+    .unwrap();
+    config.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
+    let mut roots = RootCertStore::empty();
+    roots.add(ca.der().clone()).unwrap();
+    (
+        tokio_rustls::TlsAcceptor::from(Arc::new(config)),
+        Arc::new(roots),
+    )
+}
+
+fn strict(roots: Arc<RootCertStore>) -> Login<'static> {
+    Login {
+        host: "localhost",
+        encryption: Encryption::Strict,
+        roots: Some(roots),
+        ..plain()
+    }
+}
+
+/// TDS 8.0: TLS first with `tds/8.0`, then the pre-login and the login,
+/// version 8.0, inside it.
+#[tokio::test]
+async fn a_strict_session_starts_with_tls() {
+    let (acceptor, roots) = tls_server(&[ALPN_TDS_80]);
+    let (client, server) = tokio::io::duplex(64 * 1024);
+    let task = tokio::spawn(async move {
+        let mut client = Client::over(client, &strict(roots), None).await?;
+        let rows = client.query("SELECT 1").await?;
+        client.close().await;
+        Ok::<_, TdsError>(rows)
+    });
+    let mut tls = acceptor.accept(server).await.unwrap();
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(ALPN_TDS_80));
+    let request = read_message(&mut tls).await.unwrap();
+    assert_eq!(
+        parse_prelogin(&request).unwrap().encryption,
+        encrypt::STRICT
+    );
+    let mut id = 1;
+    send(&mut tls, 0x04, &prelogin_answer(encrypt::REQ), &mut id)
+        .await
+        .unwrap();
+    let login = read_message(&mut tls).await.unwrap();
+    assert_eq!(&login[4..8], &TDS_80.to_le_bytes());
+    let ack = Tokens::default().login_ack().done();
+    send(&mut tls, 0x04, &ack.0, &mut id).await.unwrap();
+    read_message(&mut tls).await.unwrap();
+    let rows = Tokens::default()
+        .columns(&[INT8])
+        .row(&[&1i64.to_le_bytes()])
+        .done();
+    send(&mut tls, 0x04, &rows.0, &mut id).await.unwrap();
+    assert_eq!(task.await.unwrap().unwrap(), vec![vec![Value::Int(1)]]);
+}
+
+/// A strict session never accepts a certificate its roots do not vouch
+/// for, nor a server that does not speak TLS first.
+#[tokio::test]
+async fn a_strict_session_verifies_the_server() {
+    let (acceptor, _) = tls_server(&[ALPN_TDS_80]);
+    let (_, other_roots) = tls_server(&[]);
+    let (client, server) = tokio::io::duplex(64 * 1024);
+    let task = tokio::spawn(async move {
+        Client::over(client, &strict(other_roots), None)
+            .await
+            .map(|_| ())
+    });
+    let _ = acceptor.accept(server).await;
+    assert!(matches!(task.await.unwrap(), Err(TdsError::Tls(_))));
+
+    // A TDS 7 server reads the client hello as a pre-login and fails.
+    let (_, roots) = tls_server(&[]);
+    let (client, mut server) = tokio::io::duplex(64 * 1024);
+    let task =
+        tokio::spawn(async move { Client::over(client, &strict(roots), None).await.map(|_| ()) });
+    let mut hello = [0u8; 5];
+    server.read_exact(&mut hello).await.unwrap();
+    assert_eq!(hello[0], 0x16, "a TLS handshake record first");
+    drop(server);
+    assert!(matches!(task.await.unwrap(), Err(TdsError::Tls(_))));
 }

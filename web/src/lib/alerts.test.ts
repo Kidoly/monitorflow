@@ -164,8 +164,19 @@ describe("adding a check", () => {
     expect(checkRequests(mssql, { ...mssqlValues, password: "pw" }, 60_000).sensor).toMatchObject({
       kind: "mssql",
       default_alerts: true,
-      params: { host: "127.0.0.1", port: "1433", user: "monitorflow", password: "pw", tls: "prefer" },
+      params: { host: "127.0.0.1", auth: "sql", password: "pw", tls: "prefer" },
     });
+    // A named instance's port from SQL Server Browser, as the agent's
+    // Windows account, with strict encryption (ADR-0183).
+    const named = checkRequests(mssql, { ...mssqlValues, instance: "SALES", auth: "windows", tls: "strict" }, 60_000).sensor;
+    expect(named.params).toEqual({ host: "127.0.0.1", instance: "SALES", auth: "windows", tls: "strict" });
+    expect(mssql.fields.find((f) => f.key === "tls")!.options!.map((o) => o.value)).toEqual(["prefer", "verify", "strict", "off"]);
+    const auth = (os: string) => checkTypesFor(os).find((t) => t.kind === "mssql")!.fields.find((f) => f.key === "auth")!;
+    expect(auth("windows").options!.map((o) => o.value)).toEqual(["sql", "windows"]);
+    expect(auth("debian").options!.map((o) => o.value)).toEqual(["sql"]);
+    // A device's check runs from a probe, which cannot sign in to Windows.
+    expect(DEVICE_CHECK_TYPES.find((t) => t.kind === "mssql")!.fields.map((f) => f.key)).not.toContain("auth");
+    expect(checkErrors(mssql, { ...mssqlValues, port: "0" })).toHaveProperty("port");
   });
 
   it("reads a JVM through Jolokia, with its template's alerts", () => {

@@ -122,8 +122,11 @@ jobs:
         run: rustup toolchain install && rustc --version
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: choco install protoc --no-progress -y
-      - run: cargo clippy -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common --all-targets -- -D warnings
+      - run: cargo clippy -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common -p monitorflow-apps --all-targets -- -D warnings
       - run: cargo test --no-fail-fast -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common
+      # SQL Server's Windows sign-in through SSPI against Windows's own
+      # server side, the TDS client and the check's parameters (ADR-0183).
+      - run: cargo test --no-fail-fast -p monitorflow-apps --lib -- tds:: sql_server windows_accounts an_instance
       - run: cargo build --release -p monitorflow-agent
       # The MSI package (ADR-0050), and a second one with a higher version
       # to test upgrades; the smoke test installs, upgrades and removes

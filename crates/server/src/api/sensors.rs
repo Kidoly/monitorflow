@@ -77,8 +77,13 @@ pub struct EntryRequest {
     /// (`127.0.0.1` from the agent; the device's address from a probe),
     /// `port`, `user` and `password` (kept sealed as above), and `tls`
     /// (`prefer`, `verify` or `off`): `postgresql` also `database` and
-    /// `slow_after`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server)
-    /// and `redis` nothing more.
+    /// `slow_after`, `mysql` (MySQL and MariaDB) and `redis` nothing
+    /// more. `mssql` (SQL Server) also takes `instance` (a named
+    /// instance, its port from SQL Server Browser unless `port` is
+    /// given), `auth` (`sql`, or `windows` for a Windows account through
+    /// SSPI, on the server's Windows agent only: `user` then empty for
+    /// the agent's own account, or `DOMAIN\name` with its `password`),
+    /// and `tls` `strict` (TDS 8.0).
     /// `jmx` (a Java virtual machine through Jolokia) takes `tls` `off` or
     /// `verify` only, its password over HTTPS or to the loopback only, and
     /// also `path` (`/jolokia/`) and `groups` (`tomcat`, `kafka`, `none`).
@@ -895,6 +900,15 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
             "the central server and relays run {} checks, not `{}`",
             PROBE_KINDS_TEXT, valid.kind
         )));
+    }
+    // SSPI is Windows's: only the Windows agent signs in with an account
+    // of the domain (ADR-0183).
+    if valid.kind == monitorflow_apps::MSSQL
+        && valid.params.get("auth").and_then(Value::as_str) == Some("windows")
+    {
+        return Err(ApiError::Invalid(
+            "a SQL Server check signing in with a Windows account (`auth` `windows`) runs on the server's Windows agent: leave `probe` unset".into(),
+        ));
     }
     if crate::cloud::is_kind(&valid.kind) && (by.probe != Some("central") || by.address.is_none()) {
         return Err(ApiError::Invalid(

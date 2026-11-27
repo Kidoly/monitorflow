@@ -77,7 +77,7 @@ impl Postgresql {
             .ssl_mode(match t.tls {
                 Tls::Off => PgSslMode::Disable,
                 Tls::Prefer => PgSslMode::Prefer,
-                Tls::Verify => PgSslMode::VerifyFull,
+                Tls::Verify | Tls::Strict => PgSslMode::VerifyFull,
             })
             .disable_statement_logging();
         if let Some(user) = &t.user {

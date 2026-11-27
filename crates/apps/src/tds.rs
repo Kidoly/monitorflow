@@ -1,7 +1,9 @@
-//! The little of TDS 7.4 (MS-TDS, SQL Server's protocol) a check needs:
-//! the pre-login and its encryption, a SQL Server login, batches of one
-//! `SELECT` each, and the columns of the types the check's own queries
-//! return, every message bounded.
+//! The little of TDS 7.4 and 8.0 (MS-TDS, SQL Server's protocol) a check
+//! needs: the pre-login and its encryption, a SQL Server login or a
+//! Windows one through SSPI ([`sspi`]), batches of one `SELECT` each, and
+//! the columns of the types the check's own queries return, every
+//! message bounded. [`browser`] asks SQL Server Browser for a named
+//! instance's port.
 //!
 //! Written here rather than taken from a client crate, as Redis's is:
 //! `tiberius`, the Rust client, builds its rustls backend on aws-lc-rs,
@@ -11,6 +13,11 @@
 //! packets, then TLS carries every packet after it. The check asks for
 //! encryption of the whole session (`ENCRYPT_ON`) or none
 //! (`ENCRYPT_NOT_SUP`), never the mode that encrypts the login only.
+//! With TDS 8.0's strict encryption, TLS comes first, as for HTTPS, with
+//! `tds/8.0` as its ALPN protocol, and the pre-login goes inside it.
+
+pub mod browser;
+pub mod sspi;
 
 use std::io;
 use std::pin::Pin;
@@ -34,10 +41,18 @@ const HEADER: usize = 8;
 
 /// TDS 7.4, SQL Server 2012 and later.
 const TDS_74: u32 = 0x7400_0004;
+/// TDS 8.0, sent in the login of a strict session.
+const TDS_80: u32 = 0x0800_0000;
+/// The ALPN protocol of a strict session.
+const ALPN_TDS_80: &[u8] = b"tds/8.0";
+/// Rounds of an SSPI exchange before the login is given up: NTLM takes
+/// two, Kerberos one or two.
+const MAX_SSPI_ROUNDS: usize = 8;
 
 mod packet {
     pub const SQL_BATCH: u8 = 0x01;
     pub const LOGIN7: u8 = 0x10;
+    pub const SSPI: u8 = 0x11;
     pub const PRELOGIN: u8 = 0x12;
 }
 
@@ -45,6 +60,8 @@ mod encrypt {
     pub const ON: u8 = 0x01;
     pub const NOT_SUP: u8 = 0x02;
     pub const REQ: u8 = 0x03;
+    /// What a strict session's pre-login says, inside TLS.
+    pub const STRICT: u8 = 0x08;
 }
 
 /// How the session is encrypted.
@@ -57,6 +74,9 @@ pub enum Encryption {
     Unverified,
     /// Encrypted, the certificate verified against `roots` and the name.
     Verified,
+    /// TDS 8.0's strict encryption: TLS before anything else, the
+    /// certificate verified against `roots` and the name.
+    Strict,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -70,6 +90,12 @@ pub enum TdsError {
     /// An error the server sent, with its number.
     #[error("{message} (error {number})")]
     Server { number: i32, message: String },
+    /// Windows refused to sign in, or SSPI is not there.
+    #[error("{0}")]
+    Sspi(String),
+    /// SQL Server Browser did not give the instance's port.
+    #[error("{0}")]
+    Browser(String),
 }
 
 fn protocol(text: impl Into<String>) -> TdsError {
@@ -129,6 +155,9 @@ impl std::fmt::Debug for Client {
 /// Where and as whom to log in.
 pub struct Login<'a> {
     pub host: &'a str,
+    /// A named instance, which the login names after the host.
+    pub instance: Option<&'a str>,
+    /// A SQL Server login; empty with Windows sign-in.
     pub user: &'a str,
     pub password: &'a str,
     pub encryption: Encryption,
@@ -136,18 +165,40 @@ pub struct Login<'a> {
 }
 
 impl Client {
-    /// Connects to `host:port` and logs in.
-    pub async fn connect(port: u16, login: &Login<'_>) -> Result<Self, TdsError> {
+    /// Connects to `host:port` and logs in, with Windows sign-in when
+    /// `sspi` is given.
+    pub async fn connect(
+        port: u16,
+        login: &Login<'_>,
+        sspi: Option<&mut dyn sspi::Sspi>,
+    ) -> Result<Self, TdsError> {
         let tcp = TcpStream::connect((login.host, port)).await?;
         let _ = tcp.set_nodelay(true);
-        Self::over(tcp, login).await
+        Self::over(tcp, login, sspi).await
     }
 
     /// Logs in over `stream`: pre-login, TLS when asked, login.
-    pub(crate) async fn over<S>(stream: S, login: &Login<'_>) -> Result<Self, TdsError>
+    pub(crate) async fn over<S>(
+        stream: S,
+        login: &Login<'_>,
+        sspi: Option<&mut dyn sspi::Sspi>,
+    ) -> Result<Self, TdsError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
+        if login.encryption == Encryption::Strict {
+            let mut io: Box<dyn Io> = Box::new(handshake(stream, login).await?);
+            let mut packet_id = 1;
+            send(
+                &mut io,
+                packet::PRELOGIN,
+                &prelogin(encrypt::STRICT),
+                &mut packet_id,
+            )
+            .await?;
+            parse_prelogin(&read_message(&mut io).await?)?;
+            return Self::login(io, packet_id, login, TDS_80, sspi).await;
+        }
         let mut wrapped = Wrapped::new(stream);
         let asked = if login.encryption == Encryption::Off {
             encrypt::NOT_SUP
@@ -177,33 +228,55 @@ impl Client {
                 ))
             }
         };
-        let mut io: Box<dyn Io> = if tls {
+        let io: Box<dyn Io> = if tls {
             wrapped.handshake = true;
-            let config = tls_config(login.encryption, login.roots.clone());
-            let name = ServerName::try_from(login.host.to_owned())
-                .map_err(|e| TdsError::Tls(format!("{}: {e}", login.host)))?;
-            let mut stream = tokio_rustls::TlsConnector::from(Arc::new(config))
-                .connect(name, wrapped)
-                .await
-                .map_err(|e| TdsError::Tls(format!("TLS handshake: {e}")))?;
+            let mut stream = handshake(wrapped, login).await?;
             // From here, TLS records go on the connection as they are.
             stream.get_mut().0.handshake = false;
             Box::new(stream)
         } else {
             Box::new(wrapped)
         };
-        send(
-            &mut io,
-            packet::LOGIN7,
-            &login7(login.host, login.user, login.password),
-            &mut packet_id,
-        )
-        .await?;
-        let tokens = parse_tokens(&read_message(&mut io).await?)?;
-        if !tokens.logged_in {
-            return Err(protocol("the server did not accept the login"));
+        Self::login(io, packet_id, login, TDS_74, sspi).await
+    }
+
+    /// LOGIN7, then the SSPI exchange of a Windows sign-in, until the
+    /// server acknowledges the login.
+    async fn login(
+        mut io: Box<dyn Io>,
+        mut packet_id: u8,
+        login: &Login<'_>,
+        version: u32,
+        mut sspi: Option<&mut dyn sspi::Sspi>,
+    ) -> Result<Self, TdsError> {
+        let server = match login.instance {
+            Some(instance) => format!("{}\\{instance}", login.host),
+            None => login.host.to_owned(),
+        };
+        let first = match sspi.as_deref_mut() {
+            Some(sspi) => Some(sspi.step(None).await?),
+            None => None,
+        };
+        let request = login7(&Login7 {
+            version,
+            server: &server,
+            user: login.user,
+            password: login.password,
+            sspi: first.as_deref(),
+        });
+        send(&mut io, packet::LOGIN7, &request, &mut packet_id).await?;
+        for _ in 0..MAX_SSPI_ROUNDS {
+            let tokens = parse_tokens(&read_message(&mut io).await?)?;
+            if tokens.logged_in {
+                return Ok(Self { io, packet_id });
+            }
+            let (Some(challenge), Some(sspi)) = (tokens.sspi, sspi.as_deref_mut()) else {
+                return Err(protocol("the server did not accept the login"));
+            };
+            let answer = sspi.step(Some(challenge)).await?;
+            send(&mut io, packet::SSPI, &answer, &mut packet_id).await?;
         }
-        Ok(Self { io, packet_id })
+        Err(protocol("the Windows sign-in did not end"))
     }
 
     /// Runs `sql`, one statement, and returns its rows.
@@ -225,6 +298,27 @@ impl Client {
     }
 }
 
+/// The TLS handshake over `stream`, for `login`'s encryption: ALPN's
+/// `tds/8.0` for a strict session.
+async fn handshake<S>(
+    stream: S,
+    login: &Login<'_>,
+) -> Result<tokio_rustls::client::TlsStream<S>, TdsError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut config = tls_config(login.encryption, login.roots.clone());
+    if login.encryption == Encryption::Strict {
+        config.alpn_protocols = vec![ALPN_TDS_80.to_vec()];
+    }
+    let name = ServerName::try_from(login.host.to_owned())
+        .map_err(|e| TdsError::Tls(format!("{}: {e}", login.host)))?;
+    tokio_rustls::TlsConnector::from(Arc::new(config))
+        .connect(name, stream)
+        .await
+        .map_err(|e| TdsError::Tls(format!("TLS handshake: {e}")))
+}
+
 /// Sends `payload` as one message of `kind`, in packets of at most
 /// [`PACKET_SIZE`].
 async fn send<W: AsyncWrite + Unpin + ?Sized>(
@@ -234,9 +328,15 @@ async fn send<W: AsyncWrite + Unpin + ?Sized>(
     packet_id: &mut u8,
 ) -> Result<(), TdsError> {
     let mut out = Vec::with_capacity(payload.len() + HEADER * (payload.len() / PACKET_SIZE + 1));
-    let mut chunks = payload.chunks(PACKET_SIZE - HEADER).peekable();
-    while let Some(chunk) = chunks.next() {
-        let last = chunks.peek().is_none();
+    // An empty payload (an SSPI step with nothing to say) is still one
+    // packet, its header alone.
+    let chunks: Vec<&[u8]> = if payload.is_empty() {
+        vec![payload]
+    } else {
+        payload.chunks(PACKET_SIZE - HEADER).collect()
+    };
+    for (i, chunk) in chunks.iter().enumerate() {
+        let last = i + 1 == chunks.len();
         out.extend_from_slice(&header(kind, last, chunk.len(), *packet_id));
         out.extend_from_slice(chunk);
         *packet_id = packet_id.wrapping_add(1);
@@ -360,9 +460,22 @@ fn obfuscate(password: &str) -> Vec<u8> {
         .collect()
 }
 
-/// A SQL Server login to `master`.
-pub(crate) fn login7(server: &str, user: &str, password: &str) -> Vec<u8> {
+/// What a LOGIN7 says.
+pub(crate) struct Login7<'a> {
+    pub version: u32,
+    /// The host, then `\instance` for a named instance.
+    pub server: &'a str,
+    pub user: &'a str,
+    pub password: &'a str,
+    /// The first SSPI token of a Windows sign-in, without user nor
+    /// password then.
+    pub sspi: Option<&'a [u8]>,
+}
+
+/// A login to `master`, with a SQL Server login or SSPI.
+pub(crate) fn login7(l: &Login7<'_>) -> Vec<u8> {
     const FIXED: usize = 94;
+    let (server, user, password) = (l.server, l.user, l.password);
     // Host, user, password, application, server, extension, library,
     // language, database: as UTF-16, in the order of the offsets.
     let fields: [(Vec<u8>, usize); 9] = {
@@ -383,14 +496,15 @@ pub(crate) fn login7(server: &str, user: &str, password: &str) -> Vec<u8> {
     let mut fixed = Vec::with_capacity(FIXED);
     let mut data = Vec::new();
     fixed.extend_from_slice(&[0; 4]); // Length, set below.
-    fixed.extend_from_slice(&TDS_74.to_le_bytes());
+    fixed.extend_from_slice(&l.version.to_le_bytes());
     fixed.extend_from_slice(&u32::try_from(PACKET_SIZE).unwrap_or(4096).to_le_bytes());
     fixed.extend_from_slice(&[0; 4]); // Client program version.
     fixed.extend_from_slice(&std::process::id().to_le_bytes());
     fixed.extend_from_slice(&[0; 4]); // Connection ID.
-                                      // USE_DB_ON, INIT_DB_FATAL, SET_LANG_ON; INIT_LANG_FATAL, ODBC_ON;
-                                      // SQL type default; no option 3.
-    fixed.extend_from_slice(&[0xE0, 0x03, 0x00, 0x00]);
+                                      // USE_DB_ON, INIT_DB_FATAL, SET_LANG_ON; INIT_LANG_FATAL, ODBC_ON,
+                                      // and INTEGRATED_SECURITY_ON with SSPI; SQL type default; no option 3.
+    let integrated = if l.sspi.is_some() { 0x80 } else { 0 };
+    fixed.extend_from_slice(&[0xE0, 0x03 | integrated, 0x00, 0x00]);
     fixed.extend_from_slice(&[0; 4]); // Time zone.
     fixed.extend_from_slice(&0x0409u32.to_le_bytes()); // en-US.
     let mut offset = FIXED;
@@ -404,11 +518,15 @@ pub(crate) fn login7(server: &str, user: &str, password: &str) -> Vec<u8> {
         push(&mut fixed, bytes, *count);
     }
     fixed.extend_from_slice(&[0; 6]); // Client ID.
-    for _ in 0..3 {
-        // SSPI, file to attach, new password: none.
+                                      // SSPI, its length in bytes: 0xFFFF and the long length beyond.
+    let sspi = l.sspi.unwrap_or_default();
+    push(&mut fixed, sspi, sspi.len().min(0xFFFF));
+    for _ in 0..2 {
+        // File to attach, new password: none.
         push(&mut fixed, &[], 0);
     }
-    fixed.extend_from_slice(&[0; 4]); // Long SSPI length.
+    let long = if sspi.len() >= 0xFFFF { sspi.len() } else { 0 };
+    fixed.extend_from_slice(&u32::try_from(long).unwrap_or(u32::MAX).to_le_bytes());
     debug_assert_eq!(fixed.len(), FIXED);
     let total = u32::try_from(fixed.len() + data.len()).unwrap_or(u32::MAX);
     fixed[..4].copy_from_slice(&total.to_le_bytes());
@@ -434,6 +552,8 @@ fn batch(sql: &str) -> Vec<u8> {
 pub(crate) struct Answer {
     pub logged_in: bool,
     pub rows: Vec<Row>,
+    /// The server's SSPI token, during a Windows sign-in.
+    pub sspi: Option<Vec<u8>>,
 }
 
 /// How a column's values are written.
@@ -683,8 +803,13 @@ pub(crate) fn parse_tokens(bytes: &[u8]) -> Result<Answer, TdsError> {
             0xFD..=0xFF => {
                 r.take(12)?;
             }
-            // ENVCHANGE, ORDER, COLINFO, TABNAME, SSPI
-            0xE3 | 0xA9 | 0xA5 | 0xA4 | 0xED => r.skip_u16_length()?,
+            // SSPI
+            0xED => {
+                let n = usize::from(r.u16()?);
+                answer.sspi = Some(r.take(n)?.to_vec());
+            }
+            // ENVCHANGE, ORDER, COLINFO, TABNAME
+            0xE3 | 0xA9 | 0xA5 | 0xA4 => r.skip_u16_length()?,
             // RETURNSTATUS
             0x79 => {
                 r.take(4)?;
@@ -716,7 +841,7 @@ fn tls_config(encryption: Encryption, roots: Option<Arc<RootCertStore>>) -> rust
         .expect("ring supports the default protocol versions");
     match encryption {
         // Never unverified for want of roots: the machine's then.
-        Encryption::Verified => builder
+        Encryption::Verified | Encryption::Strict => builder
             .with_root_certificates(roots.unwrap_or_else(crate::roots))
             .with_no_client_auth(),
         Encryption::Unverified | Encryption::Off => builder

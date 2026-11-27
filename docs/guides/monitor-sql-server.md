@@ -65,7 +65,7 @@ SQL Server writes its errors to the Windows Application event log: **"Errors in 
 
 ## Create a login that only reads the server's state
 
-The check needs a SQL Server login with one right: `VIEW SERVER STATE`, or `VIEW SERVER PERFORMANCE STATE` from SQL Server 2022. It lets the login read the server's counters and sessions, not your data, and it needs no user in any database. In SQL Server Management Studio, or with `sqlcmd`, as an administrator:
+The check signs in with a SQL Server login, or with a Windows account (below). Either needs one right: `VIEW SERVER STATE`, or `VIEW SERVER PERFORMANCE STATE` from SQL Server 2022. It lets the login read the server's counters and sessions, not your data, and it needs no user in any database. In SQL Server Management Studio, or with `sqlcmd`, as an administrator:
 
 ```sql
 CREATE LOGIN monitorflow WITH PASSWORD = 'choose-a-long-password';
@@ -76,21 +76,39 @@ GRANT VIEW SERVER STATE TO monitorflow;
 
 On an availability group, create the login on every replica, as logins are not copied with the databases.
 
-**SQL Server authentication must be on.** Many servers accept Windows sign-ins only. In Management Studio, open the server's **Properties › Security**, choose **"SQL Server and Windows Authentication mode"**, then restart the service. Signing in with a Windows account is not supported by the check yet.
+**A SQL Server login needs SQL Server authentication on.** Many servers accept Windows sign-ins only. In Management Studio, open the server's **Properties › Security**, choose **"SQL Server and Windows Authentication mode"**, then restart the service. Or sign in with a Windows account instead.
 
-**TCP must be on, at a fixed port.** SQL Server Express ships with TCP/IP turned off, and a named instance picks its port at start: in SQL Server Configuration Manager, turn on TCP/IP and give the instance a fixed port, then enter that port in **"Port"**. The check does not ask SQL Server Browser for the port of a named instance.
+### Or sign in with a Windows account
+
+On a Windows server, the agent can sign in with a Windows account, through Windows itself (Kerberos in a domain, NTLM otherwise): no SQL Server login, no password to store. The agent runs as `NT SERVICE\MonitorFlowAgent`, which is the account SQL Server sees when it runs on the same machine. Give it the right:
+
+```sql
+CREATE LOGIN [NT SERVICE\MonitorFlowAgent] FROM WINDOWS;
+GRANT VIEW SERVER STATE TO [NT SERVICE\MonitorFlowAgent];
+```
+
+When the agent checks a SQL Server on another machine of the domain, SQL Server sees the agent's computer account, its name followed by `$`: `CREATE LOGIN [EXAMPLE\APP1$] FROM WINDOWS;`, then the same `GRANT`. To use another account, a service account of the domain for example, enter it as `EXAMPLE\svc-monitor` (or `svc-monitor@example.com`) in **"User name"** with its password, kept sealed like a SQL Server login's.
+
+Kerberos needs the server's full name in **"Address"** (`db1.example.com`) and SQL Server's service principal name, `MSSQLSvc/db1.example.com:1433`, registered in the domain, which SQL Server does itself when its service account may. With `127.0.0.1` or an address, Windows signs in with NTLM, which works for a SQL Server on the same machine and in most domains.
+
+A Windows sign-in runs only on the agent of a Windows server: the central server and relays run on Linux and cannot sign in to Windows, so the form offers it on Windows servers only, and the API refuses it with **"Checked from"** set to a probe.
+
+**TCP must be on.** SQL Server Express ships with TCP/IP turned off: in SQL Server Configuration Manager, turn on TCP/IP for the instance, then restart it.
+
+**A named instance** (`SQLEXPRESS`, `SALES`) usually picks its port at start. Enter its name in **"Named instance"** and leave **"Port"** empty: at each check, MonitorFlow asks SQL Server Browser (the `SQLBrowser` service, UDP port 1434) for the instance's port, so it follows the instance when the port changes. SQL Server Browser must run and the Windows firewall must accept UDP 1434 from whoever checks. If you gave the instance a fixed port, enter it in **"Port"** too: Browser is then not asked. With the agent's port targets set, both port 1434 and the instance's port must be among them.
 
 ## Set it up
 
 1. Open **Fleet**, click the SQL Server machine, and stay on its **Sensors** tab.
 2. Click **"Add a check"** and type `SQL Server` in **"Find a check"**.
 3. Pick **"SQL Server"**, the **"Application check"**.
-4. Keep **"Address"** at `127.0.0.1` and **"Port"** at `1433` if SQL Server runs on this server at its default port. Keep `monitorflow` in **"User name"** and enter the login's password in **"Password"**.
-5. Leave **"Add the recommended alerts"** on, then click **"Add check"**.
+4. Keep **"Address"** at `127.0.0.1` and leave **"Port"** empty if SQL Server runs on this server at its default port, 1433. For a named instance, enter its name in **"Named instance"**.
+5. In **"Sign in with"**, keep **"A SQL Server login"**: leave **"User name"** empty for `monitorflow` or enter the login, and its password in **"Password"**. Or choose **"A Windows account"** and leave **"User name"** and **"Password"** empty to sign in as the agent's account.
+6. Leave **"Add the recommended alerts"** on, then click **"Add check"**.
 
 The password is kept sealed on the central server, encrypted like its other secrets. It is never shown again, never written to a log, and the API only says whether one is set. If you later change **"Address"** or **"Port"**, enter the password again.
 
-Under **"More options"**, **"Encryption"** is **"When the server offers it"** (the default: the session is encrypted with the certificate SQL Server has, even the one it makes itself at start, which is not verified), **"Required, certificate verified"** (the certificate must be signed by an authority the machine trusts, for the name in **"Address"**), or **"None"**. With **"None"**, the password crosses the network in clear: keep it for a check on the server itself, and only if SQL Server refuses encryption. When encryption is asked for and SQL Server does not offer it, the check fails rather than sending the password in clear.
+Under **"More options"**, **"Encryption"** is **"When the server offers it"** (the default: the session is encrypted with the certificate SQL Server has, even the one it makes itself at start, which is not verified), **"Required, certificate verified"** (the certificate must be signed by an authority the machine trusts, for the name in **"Address"**), **"Strict (TDS 8.0), certificate verified"**, or **"None"**. Strict encryption, from SQL Server 2022, starts TLS before anything else is said, as a website does, and the certificate is verified as with **"Required, certificate verified"**; choose it when SQL Server has **"Force Strict Encryption"** on, which refuses every other client. With **"None"**, the password crosses the network in clear: keep it for a check on the server itself, and only if SQL Server refuses encryption. When encryption is asked for and SQL Server does not offer it, the check fails rather than sending the password in clear.
 
 The check runs every 60 seconds by default. To watch every SQL Server of a site at once, choose **"Every server of"** the site under **"Add to"**, if every server of the site runs SQL Server with the same login.
 
@@ -98,7 +116,7 @@ The check runs every 60 seconds by default. To watch every SQL Server of a site 
 
 **"Checked from"** chooses who connects:
 
-- **"This server's agent"** (the default): the agent on the SQL Server machine, Windows or Linux, connects to `127.0.0.1`. If its administrator set port targets (`sensors.port_targets` in `agent.toml`), the address and port must be among them.
+- **"This server's agent"** (the default): the agent on the SQL Server machine, Windows or Linux, connects to `127.0.0.1`. Only this one signs in with a Windows account. If its administrator set port targets (`sensors.port_targets` in `agent.toml`), the address and port must be among them.
 - **"The central server"**, or **"Relay"** followed by the name of a relay of the site: to check it from outside, the way applications reach it. Enter the server's address in **"Address"**, and let the Windows firewall accept the port from the central server or the relay. The central server never connects to link-local addresses (`169.254.x.x`, `fe80::`).
 
 A device, a machine without the agent, such as an Azure SQL Managed Instance, has the same check in its catalogue: it always runs from the central server or a relay, against the device's address.
@@ -115,6 +133,19 @@ The public API adds the same check: `POST /api/v1/servers/{id}/sensor_configs` w
   "default_alerts": true
 }
 ```
+
+A named instance, signing in as the agent's Windows account, with strict encryption:
+
+```json
+{
+  "kind": "mssql",
+  "interval_ms": 60000,
+  "params": { "host": "db1.example.com", "instance": "SALES", "auth": "windows", "tls": "strict" },
+  "default_alerts": true
+}
+```
+
+`instance` names the instance (its port then comes from SQL Server Browser unless `port` is given), `auth` is `sql` (the default) or `windows`, and `tls` is `prefer`, `verify`, `strict` or `off`.
 
 ### Service and port checks
 
@@ -151,10 +182,10 @@ When `mssql_up` is 0, its `reason` label says why, and its `error` label gives S
 
 | `reason` | What to check |
 | --- | --- |
-| `connect` | Nothing answers at that address and port: SQL Server stopped, TCP/IP is off, the instance listens on another port, or a firewall refuses the connection |
+| `connect` | Nothing answers at that address and port: SQL Server stopped, TCP/IP is off, the instance listens on another port, or a firewall refuses the connection. With a named instance, SQL Server Browser did not answer on UDP 1434, does not know the instance, or gave a port outside the agent's port targets |
 | `timeout` | No answer in time: a firewall that drops packets, or a server too loaded to answer |
-| `tls` | Encryption failed: SQL Server offers none while the check asks for it, or requires it while **"Encryption"** is **"None"**, or with **"Required, certificate verified"** its certificate is not trusted or not for the name in **"Address"** |
-| `login` | Wrong login or password (error 18456), SQL Server authentication is off, or the login's password expired |
+| `tls` | Encryption failed: SQL Server offers none while the check asks for it, or requires it while **"Encryption"** is **"None"**, or with **"Required, certificate verified"** or strict its certificate is not trusted or not for the name in **"Address"**. Strict needs SQL Server 2022 or later, with a certificate configured |
+| `login` | Wrong login or password (error 18456), SQL Server authentication is off, or the login's password expired. With a Windows account: no login for it in SQL Server (error 18456), or Windows refused to sign in (the `error` label gives its code) |
 | `permission` | The login lacks `VIEW SERVER STATE` (error 300) |
 | `protocol` | Something else answered on that port, or SQL Server answered in a way the check does not read |
 

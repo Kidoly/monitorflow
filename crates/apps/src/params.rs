@@ -59,6 +59,10 @@ impl<'a> Params<'a> {
         }
     }
 
+    pub fn kind(&self) -> &'static str {
+        self.kind
+    }
+
     pub fn bad(&self, name: &'static str, reason: impl Into<String>) -> BuildError {
         BuildError::BadParam {
             kind: self.kind,
