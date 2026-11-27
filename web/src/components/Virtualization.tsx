@@ -6,7 +6,7 @@ import { useCallback, useState } from "react";
 
 import { t } from "@/i18n";
 import { type ServerDetail, type Virtualization, type VirtualObject, api, describeError } from "@/lib/api";
-import { formatBytes, formatPercent, formatRelative } from "@/lib/format";
+import { formatBytes, formatDateTime, formatNumber, formatPercent, formatRelative } from "@/lib/format";
 import { administersCustomer, modifiesSite, useMe } from "@/lib/me";
 import { serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -41,6 +41,17 @@ export function objectState(o: VirtualObject, now: Date): string {
     }
     case "datastore":
       return num(o, "accessible") === 1 ? t("virtualization.state.available") : t("virtualization.state.inaccessible");
+    case "node":
+      if (num(o, "ready") !== 1) return t("virtualization.state.notReady");
+      return num(o, "unschedulable") === 1 ? t("virtualization.state.cordoned") : t("virtualization.state.ready");
+    case "namespace":
+      return o.details.phase === "Terminating" ? t("virtualization.state.terminating") : t("virtualization.state.active");
+    case "workload": {
+      const ratio = num(o, "ready_ratio");
+      return ratio !== undefined && ratio < 1 ? t("virtualization.state.short") : t("virtualization.state.ready");
+    }
+    case "job":
+      return t("virtualization.state.failed");
     default: {
       const status = num(o, "status");
       return status === 1 || status === 2 ? t(`virtualization.status.${status}`) : t("virtualization.state.available");
@@ -110,6 +121,23 @@ export function matchedBy(o: VirtualObject): string {
   return o.matched_by ? t(`virtualization.match.${o.matched_by}`) : "";
 }
 
+/** "4 cores, 12 % used", for a Kubernetes node. */
+function nodeCpu(o: VirtualObject): string {
+  const count = num(o, "cpu_cores");
+  const use = num(o, "cpu_usage_ratio");
+  if (count === undefined) return missingText("noData");
+  const cores = formatNumber(count);
+  return use === undefined ? t("virtualization.k8s.cores", { count: cores }) : t("virtualization.k8s.coresUse", { count: cores, use: formatPercent(use) });
+}
+
+/** "0.3 cores, 96 MiB": what a namespace's or workload's pods use, from metrics-server. */
+function podUse(o: VirtualObject): string {
+  const cpu = num(o, "cpu_usage_cores");
+  const memory = num(o, "memory_usage_bytes");
+  if (cpu === undefined || memory === undefined) return missingText("noData");
+  return t("virtualization.k8s.use", { cpu: formatNumber(cpu), memory: formatBytes(memory) });
+}
+
 /** What a server page shows: its virtual machine, a source's inventory, or "Watch Hyper-V". */
 export function VirtualizationSection({ server, hypervWatched = false }: { server: ServerDetail; hypervWatched?: boolean }) {
   const fetcher = useCallback((signal: AbortSignal) => api.serverVirtualization(server.id, signal), [server.id]);
@@ -137,6 +165,14 @@ export function VirtualizationSection({ server, hypervWatched = false }: { serve
 function GuestLine({ guest }: { guest: Virtualization["guest_of"][number] }) {
   const scope = useScope();
   const o = guest.object;
+  if (o.kind === "node") {
+    return (
+      <p className={styles.sectionNote} role="note">
+        {t("virtualization.guest.node", { name: o.name, source: guest.source_name, how: matchedBy(o) })}{" "}
+        <Link href={scopedHref(serverHref(guest.source_id), scope)}>{guest.source_name}</Link>
+      </p>
+    );
+  }
   const values = {
     name: o.name,
     host: o.details.host ?? "",
@@ -158,10 +194,13 @@ function SourceLine({ data, now, server }: { data: Virtualization; now: Date; se
   if (!source) return <p className={styles.sectionNote}>{t("virtualization.source.never")}</p>;
   const when = formatRelative(source.seen_at, now);
   if (source.up) {
-    const product = source.details.product;
+    // A Kubernetes cluster says "Kubernetes" and its version apart.
+    const product = [source.details.product, source.details.product === "Kubernetes" ? source.details.version : undefined].filter(Boolean).join(" ");
+    const unread = source.details.unread;
     return (
       <p className={styles.sectionNote} role="status">
         {product ? t("virtualization.source.ok", { when, product }) : t("virtualization.source.okNoProduct", { when })}
+        {unread && <> {t("virtualization.k8s.unread", { what: unread })}</>}
       </p>
     );
   }
@@ -193,6 +232,21 @@ function Inventory({
   // An AWS account or an Azure subscription (ADR-0183).
   const cloud = Boolean(data.source?.details.provider);
   const of = (kind: VirtualObject["kind"]) => data.objects.filter((o) => o.kind === kind);
+  const kubernetes = data.source?.details.product === "Kubernetes" || data.objects.some((o) => o.kind === "node");
+  if (kubernetes) {
+    // A failed job no longer listed has stopped failing: only the last reading's are shown.
+    const read = data.source ? new Date(data.source.seen_at).getTime() : 0;
+    const jobs = of("job").filter((o) => new Date(o.seen_at).getTime() >= read - JOB_MARGIN_MS);
+    return (
+      <section aria-label={t("virtualization.title")}>
+        <SourceLine data={data} now={now} server={server} />
+        <MatchedTable server={server} title={t("virtualization.kind.node")} rows={of("node")} columns={nodeColumns(now)} onChanged={onChanged} />
+        {of("namespace").length > 0 && <NamespaceTable rows={of("namespace")} now={now} />}
+        {of("workload").length > 0 && <WorkloadTable rows={of("workload")} now={now} />}
+        {jobs.length > 0 && <JobTable rows={jobs} />}
+      </section>
+    );
+  }
   return (
     <section aria-label={t("virtualization.title")}>
       <SourceLine data={data} now={now} server={server} />
@@ -201,6 +255,116 @@ function Inventory({
       <VmTable server={server} rows={of("vm")} now={now} hyperv={hyperv} cloud={cloud} onChanged={onChanged} />
       {of("datastore").length > 0 && <DatastoreTable rows={of("datastore")} now={now} />}
     </section>
+  );
+}
+
+/** Batches of one reading reach the server a few seconds apart. */
+const JOB_MARGIN_MS = 60_000;
+
+const nodeColumns = (now: Date): Column<VirtualObject>[] => [
+  nameColumn(now),
+  { key: "roles", header: t("virtualization.col.roles"), cell: (o) => o.details.roles || missingText("none") },
+  { key: "version", header: t("virtualization.col.version"), cell: (o) => o.details.kubelet_version ?? missingText("unknown") },
+  { key: "cpu", header: t("virtualization.col.cpu"), cell: nodeCpu, sortValue: (o) => num(o, "cpu_usage_ratio") ?? null },
+  { key: "memory", header: t("virtualization.col.memory"), cell: memory, sortValue: (o) => num(o, "memory_usage_ratio") ?? null },
+  {
+    key: "pods",
+    header: t("virtualization.col.pods"),
+    cell: (o) => {
+      const pods = num(o, "pods");
+      const capacity = num(o, "pods_capacity");
+      if (pods === undefined) return missingText("noData");
+      return capacity === undefined ? String(pods) : t("virtualization.k8s.pods", { count: String(pods), capacity: String(capacity) });
+    },
+    sortValue: (o) => num(o, "pods") ?? null,
+  },
+];
+
+function NamespaceTable({ rows, now }: { rows: VirtualObject[]; now: Date }) {
+  const columns: Column<VirtualObject>[] = [
+    nameColumn(now),
+    {
+      key: "pods",
+      header: t("virtualization.col.pods"),
+      cell: (o) => {
+        const pods = num(o, "pods") ?? 0;
+        const bad = num(o, "pods_not_running") ?? 0;
+        return bad > 0 ? t("virtualization.k8s.podsBad", { count: String(pods), bad: String(bad) }) : String(pods);
+      },
+      sortValue: (o) => num(o, "pods_not_running") ?? 0,
+    },
+    { key: "use", header: t("virtualization.col.use"), cell: podUse, sortValue: (o) => num(o, "cpu_usage_cores") ?? null },
+    {
+      key: "jobs",
+      header: t("virtualization.col.jobs"),
+      cell: (o) => {
+        const failed = num(o, "jobs_failed");
+        return failed === undefined ? missingText("noData") : failed === 0 ? missingText("none") : String(failed);
+      },
+      sortValue: (o) => num(o, "jobs_failed") ?? null,
+    },
+  ];
+  return (
+    <TableBox title={t("virtualization.kind.namespace")}>
+      <DataTable label={t("virtualization.kind.namespace")} columns={columns} rows={rows} rowKey={(o) => o.id} rowMuted={(o) => o.stale} dense bare />
+    </TableBox>
+  );
+}
+
+function WorkloadTable({ rows, now }: { rows: VirtualObject[]; now: Date }) {
+  const columns: Column<VirtualObject>[] = [
+    {
+      key: "name",
+      header: t("virtualization.col.name"),
+      cell: (o) => <PrimaryCell title={o.details.name ?? o.name} sub={objectState(o, now)} />,
+      sortValue: (o) => o.details.name ?? o.name,
+    },
+    { key: "namespace", header: t("virtualization.col.namespace"), cell: (o) => o.details.namespace ?? missingText("unknown"), sortValue: (o) => o.details.namespace ?? null },
+    {
+      key: "kind",
+      header: t("virtualization.col.kind"),
+      cell: (o) => {
+        const kind = o.details.workload;
+        return kind === "deployment" || kind === "statefulset" || kind === "daemonset" ? t(`virtualization.workload.${kind}`) : missingText("unknown");
+      },
+    },
+    {
+      key: "ready",
+      header: t("virtualization.col.ready"),
+      cell: (o) => t("virtualization.k8s.replicas", { ready: String(num(o, "replicas_ready") ?? 0), desired: String(num(o, "replicas_desired") ?? 0) }),
+      sortValue: (o) => num(o, "ready_ratio") ?? null,
+    },
+    { key: "use", header: t("virtualization.col.use"), cell: podUse, sortValue: (o) => num(o, "cpu_usage_cores") ?? null },
+  ];
+  return (
+    <TableBox title={t("virtualization.kind.workload")}>
+      <DataTable label={t("virtualization.kind.workload")} columns={columns} rows={rows} rowKey={(o) => o.id} rowMuted={(o) => o.stale} dense bare />
+    </TableBox>
+  );
+}
+
+function JobTable({ rows }: { rows: VirtualObject[] }) {
+  const columns: Column<VirtualObject>[] = [
+    {
+      key: "name",
+      header: t("virtualization.col.name"),
+      cell: (o) => <PrimaryCell title={o.name.slice((o.details.namespace ?? "").length + 1) || o.name} sub={o.details.message} />,
+      sortValue: (o) => o.name,
+    },
+    { key: "namespace", header: t("virtualization.col.namespace"), cell: (o) => o.details.namespace ?? missingText("unknown"), sortValue: (o) => o.details.namespace ?? null },
+    { key: "cron", header: t("virtualization.col.cronJob"), cell: (o) => o.details.cron_job || missingText("none") },
+    { key: "reason", header: t("virtualization.col.reason"), cell: (o) => o.details.reason || missingText("unknown") },
+    {
+      key: "failed",
+      header: t("virtualization.col.failedAt"),
+      cell: (o) => (o.details.failed_at ? formatDateTime(o.details.failed_at) : missingText("unknown")),
+      sortValue: (o) => o.details.failed_at ?? null,
+    },
+  ];
+  return (
+    <TableBox title={t("virtualization.kind.job")}>
+      <DataTable label={t("virtualization.kind.job")} columns={columns} rows={rows} rowKey={(o) => o.id} dense bare />
+    </TableBox>
   );
 }
 
@@ -300,6 +464,50 @@ function VmTable({
   cloud?: boolean;
   onChanged: () => void;
 }) {
+  const columns: Column<VirtualObject>[] = cloud
+    ? [
+        nameColumn(now),
+        { key: "zone", header: t("cloud.col.zone"), cell: (o) => o.details.host ?? missingText("unknown"), sortValue: (o) => o.details.host ?? null },
+        { key: "size", header: t("cloud.col.size"), cell: (o) => o.details.size ?? missingText("unknown"), sortValue: (o) => o.details.size ?? null },
+        { key: "cpu", header: t("virtualization.col.cpu"), cell: cpu, sortValue: (o) => num(o, "cpu_usage_ratio") ?? null },
+        { key: "network", header: t("cloud.col.network"), cell: network, sortValue: (o) => num(o, "network_in_bytes_per_second") ?? null },
+        { key: "disk", header: t("cloud.col.disk"), cell: disk, sortValue: (o) => num(o, "disk_write_bytes_per_second") ?? null },
+        { key: "checks", header: t("cloud.col.checks"), cell: checks, sortValue: (o) => num(o, "status_checks_failed") ?? null },
+      ]
+    : [
+        nameColumn(now),
+        ...(hyperv ? [] : [{ key: "host", header: t("virtualization.col.host"), cell: (o: VirtualObject) => o.details.host ?? missingText("unknown") }]),
+        { key: "cpu", header: t("virtualization.col.cpu"), cell: cpu, sortValue: (o) => num(o, "cpu_usage_ratio") ?? null },
+        { key: "memory", header: t("virtualization.col.memory"), cell: memory },
+        {
+          key: "snapshots",
+          header: hyperv ? t("virtualization.col.checkpoints") : t("virtualization.col.snapshots"),
+          cell: (o) => {
+            const health = num(o, "replication_health");
+            const replication =
+              health === undefined ? "" : ` · ${t("virtualization.col.replication")}: ${t(`virtualization.replication.${health as 0}`)}`;
+            return snapshots(o) + replication;
+          },
+          sortValue: (o) => num(o, "snapshot_age_seconds") ?? null,
+        },
+      ];
+  return <MatchedTable server={server} title={t("virtualization.kind.vm")} rows={rows} columns={columns} onChanged={onChanged} />;
+}
+
+/** Virtual machines or Kubernetes nodes: `columns`, then the server each is and what a person can do about it. */
+function MatchedTable({
+  server,
+  title,
+  rows,
+  columns: own,
+  onChanged,
+}: {
+  server: ServerDetail;
+  title: string;
+  rows: VirtualObject[];
+  columns: Column<VirtualObject>[];
+  onChanged: () => void;
+}) {
   const me = useMe();
   const scope = useScope();
   const router = useRouter();
@@ -340,37 +548,9 @@ function VmTable({
       ),
     sortValue: (o) => o.server?.hostname ?? null,
   };
-  const columns: Column<VirtualObject>[] = cloud
-    ? [
-        nameColumn(now),
-        { key: "zone", header: t("cloud.col.zone"), cell: (o) => o.details.host ?? missingText("unknown"), sortValue: (o) => o.details.host ?? null },
-        { key: "size", header: t("cloud.col.size"), cell: (o) => o.details.size ?? missingText("unknown"), sortValue: (o) => o.details.size ?? null },
-        { key: "cpu", header: t("virtualization.col.cpu"), cell: cpu, sortValue: (o) => num(o, "cpu_usage_ratio") ?? null },
-        { key: "network", header: t("cloud.col.network"), cell: network, sortValue: (o) => num(o, "network_in_bytes_per_second") ?? null },
-        { key: "disk", header: t("cloud.col.disk"), cell: disk, sortValue: (o) => num(o, "disk_write_bytes_per_second") ?? null },
-        { key: "checks", header: t("cloud.col.checks"), cell: checks, sortValue: (o) => num(o, "status_checks_failed") ?? null },
-        serverColumn,
-      ]
-    : [
-        nameColumn(now),
-        ...(hyperv ? [] : [{ key: "host", header: t("virtualization.col.host"), cell: (o: VirtualObject) => o.details.host ?? missingText("unknown") }]),
-        { key: "cpu", header: t("virtualization.col.cpu"), cell: cpu, sortValue: (o) => num(o, "cpu_usage_ratio") ?? null },
-        { key: "memory", header: t("virtualization.col.memory"), cell: memory },
-        {
-          key: "snapshots",
-          header: hyperv ? t("virtualization.col.checkpoints") : t("virtualization.col.snapshots"),
-          cell: (o) => {
-            const health = num(o, "replication_health");
-            const replication =
-              health === undefined ? "" : ` · ${t("virtualization.col.replication")}: ${t(`virtualization.replication.${health as 0}`)}`;
-            return snapshots(o) + replication;
-          },
-          sortValue: (o) => num(o, "snapshot_age_seconds") ?? null,
-        },
-        serverColumn,
-      ];
+  const columns = [...own, serverColumn];
   return (
-    <TableBox title={t("virtualization.kind.vm")}>
+    <TableBox title={title}>
       {problem && (
         <p className={styles.formError} role="alert">
           {problem}
@@ -380,7 +560,7 @@ function VmTable({
         <p className={styles.sectionNote}>{t("virtualization.empty")}</p>
       ) : (
         <DataTable
-          label={t("virtualization.kind.vm")}
+          label={title}
           columns={columns}
           rows={rows}
           rowKey={(o) => o.id}

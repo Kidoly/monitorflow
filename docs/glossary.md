@@ -158,6 +158,9 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Datastore | Banque de données | Where a vCenter keeps virtual machines' disks; "Datastore full" when under 10% is free | volume, LUN (on screen) | `kind = 'datastore'` |
 | Snapshot (virtual machine) | Instantané | A saved state of a virtual machine kept by its hypervisor; Hyper-V calls them checkpoints, and the page says "Snapshots (checkpoints)" for Hyper-V. "Snapshot older than 7 days" | checkpoint alone | `vm_snapshots`, `vm_snapshot_age_seconds` |
 | Install the agent | Installer l'agent | The button on a virtual machine without the agent: adds a server waiting for its agent and shows the command | deploy, onboard | `install-agent` |
+| Node (Kubernetes) | Nœud | A machine of a Kubernetes cluster, listed on the cluster's page and matched to its server like a virtual machine. "Kubernetes node worker-1 of k8s-prod". Only for Kubernetes | worker, member, minion | `kind = 'node'` |
+| Workload | Charge de travail | A deployment, stateful set or daemon set of a Kubernetes cluster, named `namespace/kind/name`. "2 of 3 ready" | app, service (on screen) | `kind = 'workload'` |
+| Failed job | Job en échec | A Kubernetes job that failed, or a cron job whose latest run did; listed while it is | broken job, crashed job | `kind = 'job'`, `namespace_jobs_failed` |
 
 Keep the technical word when it is the thing being asked for, such as a certificate, a mirror or a sudo rule, and put the rest under a "Details" disclosure. Certificate warnings speak of renewal, and appear only when it is late (under 2 days left) or failed.
 
