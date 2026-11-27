@@ -1164,7 +1164,8 @@ export interface VmwareTested {
 /** One host, cluster, virtual machine or datastore of a source. */
 export interface VirtualObject {
   id: string;
-  kind: "vm" | "host" | "cluster" | "datastore";
+  /** A hypervisor's objects, or a Kubernetes cluster's (`node` to `job`). */
+  kind: "vm" | "host" | "cluster" | "datastore" | "node" | "namespace" | "workload" | "job";
   name: string;
   key: string;
   details: Record<string, string>;

@@ -169,6 +169,75 @@ describe("Virtualization", () => {
     expect(await screen.findByText(/Could not be read .*the agent cannot read Hyper-V/)).toBeTruthy();
     expect(screen.queryByText("Watch Hyper-V")).toBeNull();
   });
+  it("lists a Kubernetes cluster's nodes, namespaces, workloads and failed jobs", async () => {
+    const old = new Date(NOW.getTime() - 10 * 60_000).toISOString();
+    const worker = object({
+      id: "n1",
+      kind: "node",
+      name: "worker-1",
+      details: { roles: "worker", kubelet_version: "v1.31.4" },
+      metrics: { ready: 1, cpu_cores: 4, cpu_usage_ratio: 0.25, memory_bytes: 8 * 1024 ** 3, memory_usage_ratio: 0.5, pods: 12, pods_capacity: 110 },
+      server: { id: "s2", hostname: "worker-1", kind: "agent", awaiting_agent: false },
+      matched_by: "uuid",
+    });
+    const spare = object({ id: "n2", kind: "node", name: "spare-1", metrics: { ready: 0 } });
+    const shop = object({ id: "ns1", kind: "namespace", name: "shop", details: { phase: "Active" }, metrics: { pods: 3, pods_not_running: 1, jobs_failed: 1, cpu_usage_cores: 0.3, memory_usage_bytes: 96 * 1024 ** 2 } });
+    const deploy = object({
+      id: "w1",
+      kind: "workload",
+      name: "shop/deployment/web",
+      details: { namespace: "shop", workload: "deployment", name: "web" },
+      metrics: { replicas_desired: 3, replicas_ready: 2, ready_ratio: 2 / 3 },
+    });
+    const job = object({ id: "j1", kind: "job", name: "shop/migrate", details: { namespace: "shop", reason: "BackoffLimitExceeded", message: "Job has reached the specified backoff limit" } });
+    // Failed at an earlier reading only: it no longer fails.
+    const healed = object({ id: "j2", kind: "job", name: "shop/backup-1", details: { namespace: "shop", cron_job: "backup" }, seen_at: old });
+    stubFetch({
+      "GET /api/servers/k1/virtualization": {
+        status: 200,
+        body: {
+          source: { up: true, reason: null, error: null, details: { product: "Kubernetes", version: "v1.31.4", unread: "metrics-server pods (not allowed)" }, seen_at: NOW.toISOString() },
+          objects: [worker, spare, shop, deploy, job, healed],
+          guest_of: [],
+        },
+      },
+    });
+    render(
+      <As user={me({ role: "administrator", customer_id: null, site_id: null })}>
+        <VirtualizationSection server={server({ id: "k1", hostname: "k8s-1" })} />
+      </As>,
+    );
+    expect(await screen.findByText(/Kubernetes v1\.31\.4/)).toBeTruthy();
+    expect(screen.getByText(/Not read: metrics-server pods \(not allowed\)/)).toBeTruthy();
+    const nodes = screen.getByRole("table", { name: "Nodes" }).textContent ?? "";
+    for (const shown of ["worker-1", "Ready", "4 cores, 25% used", "12 of 110", "matched by its hardware ID", "Not ready"]) expect(nodes).toContain(shown);
+    expect(screen.getAllByRole("button", { name: "Install the agent" })).toHaveLength(1);
+    const spaces = screen.getByRole("table", { name: "Namespaces" }).textContent ?? "";
+    expect(spaces).toContain("3, 1 not running");
+    expect(spaces).toContain("0.3 cores, 96 MiB");
+    const workloads = screen.getByRole("table", { name: "Workloads" }).textContent ?? "";
+    for (const shown of ["web", "Deployment", "2 of 3", "Short of replicas"]) expect(workloads).toContain(shown);
+    const jobs = screen.getByRole("table", { name: "Failed jobs" }).textContent ?? "";
+    expect(jobs).toContain("migrate");
+    expect(jobs).toContain("BackoffLimitExceeded");
+    expect(jobs).not.toContain("backup-1");
+    expect(screen.queryByRole("table", { name: "Virtual machines" })).toBeNull();
+  });
+
+  it("shows the Kubernetes node a server is", async () => {
+    const node = object({ id: "n1", kind: "node", name: "worker-1", matched_by: "name" });
+    stubFetch({
+      "GET /api/servers/s2/virtualization": { status: 200, body: { source: null, objects: [], guest_of: [{ object: node, source_id: "k1", source_name: "k8s-1" }] } },
+    });
+    render(
+      <As user={me({ role: "viewer", customer_id: null, site_id: null })}>
+        <VirtualizationSection server={server({ id: "s2", kind: "agent", os_family: "debian" })} />
+      </As>,
+    );
+    expect(await screen.findByText(/Kubernetes node worker-1 of k8s-1, matched by its name only/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "k8s-1" })).toBeTruthy();
+  });
+
   it("lists a cloud account's machines with their network, disks and status checks", async () => {
     const ec2 = object({
       id: "i1",

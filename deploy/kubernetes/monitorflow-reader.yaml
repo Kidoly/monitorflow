@@ -1,6 +1,7 @@
 # What MonitorFlow's Kubernetes check needs in a cluster (ADR-0183): a
-# service account that may only get and list nodes, pods, persistent
-# volume claims, deployments, stateful sets and daemon sets, and a
+# service account that may only get and list nodes, namespaces, pods,
+# persistent volume claims, deployments, stateful sets, daemon sets and
+# jobs, and read what metrics-server measures of nodes and pods, and a
 # long-lived token for it. Nothing here can change the cluster, read a
 # secret or open a shell in a pod.
 #
@@ -25,10 +26,17 @@ metadata:
   name: monitorflow-reader
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods", "persistentvolumeclaims"]
+    resources: ["nodes", "namespaces", "pods", "persistentvolumeclaims"]
     verbs: ["get", "list"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  # Failed jobs, and resource use: without them the rest is still read.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

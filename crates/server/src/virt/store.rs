@@ -166,14 +166,14 @@ async fn prune(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Matches the virtual machines of `source` that no person tied, to the
-/// servers and devices of the source's customer.
+/// Matches the virtual machines and Kubernetes nodes of `source` that no
+/// person tied, to the servers and devices of the source's customer.
 pub async fn match_source(pool: &PgPool, source: Uuid) -> Result<usize, sqlx::Error> {
     let mut tx = pool.begin().await?;
     type VmRow = (Uuid, String, Value, Option<Uuid>, Option<String>);
     let vms: Vec<VmRow> = sqlx::query_as(
         "SELECT id, instance, details, server_id, matched_by FROM virtual_objects
-         WHERE source_id = $1 AND kind = 'vm' AND NOT link_fixed
+         WHERE source_id = $1 AND kind IN ('vm', 'node') AND NOT link_fixed
          FOR UPDATE",
     )
     .bind(source)

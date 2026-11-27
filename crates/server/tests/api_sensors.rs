@@ -809,7 +809,7 @@ db_tests! {
         let alerts: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM thresholds WHERE server_id = $1::uuid AND metric LIKE 'monitorflow_kubernetes_%'")
             .bind(&device).fetch_one(&pool).await.unwrap();
-        assert_eq!(alerts, 11);
+        assert_eq!(alerts, monitorflow_apps::templates::KUBERNETES_TEMPLATE.alerts.len() as i64);
 
         // The probe gets both, at the device's address.
         let probe_params = || async {

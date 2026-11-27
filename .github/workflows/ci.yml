@@ -319,6 +319,19 @@ jobs:
           name: sso-test-failure
           path: ${{ runner.temp }}/sso-test-failure.png
           if-no-files-found: ignore
+  # The Kubernetes check and its inventory (ADR-0183) against k3s in a
+  # container, with its pod network and metrics-server: the guide's
+  # read-only service account, a deployment short of replicas, a claim
+  # pending, a job that failed, nodes' and pods' resource use.
+  kubernetes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: scripts/kubernetes-test.sh --full
   # Website checks (ADR-0150) against nginx in a container: pages with
   # chosen status codes, text and redirects, and certificates of a
   # throwaway CA (valid, expired, another name, 5 days left, self-signed),

@@ -1,6 +1,8 @@
 //! What a server's page shows of virtualization (ADR-0156): for a
 //! vCenter, ESXi or Hyper-V source, its hosts, clusters, virtual machines
-//! and datastores; for any server, the virtual machine it is.
+//! and datastores; for a Kubernetes cluster, its nodes, namespaces,
+//! workloads and failed jobs (ADR-0183); for any server, the virtual
+//! machine or node it is.
 
 use axum::extract::{Path, State};
 use axum::Json;
@@ -25,17 +27,22 @@ pub struct SourceView {
     /// Whether the last collection worked.
     pub up: bool,
     /// Why not: `connect`, `tls`, `certificate`, `login`, `api` for a
-    /// vCenter; `not_installed`, `denied`, `failed` for Hyper-V.
+    /// vCenter; `not_installed`, `denied`, `failed` for Hyper-V;
+    /// `connect`, `timeout`, `tls`, `login`, `permission`, `protocol` for
+    /// a Kubernetes cluster.
     pub reason: Option<String>,
     /// The message, in English, such as what to do about it.
     pub error: Option<String>,
-    /// What answered: `product`, `version`, `api_type`, `host`.
+    /// What answered: `product`, `version`, `api_type`, `host`; for a
+    /// cloud account `provider`; for a Kubernetes cluster `product`
+    /// (`Kubernetes`), `version`, and `unread`, what could not be read and
+    /// why, such as `metrics-server (not installed)`.
     #[schema(value_type = Object)]
     pub details: Value,
     pub seen_at: DateTime<Utc>,
 }
 
-/// The server or device a virtual machine is.
+/// The server or device a virtual machine or Kubernetes node is.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LinkedServer {
     pub id: Uuid,
@@ -46,35 +53,52 @@ pub struct LinkedServer {
     pub awaiting_agent: bool,
 }
 
-/// One host, cluster, virtual machine or datastore.
+/// One host, cluster, virtual machine or datastore; or one node,
+/// namespace, workload or failed job of a Kubernetes cluster.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ObjectView {
     pub id: Uuid,
-    /// `vm`, `host`, `cluster` or `datastore`.
+    /// `vm`, `host`, `cluster` or `datastore`; for a Kubernetes cluster
+    /// `node`, `namespace`, `workload` or `job` (a job that failed, listed
+    /// while it does: an older row than the source's last reading no
+    /// longer fails).
     pub kind: String,
-    /// Its name, as its series' `instance`.
+    /// Its name, as its series' `instance`: for a workload
+    /// `namespace/kind/name`, for a job `namespace/name`.
     pub name: String,
-    /// Its ID at the source: a managed object ID, or Hyper-V's VM ID.
+    /// Its ID at the source: a managed object ID, Hyper-V's VM ID, or a
+    /// Kubernetes object's UID.
     pub key: String,
     /// What it says of itself: for a virtual machine `uuid`, `host`,
     /// `power_state`, `guest_hostname`, `guest_os`, `addresses`, `macs`,
     /// `replication_mode`, `replication_state`; for a host `cluster`,
     /// `connection_state`, `maintenance`, `product`, `vendor`, `model`;
-    /// for a datastore `type`.
+    /// for a datastore `type`. For a node `uuid`, `hostname`,
+    /// `addresses`, `roles`, `kubelet_version`, `os_image`, `kernel`,
+    /// `runtime`, `architecture`; for a namespace `phase`; for a workload
+    /// `namespace`, `workload` (`deployment`, `statefulset`,
+    /// `daemonset`), `name`; for a job `namespace`, `cron_job`, `reason`,
+    /// `message`, `failed_at`.
     #[schema(value_type = Object)]
     pub details: Value,
     /// Its numbers at the last collection, by measure without the check's
     /// and kind's prefix: `powered_on`, `cpu_usage_ratio`,
     /// `memory_bytes`, `snapshots`, `snapshot_age_seconds`,
-    /// `free_ratio`, `alarms_critical`, and so on.
+    /// `free_ratio`, `alarms_critical`, and so on. For a node `ready`,
+    /// `cpu_cores`, `memory_bytes`, `pods`, `pods_capacity`,
+    /// `cpu_usage_ratio`, `memory_usage_ratio` (the last two with
+    /// metrics-server); for a namespace `pods`, `pods_not_running`,
+    /// `claims_pending`, `jobs_failed`, `cpu_usage_cores`,
+    /// `memory_usage_bytes`; for a workload `replicas_desired`,
+    /// `replicas_ready`, `cpu_usage_cores`, `memory_usage_bytes`.
     #[schema(value_type = Object)]
     pub metrics: Value,
     pub collected_at: DateTime<Utc>,
     pub seen_at: DateTime<Utc>,
     /// Not seen for 15 minutes: the source stopped listing it.
     pub stale: bool,
-    /// For a virtual machine, the server or device it is; `null` when
-    /// none is known, or when the viewer cannot read it.
+    /// For a virtual machine or a node, the server or device it is;
+    /// `null` when none is known, or when the viewer cannot read it.
     pub server: Option<LinkedServer>,
     /// `uuid`, `mac`, `address`, `name`, or `person` when someone tied
     /// it by hand; `null` without a server.
@@ -83,12 +107,13 @@ pub struct ObjectView {
     pub link_fixed: bool,
 }
 
-/// A virtual machine a server is, with where it runs.
+/// A virtual machine or Kubernetes node a server is, with where it runs.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GuestOf {
-    /// The virtual machine.
+    /// The virtual machine (`kind` `vm`) or node (`node`).
     pub object: ObjectView,
-    /// The vCenter, ESXi or Hyper-V host listing it.
+    /// The vCenter, ESXi or Hyper-V host, cloud account or Kubernetes
+    /// cluster listing it.
     pub source_id: Uuid,
     pub source_name: String,
 }
@@ -99,10 +124,12 @@ pub struct Virtualization {
     /// When the server is a source: its last collection; else `null`.
     pub source: Option<SourceView>,
     /// When the server is a source: its objects, hosts first, then
-    /// clusters, virtual machines and datastores, by name.
+    /// clusters, nodes, virtual machines, namespaces, workloads, jobs and
+    /// datastores, by name.
     pub objects: Vec<ObjectView>,
-    /// The virtual machines this server is, from sources the viewer can
-    /// read: usually none or one.
+    /// The virtual machines and nodes this server is, from sources the
+    /// viewer can read: usually none or one, two when a virtual machine
+    /// is also a cluster's node.
     pub guest_of: Vec<GuestOf>,
 }
 
@@ -196,7 +223,7 @@ pub async fn get(
     let rows: Vec<ObjectRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {OBJECT_COLUMNS} FROM virtual_objects o LEFT JOIN servers l ON l.id = o.server_id
          WHERE o.source_id = $1
-         ORDER BY array_position(ARRAY['host', 'cluster', 'vm', 'datastore'], o.kind), lower(o.instance)"
+         ORDER BY array_position(ARRAY['host', 'cluster', 'node', 'vm', 'namespace', 'workload', 'job', 'datastore'], o.kind), lower(o.instance)"
     )))
     .bind(id)
     .fetch_all(&mut *conn)
@@ -204,7 +231,7 @@ pub async fn get(
     let (all, sites) = readable.bind();
     let guests: Vec<(String, Uuid, Uuid)> = sqlx::query_as(
         "SELECT s.hostname, s.id, o.id FROM virtual_objects o JOIN servers s ON s.id = o.source_id
-         WHERE o.server_id = $1 AND o.kind = 'vm' AND s.revoked_at IS NULL
+         WHERE o.server_id = $1 AND o.kind IN ('vm', 'node') AND s.revoked_at IS NULL
            AND ($2 OR s.site_id = ANY($3))
          ORDER BY o.seen_at DESC",
     )
@@ -308,8 +335,8 @@ pub async fn watch_hyperv(
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LinkRequest {
-    /// The server or device the virtual machine is, of the source's
-    /// customer; `null` for none. Kept until changed: matching leaves it.
+    /// The server or device the virtual machine or node is, of the
+    /// source's customer; `null` for none. Kept until changed: matching leaves it.
     #[serde(default)]
     pub server_id: Option<Uuid>,
     /// `true` hands the virtual machine back to automatic matching;
@@ -365,9 +392,9 @@ async fn vm_of(
     }
     let (source, site, customer, instance, details, server, by, kind) =
         row.ok_or(ApiError::NotFound)?;
-    if kind != "vm" {
+    if !monitorflow_sensors::virt::MACHINES.contains(&kind.as_str()) {
         return Err(ApiError::Invalid(
-            "only a virtual machine is a server".into(),
+            "only a virtual machine or a Kubernetes node is a server".into(),
         ));
     }
     Ok((source, site, customer, instance, details, server, by))
@@ -383,8 +410,8 @@ fn record_event<'a>(actor: &'a str, action: &'a str, target: &'a str, details: V
     }
 }
 
-/// `PUT /api/virtual-objects/{id}/server`: ties a virtual machine to a
-/// server by hand, to none, or back to matching. Operators of the
+/// `PUT /api/virtual-objects/{id}/server`: ties a virtual machine or a
+/// Kubernetes node to a server by hand, to none, or back to matching. Operators of the
 /// source's site, for a server they can read.
 pub async fn link(
     State(state): State<ApiState>,
@@ -464,14 +491,15 @@ async fn one(state: &ApiState, user: &CurrentUser, id: Uuid) -> Result<ObjectVie
     Ok(object(row, Utc::now(), &user.readable_sites()))
 }
 
-/// The name a server waiting for its agent gets from a virtual machine:
-/// its guest host name, else its name, as a host name would read.
+/// The name a server waiting for its agent gets from a virtual machine
+/// or a node: its guest host name (a node's `hostname`), else its name,
+/// as a host name would read.
 pub fn expected_name(instance: &str, details: &Value) -> String {
-    let guest = details
-        .get("guest_hostname")
-        .and_then(Value::as_str)
+    let guest = ["guest_hostname", "hostname"]
+        .iter()
+        .filter_map(|k| details.get(*k).and_then(Value::as_str))
         .map(str::trim)
-        .filter(|g| !g.is_empty());
+        .find(|g| !g.is_empty());
     let name = guest.unwrap_or(instance);
     // `web (vm-42)` when two share a name: the part before.
     let name = name.split(" (").next().unwrap_or(name);
@@ -502,10 +530,10 @@ pub async fn install_agent(
             "this virtual machine has no name to give a server".into(),
         ));
     }
-    let windows = details
-        .get("guest_os")
-        .and_then(Value::as_str)
-        .is_some_and(|os| os.to_ascii_lowercase().contains("windows"));
+    let windows = ["guest_os", "os_image"]
+        .iter()
+        .filter_map(|k| details.get(*k).and_then(Value::as_str))
+        .any(|os| os.to_ascii_lowercase().contains("windows"));
     crate::enroll::identity::lock(&mut tx).await?;
     let base = crate::enroll::install_key::peer_id_from_hostname(&name);
     let peer_id = crate::enroll::install_key::new_id(&mut tx, &base)

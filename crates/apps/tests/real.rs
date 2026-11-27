@@ -275,7 +275,10 @@ async fn mssql() {
 /// service account and `MF_APPS_TEST_KUBERNETES_CA` the file of the
 /// cluster's CA. The script runs k3s without a pod network, so its node
 /// is not ready and its pods pending, and leaves a deployment short of
-/// replicas and a claim of a storage class that does not exist.
+/// replicas and a claim of a storage class that does not exist. With
+/// `MF_APPS_TEST_KUBERNETES_FULL=1` (`--full`, as CI runs it) the cluster
+/// has its pod network and metrics-server, and a job that failed: the
+/// node is then ready and the inventory has resource use.
 #[tokio::test]
 async fn kubernetes() {
     let Some((host, port)) = target("MF_APPS_TEST_KUBERNETES") else {
@@ -326,6 +329,49 @@ async fn kubernetes() {
     );
     assert_eq!(value("namespace_claims_pending", "mf-test"), Some(1.0));
     assert!(value("namespace_pod_restarts", "kube-system").is_some());
+
+    // The inventory (ADR-0156): the node with what matches it to a
+    // server, the namespaces listed, the workloads.
+    let full = std::env::var("MF_APPS_TEST_KUBERNETES_FULL").is_ok_and(|v| v == "1");
+    let info = samples
+        .iter()
+        .find(|s| s.sensor == "node_info")
+        .unwrap_or_else(|| panic!("{samples:#?}"));
+    assert_eq!(info.labels["virt"], "node");
+    assert!(!info.labels["key"].is_empty(), "{info:?}");
+    assert!(info.labels.contains_key("hostname"), "{info:?}");
+    assert!(info.labels["addresses"].contains('.'), "{info:?}");
+    assert!(value("node_cpu_cores", &node.instance).unwrap() > 0.0);
+    assert!(value("node_memory_bytes", &node.instance).unwrap() > 0.0);
+    let ns = samples
+        .iter()
+        .find(|s| s.sensor == "namespace_info" && s.instance == "mf-test")
+        .unwrap_or_else(|| panic!("{samples:#?}"));
+    assert_eq!(ns.labels["phase"], "Active");
+    assert!(samples
+        .iter()
+        .any(|s| s.sensor == "workload_info" && s.instance == "mf-test/deployment/broken"));
+    let unread = up.labels.get("unread").cloned().unwrap_or_default();
+    assert!(
+        !unread.contains("jobs") && !unread.contains("namespaces"),
+        "{unread}"
+    );
+    if full {
+        assert_eq!(node.value, 1.0, "{node:?}");
+        assert!(unread.is_empty(), "{unread}");
+        let used = value("node_cpu_usage_ratio", &node.instance).unwrap();
+        assert!(used > 0.0 && used <= 1.0, "{used}");
+        assert!(value("namespace_memory_usage_bytes", "kube-system").unwrap() > 0.0);
+        assert_eq!(value("namespace_jobs_failed", "mf-test"), Some(1.0));
+        let job = samples
+            .iter()
+            .find(|s| s.sensor == "job_info" && s.instance == "mf-test/fails")
+            .unwrap_or_else(|| panic!("{samples:#?}"));
+        assert_eq!(job.labels["reason"], "BackoffLimitExceeded", "{job:?}");
+    } else {
+        assert_eq!(unread, "metrics-server (not installed)");
+        assert_eq!(value("namespace_jobs_failed", "mf-test"), Some(0.0));
+    }
     for sample in &samples {
         assert!(!format!("{sample:?}").contains(&token));
     }
