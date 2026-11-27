@@ -4,15 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Ready-made application checks: PostgreSQL, MySQL and MariaDB, SQL Server, Redis, JMX, Docker (ADR-0183)"
+description = "Ready-made application checks: PostgreSQL, MySQL and MariaDB, SQL Server, Redis, JMX, Docker, Kubernetes (ADR-0183)"
 
 # Sensors of `monitorflow-sensors` kept apart, as they speak the
 # applications' own protocols: database clients and HTTP over the Docker
-# socket stay out of `monitorflow-sensors` (ADR-0021).
+# socket stay out of `monitorflow-sensors` (ADR-0021), as does the HTTPS
+# client of the Kubernetes API.
 
 [dependencies]
 monitorflow-sensors.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 regex.workspace = true
 # Jolokia's HTTP bridge to JMX, over rustls on ring, the machine's roots
 # for `tls` `verify`.
@@ -29,6 +31,12 @@ webpki-roots.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+x509-parser.workspace = true
 
 [dev-dependencies]
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true, features = ["server", "http1"] }
+rcgen.workspace = true
+tokio-rustls.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

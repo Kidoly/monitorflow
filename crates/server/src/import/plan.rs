@@ -779,7 +779,7 @@ impl Planner<'_> {
             // A ready-made application check (ADR-0183): Docker by the
             // server's agent; a database or Redis by the agent when it is
             // on the server itself, else from a probe, as other network
-            // checks.
+            // checks; a Kubernetes cluster always from a probe.
             Watch::App(app) => {
                 let kind = app.kind.as_str();
                 let mut params = Map::new();
@@ -813,7 +813,17 @@ impl Planner<'_> {
                         }) || server.address.as_deref() == Some(*a);
                         !own
                     });
+                    let kubernetes = app.kind == AppKind::Kubernetes;
                     let text = match (elsewhere, &server.device) {
+                        // A cluster is read from a probe only, at the
+                        // server's own address when it has an agent.
+                        (None, None) if kubernetes => {
+                            probe = true;
+                            if let Some(address) = &server.address {
+                                params.insert("host".into(), json!(address));
+                            }
+                            String::new()
+                        }
                         // The agent, at 127.0.0.1 by default.
                         (None, None) => String::new(),
                         // The device's own address, which the check
@@ -843,10 +853,18 @@ impl Planner<'_> {
                     if app.https {
                         params.insert("tls".into(), json!("verify"));
                     }
-                    // The password is never exported: the person enters it.
+                    // The password, or a cluster's token, is never
+                    // exported: the person enters it.
                     if list == List::Exact {
                         list = List::Approximated;
-                        why = note("app_password", args! {});
+                        why = note(
+                            if kubernetes {
+                                "app_kubernetes"
+                            } else {
+                                "app_password"
+                            },
+                            args! {},
+                        );
                     }
                     (kind, params, (kind.into(), text))
                 }

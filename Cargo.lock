@@ -1766,7 +1766,12 @@ name = "monitorflow-apps"
 version = "0.11.0"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "monitorflow-sensors",
+ "rcgen",
  "regex",
  "reqwest",
  "rustls",
@@ -1779,6 +1784,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "webpki-roots",
+ "x509-parser",
 ]
 
 [[package]]

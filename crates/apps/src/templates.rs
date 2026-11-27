@@ -2,7 +2,7 @@
 //! the template the server applies when a check is added with its
 //! default alerts, and lists in its API.
 
-use crate::{DOCKER, JMX, MSSQL, MYSQL, POSTGRESQL, REDIS};
+use crate::{DOCKER, JMX, KUBERNETES, MSSQL, MYSQL, POSTGRESQL, REDIS};
 
 /// One metric of a kind, by its suffix: the check's name, `_`, then this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +41,7 @@ pub struct Param {
 pub struct Template {
     pub kind: &'static str,
     pub title: &'static str,
-    /// `agent_or_probe` or `agent`.
+    /// `agent_or_probe`, `agent` or `probe`.
     pub runs: &'static str,
     pub default_port: Option<u16>,
     pub params: &'static [Param],
@@ -963,14 +963,177 @@ pub const DOCKER_TEMPLATE: Template = Template {
     ],
 };
 
+pub const KUBERNETES_TEMPLATE: Template = Template {
+    kind: KUBERNETES,
+    title: "Kubernetes cluster",
+    runs: "probe",
+    default_port: Some(crate::kubernetes::DEFAULT_PORT),
+    params: &[
+        p(
+            "host",
+            None,
+            "Address or name of the API server; the device's address by default",
+        ),
+        p("port", Some("6443"), "Port of the API server"),
+        p(
+            "token",
+            None,
+            "A read-only service account's token, kept sealed with the CA, never returned; absent from an update, both stored ones are kept",
+        ),
+        p(
+            "ca_certificate",
+            None,
+            "The cluster's CA in PEM, or the `certificate-authority-data` of a kubeconfig; the machine's roots without it. Sealed with the token: give both again to change either",
+        ),
+        p(
+            "namespaces",
+            None,
+            "A regular expression the namespaces must match; all by default",
+        ),
+    ],
+    metrics: &[
+        m(
+            "up",
+            "",
+            None,
+            "1 when the API answered and took the token, label `version`; 0 with labels `reason` and `error`",
+        ),
+        m(
+            "response_seconds",
+            "seconds",
+            None,
+            "Time to read the version and the nodes",
+        ),
+        m("nodes", "count", None, "Nodes of the cluster"),
+        m("nodes_not_ready", "count", None, "Nodes not ready"),
+        m(
+            "node_ready",
+            "",
+            Some("node"),
+            "1 when ready; labels `roles` and `kubelet_version`",
+        ),
+        m(
+            "node_memory_pressure",
+            "",
+            Some("node"),
+            "1 while the node is short of memory",
+        ),
+        m(
+            "node_disk_pressure",
+            "",
+            Some("node"),
+            "1 while the node is short of disk space",
+        ),
+        m(
+            "node_pid_pressure",
+            "",
+            Some("node"),
+            "1 while the node is short of process IDs",
+        ),
+        m(
+            "node_network_unavailable",
+            "",
+            Some("node"),
+            "1 while the node's network is not set up",
+        ),
+        m(
+            "node_unschedulable",
+            "",
+            Some("node"),
+            "1 when cordoned: no new pod goes there",
+        ),
+        m("pods", "count", None, "Pods of the watched namespaces"),
+        m(
+            "pods_not_running",
+            "count",
+            None,
+            "Pods pending, failed, unknown or running but not ready",
+        ),
+        m(
+            "namespace_pods",
+            "count",
+            Some("namespace"),
+            "Pods of the namespace",
+        ),
+        m(
+            "namespace_pods_not_running",
+            "count",
+            Some("namespace"),
+            "Pods that do not run or are not ready, named in label `pods` with why",
+        ),
+        m(
+            "namespace_pod_restarts",
+            "count",
+            Some("namespace"),
+            "Container restarts since the last collection",
+        ),
+        m(
+            "workload_replicas_desired",
+            "count",
+            Some("workload"),
+            "Replicas a deployment, stateful set or daemon set wants; label `workload`",
+        ),
+        m(
+            "workload_replicas_ready",
+            "count",
+            Some("workload"),
+            "Its replicas ready",
+        ),
+        m(
+            "workload_ready_ratio",
+            "ratio",
+            Some("workload"),
+            "Ready replicas against those wanted; absent when scaled to zero",
+        ),
+        m(
+            "workloads_short",
+            "count",
+            None,
+            "Workloads with fewer ready replicas than wanted",
+        ),
+        m(
+            "claims_pending",
+            "count",
+            None,
+            "Persistent volume claims waiting for a volume",
+        ),
+        m(
+            "namespace_claims_pending",
+            "count",
+            Some("namespace"),
+            "Claims waiting for a volume, named in label `claims`",
+        ),
+        m(
+            "namespace_claims_lost",
+            "count",
+            Some("namespace"),
+            "Claims whose volume is gone, named in label `claims`",
+        ),
+    ],
+    alerts: &[
+        a("up", "<", None, Some(1.0), 2),
+        a("node_ready", "<", None, Some(1.0), 5),
+        a("node_memory_pressure", ">=", Some(1.0), None, 5),
+        a("node_disk_pressure", ">=", Some(1.0), None, 5),
+        a("node_pid_pressure", ">=", Some(1.0), None, 5),
+        a("node_network_unavailable", ">=", None, Some(1.0), 5),
+        a("namespace_pods_not_running", ">", Some(0.0), None, 10),
+        a("namespace_pod_restarts", ">", Some(0.0), None, 0),
+        a("workload_ready_ratio", "<", Some(1.0), Some(0.5), 10),
+        a("namespace_claims_pending", ">", Some(0.0), None, 10),
+        a("namespace_claims_lost", ">", None, Some(0.0), 0),
+    ],
+};
+
 /// Every template, in the order they are offered.
-pub const TEMPLATES: [Template; 6] = [
+pub const TEMPLATES: [Template; 7] = [
     POSTGRESQL_TEMPLATE,
     MYSQL_TEMPLATE,
     MSSQL_TEMPLATE,
     REDIS_TEMPLATE,
     JMX_TEMPLATE,
     DOCKER_TEMPLATE,
+    KUBERNETES_TEMPLATE,
 ];
 
 /// The template of `kind`.

@@ -501,6 +501,11 @@ impl Fleet {
                     // Jolokia beside the exporter, at its own port.
                     app.address = Some(address).filter(|a| !a.is_empty() && !loopback);
                     Note::plain("app_jmx_exporter")
+                } else if kind == AppKind::Kubernetes {
+                    // The API server itself, scraped at its own port.
+                    app.address = Some(address).filter(|a| !a.is_empty() && !loopback);
+                    app.port = Some(port).filter(|p| *p != crate::model::KUBERNETES_PORT);
+                    Note::new("app_kubernetes_exporter", args! {"exporter" => exporter})
                 } else {
                     // The database on the exporter's machine, at its
                     // default port.
@@ -540,7 +545,9 @@ impl Fleet {
 /// default port of postgres_exporter, mysqld_exporter and
 /// redis_exporter; cAdvisor, SQL Server's exporters and the JMX exporter
 /// by their job's name, as their ports (8080, 4000, 9399) are any web
-/// server's or any database's, or they have no port of their own.
+/// server's or any database's, or they have no port of their own; a
+/// Kubernetes API server by its job's name (`kubernetes-apiservers`,
+/// `apiserver`) or its port 6443.
 fn app_exporter(target: &Target) -> Option<(AppKind, &'static str)> {
     let job = target.job.to_ascii_lowercase();
     if job.contains("cadvisor") {
@@ -552,7 +559,11 @@ fn app_exporter(target: &Target) -> Option<(AppKind, &'static str)> {
     if job.contains("jmx") {
         return Some((AppKind::Jmx, "jmx_exporter"));
     }
+    if job.contains("apiserver") {
+        return Some((AppKind::Kubernetes, "kube-apiserver"));
+    }
     match port_of(&target.address)? {
+        crate::model::KUBERNETES_PORT => Some((AppKind::Kubernetes, "kube-apiserver")),
         9187 => Some((AppKind::Postgresql, "postgres_exporter")),
         9104 => Some((AppKind::Mysql, "mysqld_exporter")),
         9121 => Some((AppKind::Redis, "redis_exporter")),
@@ -764,6 +775,61 @@ mod tests {
         assert_eq!(
             fleet.inventory.checks[4].fidelity,
             Fidelity::Approximated(Note::plain("app_jmx_exporter"))
+        );
+    }
+
+    /// A Kubernetes API server scraped by Prometheus becomes the
+    /// Kubernetes check of its cluster (ADR-0183), by its job or its port.
+    #[test]
+    fn api_servers_become_the_kubernetes_check() {
+        let mut collected = Collected::default();
+        // An exporter belongs to a known host: the nodes' node_exporter.
+        for (address, name) in [
+            ("10.0.0.8", "cp-1"),
+            ("10.0.0.9", "cp-2"),
+            ("10.0.0.10", "cp-3"),
+        ] {
+            collected.targets.push(target(
+                "node",
+                &format!("{address}:9100"),
+                &[("hostname", name)],
+            ));
+        }
+        collected
+            .targets
+            .push(target("kubernetes-apiservers", "10.0.0.8:6443", &[]));
+        collected.targets.push(target("k8s", "10.0.0.9:6443", &[]));
+        collected
+            .targets
+            .push(target("apiserver", "10.0.0.10:16443", &[]));
+        let fleet = Fleet::new(&collected);
+        let checks: Vec<_> = fleet
+            .inventory
+            .checks
+            .iter()
+            .filter(|c| matches!(c.watch, Watch::App(_)))
+            .collect();
+        let watches: Vec<&Watch> = checks.iter().map(|c| &c.watch).collect();
+        let cluster = |address: &str, port: Option<u16>| {
+            let mut app = App::new(AppKind::Kubernetes);
+            app.address = Some(address.into());
+            app.port = port;
+            Watch::app(app)
+        };
+        assert_eq!(
+            watches,
+            [
+                &cluster("10.0.0.8", None),
+                &cluster("10.0.0.9", None),
+                &cluster("10.0.0.10", Some(16443)),
+            ]
+        );
+        assert_eq!(
+            checks[0].fidelity,
+            Fidelity::Approximated(Note::new(
+                "app_kubernetes_exporter",
+                args! {"exporter" => "kube-apiserver"}
+            ))
         );
     }
 }

@@ -367,6 +367,18 @@ pub const NOTES: &[(&str, &str)] = &[
         "MonitorFlow has ready-made checks for PostgreSQL, MySQL, MariaDB, SQL Server and Redis, not for this database yet.",
     ),
     (
+        "app_kubernetes",
+        "The cluster's API becomes MonitorFlow's Kubernetes check, read from the central server or a relay, with its own measures and alerts: enter the read-only service account's token and the cluster's CA on the check.",
+    ),
+    (
+        "app_kubernetes_template",
+        "The template {template} becomes MonitorFlow's Kubernetes check of the cluster, read from the central server or a relay, with its own measures and alerts in place of the template's items and triggers. Enter the service account's token and the cluster's CA on the check.",
+    ),
+    (
+        "app_kubernetes_exporter",
+        "MonitorFlow reads the cluster's API itself instead of scraping {exporter}: enter the service account's token and the cluster's CA on the check. The other metrics are not moved.",
+    ),
+    (
         "virtual_partial",
         "MonitorFlow reads the state, processor, memory, storage and snapshots of each virtual machine; traffic per network adapter and storage latency are not measured.",
     ),

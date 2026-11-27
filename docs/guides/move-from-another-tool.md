@@ -48,6 +48,7 @@ What maps how:
 - Agent availability triggers and `agent.ping` are MonitorFlow's offline alert, which every server has.
 - A host linked to a PostgreSQL, MySQL, MariaDB, Redis or Docker template of the Zabbix agent or agent 2 gets MonitorFlow's ready-made check of that kind, with its default alerts, connecting where the template's macros say; the template's items and triggers are not listed again. Passwords are not imported: enter them on the check. ODBC templates cannot be moved, but for "MSSQL by ODBC", which becomes the SQL Server check at `{$MSSQL.PORT}`, as "MSSQL by Zabbix agent 2" does at `{$MSSQL.URI}`.
 - A host linked to a JMX template ("Generic Java JMX", "Apache Tomcat by JMX", "Apache Kafka by JMX") gets MonitorFlow's Java check instead, with its default alerts. It reads the JVM through the Jolokia agent at its port 8778, not through Zabbix's Java gateway: add Jolokia to the JVM as [How to monitor a Java application](monitor-java-jmx.md) shows.
+- A host linked to the "Kubernetes cluster state by HTTP" or "Kubernetes nodes by HTTP" template, or their siblings, gets one Kubernetes check of the cluster at the address of `{$KUBE.API.URL}`, run from the central server or a relay. The token is a secret macro, never exported: enter it and the cluster's CA on the check.
 - Network interface traffic, SNMP, `system.run` and UserParameters cannot be moved yet.
 
 ## Import from Prometheus
@@ -62,6 +63,7 @@ What maps how:
 - The usual node rules (target down, CPU, load, memory, file system space, disk latency, systemd units) become alerts with their levels and `for:` durations, and `probe_success == 0` the alert of each probe.
 - postgres_exporter (port 9187), mysqld_exporter (9104) and redis_exporter (9121) targets become the PostgreSQL, MySQL or Redis check of the exporter's server, at the database's default port, a job named after SQL Server (`mssql`, `sqlserver`) the SQL Server check of its server, and a `cadvisor` job the Docker check of its server, each with its default alerts. The exporter's other metrics are not moved; enter the database password on the check.
 - A job whose name contains `jmx` (the JMX exporter) becomes the Java check of its server, reading Jolokia at port 8778 on the exporter's machine, with its default alerts. Add Jolokia to the JVM; the exporter's other metrics are not moved.
+- A job scraping a Kubernetes API server (`kubernetes-apiservers`, `apiserver`, or targets on port 6443) becomes the Kubernetes check of that address, with its default alerts; enter the token and the cluster's CA on the check.
 - Any other expression is listed as cannot be moved, with the expression.
 - Receivers become channels: email, webhook, Slack, Microsoft Teams and Discord. Alertmanager routes are not moved: in MonitorFlow, a channel covers everything or one site.
 - Active silences become silences of the servers their matchers select.

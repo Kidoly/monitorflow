@@ -1,4 +1,4 @@
-# Database, Redis, JMX and Docker templates (ADR-0183), written by hand in the
+# Database, Redis, JMX, Docker and Kubernetes templates (ADR-0183), written by hand in the
 # shape of a Zabbix 7.0 export (defaults left out, as Zabbix leaves them
 # out). The Redis template is exported with one item and one trigger; the
 # others are linked but not exported, so only their names and the
@@ -64,6 +64,21 @@ zabbix_export:
       interfaces:
         - ip: 192.0.2.51
           interface_ref: if1
+    - host: k8s-prod
+      name: k8s-prod
+      templates:
+        - name: 'Kubernetes cluster state by HTTP'
+        - name: 'Kubernetes nodes by HTTP'
+      groups:
+        - name: Databases
+      interfaces:
+        - ip: 192.0.2.70
+          interface_ref: if1
+      macros:
+        - macro: '{$KUBE.API.URL}'
+          value: 'https://192.0.2.70:6443'
+        - macro: '{$KUBE.API.TOKEN}'
+          type: SECRET_TEXT
     - host: app-01
       name: app-01
       templates:

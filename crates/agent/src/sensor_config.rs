@@ -568,10 +568,16 @@ mod tests {
             assert!(builtin.build(kind, &config).is_ok(), "{kind}");
         }
         // Application checks run here, within the port targets.
-        let here = |k: &&&str| cfg!(unix) || **k != monitorflow_apps::DOCKER;
+        // Kubernetes is a probe's alone.
+        let here = |k: &&&str| {
+            (cfg!(unix) || **k != monitorflow_apps::DOCKER) && **k != monitorflow_apps::KUBERNETES
+        };
         for kind in monitorflow_apps::KINDS.iter().filter(here) {
             assert!(builtin.build(kind, &config).is_ok(), "{kind}");
         }
+        assert!(builtin
+            .build(monitorflow_apps::KUBERNETES, &config)
+            .is_err());
         let mut ping = config.clone();
         ping.params.insert("host".into(), "192.0.2.1".into());
         let error = builtin.build("ping", &ping).err().unwrap();

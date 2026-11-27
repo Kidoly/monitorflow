@@ -267,3 +267,73 @@ async fn mssql() {
         "{up:?}"
     );
 }
+
+/// A real cluster (`scripts/kubernetes-test.sh` starts k3s):
+/// `MF_APPS_TEST_KUBERNETES` is `host:port` of its API,
+/// `MF_APPS_TEST_KUBERNETES_TOKEN` the token of the guide's read-only
+/// service account and `MF_APPS_TEST_KUBERNETES_CA` the file of the
+/// cluster's CA. The script runs k3s without a pod network, so its node
+/// is not ready and its pods pending, and leaves a deployment short of
+/// replicas and a claim of a storage class that does not exist.
+#[tokio::test]
+async fn kubernetes() {
+    let Some((host, port)) = target("MF_APPS_TEST_KUBERNETES") else {
+        eprintln!("MF_APPS_TEST_KUBERNETES not set: skipped");
+        return;
+    };
+    let token = std::env::var("MF_APPS_TEST_KUBERNETES_TOKEN").unwrap();
+    let ca = std::fs::read_to_string(std::env::var("MF_APPS_TEST_KUBERNETES_CA").unwrap()).unwrap();
+    let params = |token: &str, ca: &str| {
+        BTreeMap::from([
+            ("host".to_owned(), host.clone()),
+            ("port".to_owned(), port.clone()),
+            ("token".to_owned(), token.to_owned()),
+            ("ca_certificate".to_owned(), ca.to_owned()),
+        ])
+    };
+    let good = params(&token, &ca);
+    let sensor = build("kubernetes", &good, Place::Relay).unwrap();
+    let deadline = || tokio::time::Instant::now() + Duration::from_secs(20);
+    let _ = sensor.collect(deadline()).await.unwrap();
+    let samples = sensor.collect(deadline()).await.unwrap();
+    let up = find(&samples, "up").expect("up");
+    assert_eq!(up.value, 1.0, "{samples:#?}");
+    assert!(up.labels["version"].starts_with("v1."), "{up:?}");
+    let value = |metric: &str, instance: &str| {
+        samples
+            .iter()
+            .find(|s| s.sensor == metric && s.instance == instance)
+            .map(|s| s.value)
+    };
+    assert_eq!(value("nodes", ""), Some(1.0));
+    let node = find(&samples, "node_ready").unwrap();
+    assert!(node.labels["roles"].contains("control-plane"), "{node:?}");
+    assert_eq!(value("nodes_not_ready", ""), Some(1.0 - node.value));
+    let broken = samples
+        .iter()
+        .find(|s| s.sensor == "namespace_pods_not_running" && s.instance == "mf-test")
+        .unwrap_or_else(|| panic!("{samples:#?}"));
+    assert!(broken.value >= 1.0, "{broken:?}");
+    assert!(broken.labels["pods"].contains("broken-"), "{broken:?}");
+    assert_eq!(
+        value("workload_replicas_desired", "mf-test/deployment/broken"),
+        Some(1.0)
+    );
+    assert_eq!(
+        value("workload_ready_ratio", "mf-test/deployment/broken"),
+        Some(0.0)
+    );
+    assert_eq!(value("namespace_claims_pending", "mf-test"), Some(1.0));
+    assert!(value("namespace_pod_restarts", "kube-system").is_some());
+    for sample in &samples {
+        assert!(!format!("{sample:?}").contains(&token));
+    }
+
+    // A wrong token is a login failure; no CA, a certificate failure.
+    let wrong = build("kubernetes", &params("not-the-token", &ca), Place::Relay).unwrap();
+    let up = wrong.collect(deadline()).await.unwrap();
+    assert_eq!(find(&up, "up").unwrap().labels["reason"], "login", "{up:?}");
+    let untrusted = build("kubernetes", &params(&token, ""), Place::Relay).unwrap();
+    let up = untrusted.collect(deadline()).await.unwrap();
+    assert_eq!(find(&up, "up").unwrap().labels["reason"], "tls", "{up:?}");
+}

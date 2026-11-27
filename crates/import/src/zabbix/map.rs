@@ -593,6 +593,7 @@ fn map_host(
         let code = match kind {
             AppKind::Docker => "app_docker_template",
             AppKind::Jmx => "app_jmx_template",
+            AppKind::Kubernetes => "app_kubernetes_template",
             _ => "app_template",
         };
         out.checks.push(Check {
@@ -614,11 +615,17 @@ fn map_host(
 /// the check reads, and which the check reaches as the server did. Its
 /// JMX templates, read through its Java gateway ("Generic Java JMX",
 /// "Apache Tomcat by JMX", "Apache Kafka by JMX"), become the Java check,
-/// which reads Jolokia instead.
+/// which reads Jolokia instead. Its Kubernetes templates read the cluster
+/// over HTTP from the Zabbix server or a proxy ("Kubernetes cluster state
+/// by HTTP", "Kubernetes nodes by HTTP" and their siblings): one
+/// Kubernetes check for all of them.
 fn app_template(name: &str) -> Option<AppKind> {
     let name = name.to_ascii_lowercase();
     if name.contains("jmx") {
         return Some(AppKind::Jmx);
+    }
+    if name.contains("kubernetes") {
+        return Some(AppKind::Kubernetes);
     }
     let agent = name.contains("zabbix agent")
         || name.starts_with("template db ")
@@ -669,6 +676,7 @@ fn app_item(key: &str, apps: &[(AppKind, String)]) -> bool {
             AppKind::Redis => "redis",
             AppKind::Jmx => "jmx",
             AppKind::Docker => "docker",
+            AppKind::Kubernetes => "kube",
         }
     })
 }
@@ -712,6 +720,16 @@ fn app_of(kind: AppKind, macros: &Macros) -> App {
         // The host's JMX interface is the Java gateway's RMI port, not
         // Jolokia's: the check keeps Jolokia's own, 8778.
         AppKind::Jmx | AppKind::Docker => return app,
+        AppKind::Kubernetes => (
+            first(&[
+                "{$KUBE.API.URL}",
+                "{$KUBE.API.ENDPOINT.URL}",
+                "{$KUBE.API.SERVER.URL}",
+            ]),
+            "",
+            "",
+            "",
+        ),
     };
     // A URI with an address; a socket or a named session says none.
     if let Some(uri) = uri.filter(|u| u.contains("://") && !u.starts_with("unix")) {
@@ -736,6 +754,9 @@ fn app_of(kind: AppKind, macros: &Macros) -> App {
     }
     if kind == AppKind::Postgresql {
         app.database = first(&["{$PG.DATABASE}", "{$PG.DB}"]);
+    }
+    if kind == AppKind::Kubernetes && app.port == Some(crate::model::KUBERNETES_PORT) {
+        app.port = None;
     }
     app
 }

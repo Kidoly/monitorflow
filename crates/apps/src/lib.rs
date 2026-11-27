@@ -1,24 +1,28 @@
 //! Ready-made application checks (ADR-0183): PostgreSQL, MySQL and
-//! MariaDB, SQL Server, Redis, Java virtual machines through Jolokia, and
-//! Docker, as kinds of check with their metrics and default alerts
-//! ([`templates`]) instead of scripts.
+//! MariaDB, SQL Server, Redis, Java virtual machines through Jolokia,
+//! Docker and Kubernetes, as kinds of check with their metrics and default
+//! alerts ([`templates`]) instead of scripts.
 //!
 //! `postgresql`, `mysql`, `mssql`, `redis` and `jmx` connect over the network, so the
 //! server's agent runs them against `127.0.0.1` (within its
 //! `sensors.port_targets`, ADR-0111) and a probe, the central server or a
 //! relay (ADR-0148), against the server's or device's address. `docker`
 //! reads the Docker Engine API on the local socket: agents only, on Linux.
+//! `kubernetes` reads a cluster's API with a service account's token:
+//! probes only.
 //!
 //! Every kind reports `up`: 1 when the application answered and the login
 //! worked, 0 with labels `reason` (`connect`, `timeout`, `tls`, `login`,
 //! `permission`, `protocol`) and `error`, so a stopped database alerts
-//! like a failed check. The password ([`SECRET_PARAM`]) is kept sealed by
-//! the server and given only to whoever runs the check; it is never in a
-//! sample, a label or a log line.
+//! like a failed check. The password ([`SECRET_PARAM`]), or a cluster's
+//! token and CA ([`secret_params`]), is kept sealed by the server and
+//! given only to whoever runs the check; it is never in a sample, a label
+//! or a log line.
 
 pub mod docker;
 pub mod mssql;
 pub mod jmx;
+pub mod kubernetes;
 pub mod mysql;
 mod params;
 pub mod postgresql;
@@ -51,10 +55,15 @@ pub const REDIS: &str = "redis";
 pub const JMX: &str = "jmx";
 /// The containers of the local Docker or Podman engine.
 pub const DOCKER: &str = "docker";
+/// A Kubernetes cluster, through its API.
+pub const KUBERNETES: &str = "kubernetes";
 /// Every kind of this crate.
-pub const KINDS: [&str; 6] = [POSTGRESQL, MYSQL, MSSQL, REDIS, JMX, DOCKER];
+pub const KINDS: [&str; 7] = [POSTGRESQL, MYSQL, MSSQL, REDIS, JMX, DOCKER, KUBERNETES];
 /// The kinds a probe runs as well as an agent: those over the network.
 pub const NETWORK_KINDS: [&str; 5] = [POSTGRESQL, MYSQL, MSSQL, REDIS, JMX];
+/// The kinds a probe runs: those over the network, and Kubernetes, which
+/// only a probe runs.
+pub const PROBE_KINDS: [&str; 6] = [POSTGRESQL, MYSQL, MSSQL, REDIS, JMX, KUBERNETES];
 /// The parameter holding the password: sealed by the server, never stored
 /// with the check's other parameters nor returned.
 pub const SECRET_PARAM: &str = "password";
@@ -70,9 +79,49 @@ pub fn is_kind(kind: &str) -> bool {
     KINDS.contains(&kind)
 }
 
-/// Whether checks of `kind` take a password.
+/// The parameters of `kind` the server keeps sealed instead of storing
+/// them with the others, the main one first: an update without it keeps
+/// what is sealed.
+pub fn secret_params(kind: &str) -> &'static [&'static str] {
+    match kind {
+        KUBERNETES => &[kubernetes::TOKEN_PARAM, kubernetes::CA_PARAM],
+        k if NETWORK_KINDS.contains(&k) => &[SECRET_PARAM],
+        _ => &[],
+    }
+}
+
+/// Whether checks of `kind` take a password or a token.
 pub fn takes_secret(kind: &str) -> bool {
-    NETWORK_KINDS.contains(&kind)
+    !secret_params(kind).is_empty()
+}
+
+/// The one text the server seals from the secret parameters `given` of
+/// `kind`: the password itself, or a cluster's token and CA as a JSON
+/// object.
+pub fn seal_form(kind: &str, given: &BTreeMap<String, String>) -> String {
+    if kind == KUBERNETES {
+        let field = |name: &str| given.get(name).cloned().unwrap_or_default();
+        return serde_json::json!({
+            kubernetes::TOKEN_PARAM: field(kubernetes::TOKEN_PARAM),
+            kubernetes::CA_PARAM: field(kubernetes::CA_PARAM),
+        })
+        .to_string();
+    }
+    given.get(SECRET_PARAM).cloned().unwrap_or_default()
+}
+
+/// Puts what [`seal_form`] made back as the parameters the check reads.
+pub fn open_into(kind: &str, sealed: &str, params: &mut BTreeMap<String, String>) {
+    if kind != KUBERNETES {
+        params.insert(SECRET_PARAM.into(), sealed.to_owned());
+        return;
+    }
+    let value: serde_json::Value = serde_json::from_str(sealed).unwrap_or_default();
+    for name in [kubernetes::TOKEN_PARAM, kubernetes::CA_PARAM] {
+        if let Some(text) = value[name].as_str().filter(|t| !t.is_empty()) {
+            params.insert(name.into(), text.to_owned());
+        }
+    }
 }
 
 /// Who builds the check, and within which limits.
@@ -105,6 +154,7 @@ pub fn build(
         MSSQL => Arc::new(mssql::Mssql::from_params(&mut p, place)?),
         REDIS => Arc::new(redis::Redis::from_params(&mut p, place)?),
         JMX => Arc::new(jmx::Jmx::from_params(&mut p, place)?),
+        KUBERNETES => Arc::new(kubernetes::Kubernetes::from_params(&mut p, place)?),
         _ => Arc::new(docker::Docker::from_params(&mut p, place)?),
     };
     p.finish()?;

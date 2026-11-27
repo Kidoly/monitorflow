@@ -741,7 +741,7 @@ async fn vmware_hosts_become_a_vcenter_device() {
             && u.hosts == ["4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"]));
 }
 
-/// Database, Redis and Docker templates (ADR-0183): one ready-made check
+/// Database, Redis, Docker and Kubernetes templates (ADR-0183): one ready-made check
 /// per template on its host, where its macros say it connects, in place
 /// of the template's items and triggers; an ODBC template stays missing,
 /// but SQL Server's.
@@ -804,6 +804,24 @@ async fn application_templates_become_their_checks() {
     assert_eq!(jvm[0].watch, Watch::app(App::new(AppKind::Jmx)));
     assert_eq!(note(&jvm[0].fidelity), Some("app_jmx_template"));
     assert_eq!(jvm[0].origin.name, "Apache Tomcat by JMX");
+
+    // The Kubernetes templates: one check of the cluster at its API.
+    let mut cluster = App::new(AppKind::Kubernetes);
+    cluster.address = Some("192.0.2.70".into());
+    let kubernetes: Vec<_> = inventory
+        .checks
+        .iter()
+        .filter(|c| {
+            c.host == "k8s-prod"
+                && matches!(&c.watch, Watch::App(a) if a.kind == AppKind::Kubernetes)
+        })
+        .collect();
+    assert_eq!(kubernetes.len(), 1, "{kubernetes:#?}");
+    assert_eq!(kubernetes[0].watch, Watch::app(cluster));
+    assert_eq!(
+        note(&kubernetes[0].fidelity),
+        Some("app_kubernetes_template")
+    );
 
     // Neither the templates, their items and triggers, nor a host's own
     // item of the same plugin are listed as not movable.

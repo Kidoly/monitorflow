@@ -48,7 +48,8 @@ pub enum Family {
     OtherDatabase,
     /// A sensor reading values over HTTP (REST Custom, HTTP Data
     /// Advanced, HTTP XML/REST Value): the Java check when its URL is
-    /// Jolokia's, nothing otherwise.
+    /// Jolokia's, the Kubernetes check when it is a cluster's API,
+    /// nothing otherwise.
     HttpData,
     /// NetFlow, jFlow, sFlow or IPFIX received from the device.
     Flow,
@@ -85,11 +86,17 @@ pub fn family(sensor_type: &str) -> Family {
     if has("jmx") || has("jolokia") {
         return Family::App(AppKind::Jmx);
     }
-    // `restcustom`, `httpdataadvanced`, `httpxmlrestvalue`, and the names
-    // PRTG shows: "REST Custom", "HTTP Data Advanced", "HTTP XML/REST
-    // Value".
+    // PRTG has no Kubernetes sensor of its own: a custom one named so, or
+    // one whose URL is a cluster's API (below).
+    if has("kubernetes") || has("k8s") {
+        return Family::App(AppKind::Kubernetes);
+    }
+    // `restcustom`, `paessler.rest.custom`, `httpdataadvanced`,
+    // `httpxmlrestvalue`, and the names PRTG shows: "REST Custom", "HTTP
+    // Data Advanced", "HTTP XML/REST Value".
     if t.starts_with("restcustom")
         || t.starts_with("rest custom")
+        || t.starts_with("paessler.rest.custom")
         || has("httpdata")
         || has("http data")
         || has("xmlrest")
@@ -180,6 +187,7 @@ pub fn wanted(sensor_type: &str) -> (&'static [&'static str], bool) {
         Family::Vmware => (&[], true),
         Family::App(AppKind::Docker) => (DOCKER_SETTINGS, true),
         Family::App(AppKind::Jmx) | Family::HttpData => (JOLOKIA_SETTINGS, true),
+        Family::App(AppKind::Kubernetes) => (REST_SETTINGS, false),
         Family::App(_) => (&["port", "database"], true),
         Family::Ping | Family::Traffic | Family::Flow | Family::OtherDatabase | Family::Other => {
             (&[], false)
@@ -321,11 +329,16 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
         Family::Port => port(sensor, host),
         Family::Web => match jolokia(sensor, host) {
             Some(mapped) => mapped,
-            None => web(sensor, host),
+            None => match kubernetes_api(sensor, host) {
+                Some(app) => kubernetes(sensor, app),
+                None => web(sensor, host),
+            },
         },
-        Family::HttpData => jolokia(sensor, host).unwrap_or_else(|| {
-            Mapped::Not(Note::new("prtg_sensor_type", args! {"type" => sensor_type}))
-        }),
+        Family::HttpData => jolokia(sensor, host)
+            .or_else(|| kubernetes_api(sensor, host).map(|app| kubernetes(sensor, app)))
+            .unwrap_or_else(|| {
+                Mapped::Not(Note::new("prtg_sensor_type", args! {"type" => sensor_type}))
+            }),
         Family::Certificate => certificate(sensor, host),
         Family::EventLog => event_log(sensor),
         // A server's own `net` check, a device's SNMP interfaces (ADR-0149).
@@ -349,6 +362,14 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
         Family::App(AppKind::Jmx) => {
             jolokia(sensor, host).unwrap_or_else(|| Mapped::Not(Note::plain("prtg_no_setting")))
         }
+        Family::App(AppKind::Kubernetes) => {
+            let mut app =
+                kubernetes_api(sensor, host).unwrap_or_else(|| App::new(AppKind::Kubernetes));
+            if app.address.is_none() {
+                app.address = host.map(str::to_owned);
+            }
+            kubernetes(sensor, app)
+        }
         Family::App(kind) => app(sensor, kind, host),
         Family::OtherDatabase => Mapped::Not(Note::plain("app_other_database")),
         // Flows are not a check: the device's Flows tab turns their
@@ -359,8 +380,8 @@ pub fn map(sensor: &Object, host: Option<&str>) -> Mapped {
     }
 }
 
-/// The settings of a sensor that may read Jolokia: its URL, and the user
-/// name of the authentication, never its password.
+/// The settings of a sensor that may read Jolokia or a cluster's API: its
+/// URL, and the user name of the authentication, never its password.
 const JOLOKIA_SETTINGS: &[&str] = &["httpurl", "url", "requesturl", "httpusername", "port"];
 
 /// An HTTP sensor whose URL is Jolokia's (`http://jvm:8778/jolokia/read/…`),
@@ -420,6 +441,54 @@ fn jolokia(sensor: &Object, host: Option<&str>) -> Option<Mapped> {
         limits: Vec::new(),
         lost: lost(sensor, &[]),
     })
+}
+
+/// The settings holding the URL a REST or Kubernetes sensor reads.
+const REST_SETTINGS: &[&str] = &["url", "httpurl", "requesturl"];
+
+/// The API of a Kubernetes cluster a sensor reads, by its URL: a path of
+/// the API (`/api/v1/...`, `/apis/...`), or a health or version path on
+/// the API server's port 6443. A path alone is on the device.
+fn kubernetes_api(sensor: &Object, host: Option<&str>) -> Option<App> {
+    let url = REST_SETTINGS
+        .iter()
+        .find_map(|name| sensor.setting(name))
+        .map(str::trim)
+        .filter(|u| !u.is_empty())?;
+    let (address, port, path) = match url.split_once("://") {
+        Some((_, rest)) => {
+            let path = rest.find('/').map_or("/", |i| &rest[i..]);
+            (
+                Some(crate::text::host_of(url)).filter(|h| !h.is_empty()),
+                crate::text::port_of(url),
+                path,
+            )
+        }
+        None => (host.map(str::to_owned), None, url),
+    };
+    let api = path.starts_with("/api/v1/") || path.starts_with("/apis/");
+    let health = ["/healthz", "/livez", "/readyz", "/version"]
+        .iter()
+        .any(|p| path.starts_with(p));
+    if !(api || (health && port == Some(crate::model::KUBERNETES_PORT))) {
+        return None;
+    }
+    let mut app = App::new(AppKind::Kubernetes);
+    app.address = address;
+    app.port = port.filter(|p| *p != crate::model::KUBERNETES_PORT);
+    Some(app)
+}
+
+/// A sensor reading a Kubernetes cluster: the Kubernetes check of the
+/// cluster (ADR-0183), whose token is never exported.
+fn kubernetes(sensor: &Object, app: App) -> Mapped {
+    Mapped::Watch {
+        watch: Watch::app(app),
+        alert: None,
+        fidelity: approximated("app_kubernetes", args! {}),
+        limits: Vec::new(),
+        lost: lost(sensor, &[]),
+    }
 }
 
 /// The settings naming the container of a Docker Container Status
@@ -1494,5 +1563,98 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// PRTG has no Kubernetes sensor: custom ones named so, and HTTP or
+    /// REST Custom sensors reading a cluster's API, become the Kubernetes
+    /// check (ADR-0183); other REST sensors are not moved.
+    #[test]
+    fn kubernetes_sensors() {
+        assert_eq!(
+            family("Kubernetes Nodes (EXE/XML)"),
+            Family::App(AppKind::Kubernetes)
+        );
+        // REST Custom may read Jolokia too: its settings hold both URLs.
+        assert_eq!(family("restcustom"), Family::HttpData);
+        assert_eq!(family("paessler.rest.custom"), Family::HttpData);
+        assert!(REST_SETTINGS.iter().all(|s| wanted("restcustom").0.contains(s)));
+        let sensor = |t: &str, url: Option<&str>| {
+            let mut s = Object::new(1, Kind::Sensor, "API", Some(0));
+            s.sensor_type = Some(t.into());
+            if let Some(url) = url {
+                s.settings.insert("url".into(), url.into());
+            }
+            s
+        };
+        let watch = |mapped: Mapped| match mapped {
+            Mapped::Watch {
+                watch, fidelity, ..
+            } => {
+                assert_eq!(fidelity, approximated("app_kubernetes", args! {}));
+                watch
+            }
+            other => panic!("{other:?}"),
+        };
+        let mut on_device = App::new(AppKind::Kubernetes);
+        on_device.address = Some("192.0.2.70".into());
+        assert_eq!(
+            watch(map(
+                &sensor("restcustom", Some("https://192.0.2.70:6443/api/v1/nodes")),
+                None
+            )),
+            Watch::app(on_device.clone())
+        );
+        assert_eq!(
+            watch(map(
+                &sensor("httpadvanced", Some("https://192.0.2.70:6443/readyz")),
+                None
+            )),
+            Watch::app(on_device.clone())
+        );
+        assert_eq!(
+            watch(map(
+                &sensor("restcustom", Some("/apis/apps/v1/deployments")),
+                Some("192.0.2.70")
+            )),
+            Watch::app(on_device.clone())
+        );
+        let mut other_port = App::new(AppKind::Kubernetes);
+        other_port.address = Some("k8s.example.com".into());
+        other_port.port = Some(443);
+        assert_eq!(
+            watch(map(
+                &sensor("restcustom", Some("https://k8s.example.com/api/v1/pods")),
+                None
+            )),
+            Watch::app(other_port)
+        );
+        assert_eq!(
+            watch(map(
+                &sensor("Kubernetes Pods (Python)", None),
+                Some("192.0.2.70")
+            )),
+            Watch::app(on_device)
+        );
+        // A health path elsewhere than 6443 is any website's.
+        assert!(matches!(
+            map(
+                &sensor("httpadvanced", Some("https://shop.example.com/healthz")),
+                None
+            ),
+            Mapped::Watch {
+                watch: Watch::Web(_),
+                ..
+            }
+        ));
+        assert_eq!(
+            map(
+                &sensor("restcustom", Some("https://api.example.com/v2/orders")),
+                None
+            ),
+            Mapped::Not(Note::new(
+                "prtg_sensor_type",
+                args! {"type" => "restcustom"}
+            ))
+        );
     }
 }
