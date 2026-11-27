@@ -55,7 +55,7 @@ impl Mysql {
             .ssl_mode(match t.tls {
                 Tls::Off => MySqlSslMode::Disabled,
                 Tls::Prefer => MySqlSslMode::Preferred,
-                Tls::Verify => MySqlSslMode::VerifyIdentity,
+                Tls::Verify | Tls::Strict => MySqlSslMode::VerifyIdentity,
             })
             .disable_statement_logging();
         if let Some(user) = &t.user {

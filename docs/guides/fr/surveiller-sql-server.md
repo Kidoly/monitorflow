@@ -65,7 +65,7 @@ SQL Server écrit ses erreurs dans le journal d'événements Application : « Er
 
 ## Créer un identifiant qui ne lit que l'état du serveur
 
-Le contrôle demande un identifiant SQL Server avec un seul droit : `VIEW SERVER STATE`, ou `VIEW SERVER PERFORMANCE STATE` à partir de SQL Server 2022. Il permet de lire les compteurs et les sessions du serveur, pas vos données, et n'a besoin d'aucun utilisateur dans aucune base. Dans SQL Server Management Studio, ou avec `sqlcmd`, en administrateur :
+Le contrôle se connecte avec un identifiant SQL Server, ou avec un compte Windows (plus bas). Dans les deux cas, il faut un seul droit : `VIEW SERVER STATE`, ou `VIEW SERVER PERFORMANCE STATE` à partir de SQL Server 2022. Il permet de lire les compteurs et les sessions du serveur, pas vos données, et n'a besoin d'aucun utilisateur dans aucune base. Dans SQL Server Management Studio, ou avec `sqlcmd`, en administrateur :
 
 ```sql
 CREATE LOGIN monitorflow WITH PASSWORD = 'choisissez-un-long-mot-de-passe';
@@ -76,21 +76,39 @@ GRANT VIEW SERVER STATE TO monitorflow;
 
 Sur un groupe de disponibilité, créez l'identifiant sur chaque réplica : les identifiants ne sont pas copiés avec les bases.
 
-**L'authentification SQL Server doit être activée.** Beaucoup de serveurs n'acceptent que les connexions Windows. Dans Management Studio, ouvrez « Propriétés › Sécurité » du serveur, choisissez « Mode d'authentification SQL Server et Windows », puis redémarrez le service. La connexion avec un compte Windows n'est pas encore prise en charge par le contrôle.
+**Un identifiant SQL Server demande l'authentification SQL Server activée.** Beaucoup de serveurs n'acceptent que les connexions Windows. Dans Management Studio, ouvrez « Propriétés › Sécurité » du serveur, choisissez « Mode d'authentification SQL Server et Windows », puis redémarrez le service. Ou connectez-vous plutôt avec un compte Windows.
 
-**TCP doit être activé, sur un port fixe.** SQL Server Express est livré avec TCP/IP désactivé, et une instance nommée choisit son port au démarrage : dans le Gestionnaire de configuration SQL Server, activez TCP/IP et donnez un port fixe à l'instance, puis saisissez ce port dans « Port ». Le contrôle ne demande pas à SQL Server Browser le port d'une instance nommée.
+### Ou se connecter avec un compte Windows
+
+Sur un serveur Windows, l'agent peut se connecter avec un compte Windows, par Windows lui-même (Kerberos dans un domaine, NTLM sinon) : pas d'identifiant SQL Server, pas de mot de passe à garder. L'agent tourne sous `NT SERVICE\MonitorFlowAgent`, le compte que SQL Server voit quand il tourne sur la même machine. Donnez-lui le droit :
+
+```sql
+CREATE LOGIN [NT SERVICE\MonitorFlowAgent] FROM WINDOWS;
+GRANT VIEW SERVER STATE TO [NT SERVICE\MonitorFlowAgent];
+```
+
+Quand l'agent vérifie un SQL Server sur une autre machine du domaine, SQL Server voit le compte d'ordinateur de l'agent, son nom suivi de `$` : `CREATE LOGIN [EXAMPLE\APP1$] FROM WINDOWS;`, puis le même `GRANT`. Pour un autre compte, un compte de service du domaine par exemple, saisissez-le sous la forme `EXAMPLE\svc-monitor` (ou `svc-monitor@example.com`) dans « Nom d’utilisateur » avec son mot de passe, gardé scellé comme celui d'un identifiant SQL Server.
+
+Kerberos demande le nom complet du serveur dans « Adresse » (`db1.example.com`) et le nom de principal de service de SQL Server, `MSSQLSvc/db1.example.com:1433`, enregistré dans le domaine, ce que SQL Server fait lui-même quand son compte de service en a le droit. Avec `127.0.0.1` ou une adresse, Windows se connecte en NTLM, ce qui marche pour un SQL Server sur la même machine et dans la plupart des domaines.
+
+La connexion Windows ne tourne que sur l'agent d'un serveur Windows : le serveur central et les relais tournent sous Linux et ne peuvent pas se connecter à Windows. Le formulaire ne la propose donc que sur les serveurs Windows, et l'API la refuse quand « Vérifié depuis » désigne une sonde.
+
+**TCP doit être activé.** SQL Server Express est livré avec TCP/IP désactivé : dans le Gestionnaire de configuration SQL Server, activez TCP/IP pour l'instance, puis redémarrez-la.
+
+**Une instance nommée** (`SQLEXPRESS`, `SALES`) choisit en général son port au démarrage. Saisissez son nom dans « Instance nommée » et laissez « Port » vide : à chaque vérification, MonitorFlow demande à SQL Server Browser (le service `SQLBrowser`, port UDP 1434) le port de l'instance, et la suit donc quand son port change. SQL Server Browser doit tourner, et le pare-feu Windows accepter UDP 1434 depuis qui vérifie. Si vous avez donné un port fixe à l'instance, saisissez-le aussi dans « Port » : Browser n'est alors pas interrogé. Avec des cibles de ports sur l'agent, le port 1434 et celui de l'instance doivent tous deux en faire partie.
 
 ## Mise en place
 
 1. Ouvrez « Fleet », cliquez sur la machine SQL Server et restez sur l'onglet « Sensors ».
 2. Cliquez sur « Add a check » et tapez `SQL Server` dans « Find a check ».
 3. Choisissez « SQL Server », le « Contrôle d’application ».
-4. Gardez `127.0.0.1` dans « Adresse » et `1433` dans « Port » si SQL Server tourne sur ce serveur à son port par défaut. Gardez `monitorflow` dans « Nom d’utilisateur » et saisissez le mot de passe de l'identifiant dans « Mot de passe ».
-5. Laissez « Ajouter les alertes recommandées » activé, puis cliquez sur « Add check ».
+4. Gardez `127.0.0.1` dans « Adresse » et laissez « Port » vide si SQL Server tourne sur ce serveur à son port par défaut, 1433. Pour une instance nommée, saisissez son nom dans « Instance nommée ».
+5. Dans « Se connecter avec », gardez « Une connexion SQL Server » : laissez « Nom d’utilisateur » vide pour `monitorflow` ou saisissez l'identifiant, et son mot de passe dans « Mot de passe ». Ou choisissez « Un compte Windows » et laissez « Nom d’utilisateur » et « Mot de passe » vides pour vous connecter avec le compte de l'agent.
+6. Laissez « Ajouter les alertes recommandées » activé, puis cliquez sur « Add check ».
 
 Le mot de passe est gardé scellé sur le serveur central, chiffré comme ses autres secrets. Il n'est jamais réaffiché, jamais écrit dans un journal, et l'API indique seulement s'il est défini. Si vous changez plus tard « Adresse » ou « Port », saisissez de nouveau le mot de passe.
 
-Dans « Plus d’options », « Chiffrement » vaut « Quand le serveur le propose » (par défaut : la session est chiffrée avec le certificat de SQL Server, même celui qu'il crée lui-même au démarrage, qui n'est pas vérifié), « Obligatoire, certificat vérifié » (le certificat doit être signé par une autorité de confiance de la machine, pour le nom saisi dans « Adresse ») ou « Aucun ». Avec « Aucun », le mot de passe traverse le réseau en clair : réservez-le à un contrôle sur le serveur lui-même, et seulement si SQL Server refuse le chiffrement. Quand le chiffrement est demandé et que SQL Server ne le propose pas, le contrôle échoue plutôt que d'envoyer le mot de passe en clair.
+Dans « Plus d’options », « Chiffrement » vaut « Quand le serveur le propose » (par défaut : la session est chiffrée avec le certificat de SQL Server, même celui qu'il crée lui-même au démarrage, qui n'est pas vérifié), « Obligatoire, certificat vérifié » (le certificat doit être signé par une autorité de confiance de la machine, pour le nom saisi dans « Adresse »), « Strict (TDS 8.0), certificat vérifié » ou « Aucun ». Le chiffrement strict, à partir de SQL Server 2022, démarre TLS avant tout échange, comme un site web, et vérifie le certificat comme « Obligatoire, certificat vérifié » ; choisissez-le quand SQL Server a « Force Strict Encryption » activé, qui refuse tout autre client. Avec « Aucun », le mot de passe traverse le réseau en clair : réservez-le à un contrôle sur le serveur lui-même, et seulement si SQL Server refuse le chiffrement. Quand le chiffrement est demandé et que SQL Server ne le propose pas, le contrôle échoue plutôt que d'envoyer le mot de passe en clair.
 
 Le contrôle tourne toutes les 60 secondes par défaut. Pour surveiller d'un coup tous les serveurs SQL Server d'un site, choisissez « Every server of » suivi du site sous « Add to », si tous les serveurs du site font tourner SQL Server avec le même identifiant.
 
@@ -98,7 +116,7 @@ Le contrôle tourne toutes les 60 secondes par défaut. Pour surveiller d'un cou
 
 « Vérifié depuis » choisit qui se connecte :
 
-- « L’agent de ce serveur » (par défaut) : l'agent de la machine SQL Server, Windows ou Linux, se connecte à `127.0.0.1`. Si son administrateur a défini des cibles de ports (`sensors.port_targets` dans `agent.toml`), l'adresse et le port doivent en faire partie.
+- « L’agent de ce serveur » (par défaut) : l'agent de la machine SQL Server, Windows ou Linux, se connecte à `127.0.0.1`. Lui seul se connecte avec un compte Windows. Si son administrateur a défini des cibles de ports (`sensors.port_targets` dans `agent.toml`), l'adresse et le port doivent en faire partie.
 - « Le serveur central », ou « Relais » suivi du nom d'un relais du site : pour le vérifier de l'extérieur, comme les applications l'atteignent. Saisissez l'adresse du serveur dans « Adresse », et laissez le pare-feu Windows accepter le port depuis le serveur central ou le relais. Le serveur central ne se connecte jamais aux adresses link-local (`169.254.x.x`, `fe80::`).
 
 Un équipement, une machine sans agent comme une Azure SQL Managed Instance, a le même contrôle dans son catalogue : il tourne toujours depuis le serveur central ou un relais, vers l'adresse de l'équipement.
@@ -115,6 +133,19 @@ L'API publique ajoute le même contrôle : `POST /api/v1/servers/{id}/sensor_con
   "default_alerts": true
 }
 ```
+
+Une instance nommée, avec le compte Windows de l'agent et le chiffrement strict :
+
+```json
+{
+  "kind": "mssql",
+  "interval_ms": 60000,
+  "params": { "host": "db1.example.com", "instance": "SALES", "auth": "windows", "tls": "strict" },
+  "default_alerts": true
+}
+```
+
+`instance` désigne l'instance (son port vient alors de SQL Server Browser, sauf si `port` est donné), `auth` vaut `sql` (par défaut) ou `windows`, et `tls` vaut `prefer`, `verify`, `strict` ou `off`.
 
 ### Vérifications de service et de port
 
@@ -151,10 +182,10 @@ Quand `mssql_up` vaut 0, son étiquette `reason` dit pourquoi, et son étiquette
 
 | `reason` | Que vérifier |
 | --- | --- |
-| `connect` | Rien ne répond à cette adresse et ce port : SQL Server est arrêté, TCP/IP est désactivé, l'instance écoute sur un autre port, ou un pare-feu refuse la connexion |
+| `connect` | Rien ne répond à cette adresse et ce port : SQL Server est arrêté, TCP/IP est désactivé, l'instance écoute sur un autre port, ou un pare-feu refuse la connexion. Avec une instance nommée : SQL Server Browser n'a pas répondu sur UDP 1434, ne connaît pas l'instance, ou a donné un port hors des cibles de ports de l'agent |
 | `timeout` | Pas de réponse à temps : un pare-feu qui jette les paquets, ou un serveur trop chargé pour répondre |
-| `tls` | Le chiffrement a échoué : SQL Server n'en propose pas alors que le contrôle le demande, ou l'exige alors que « Chiffrement » vaut « Aucun », ou avec « Obligatoire, certificat vérifié » son certificat n'est pas de confiance ou pas pour le nom saisi dans « Adresse » |
-| `login` | Mauvais identifiant ou mot de passe (erreur 18456), authentification SQL Server désactivée, ou mot de passe de l'identifiant expiré |
+| `tls` | Le chiffrement a échoué : SQL Server n'en propose pas alors que le contrôle le demande, ou l'exige alors que « Chiffrement » vaut « Aucun », ou avec « Obligatoire, certificat vérifié » son certificat n'est pas de confiance ou pas pour le nom saisi dans « Adresse », de même en strict. Le strict demande SQL Server 2022 ou plus récent, avec un certificat configuré |
+| `login` | Mauvais identifiant ou mot de passe (erreur 18456), authentification SQL Server désactivée, ou mot de passe de l'identifiant expiré. Avec un compte Windows : pas d'identifiant pour lui dans SQL Server (erreur 18456), ou Windows a refusé la connexion (l'étiquette `error` donne son code) |
 | `permission` | Il manque `VIEW SERVER STATE` à l'identifiant (erreur 300) |
 | `protocol` | Autre chose a répondu sur ce port, ou SQL Server a répondu d'une façon que le contrôle ne lit pas |
 

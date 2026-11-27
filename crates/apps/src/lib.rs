@@ -174,6 +174,9 @@ pub enum Tls {
     /// Encrypted, the certificate verified against the machine's roots and
     /// the host name.
     Verify,
+    /// SQL Server only: TDS 8.0's strict encryption, TLS before anything
+    /// else, verified as `Verify` is.
+    Strict,
 }
 
 impl Tls {
@@ -183,6 +186,10 @@ impl Tls {
             Some("off") => Ok(Self::Off),
             Some("prefer") => Ok(Self::Prefer),
             Some("verify") => Ok(Self::Verify),
+            Some("strict") if p.kind() == MSSQL => Ok(Self::Strict),
+            Some(_) if p.kind() == MSSQL => {
+                Err(p.bad("tls", "must be `off`, `prefer`, `verify` or `strict`"))
+            }
             Some(_) => Err(p.bad("tls", "must be `off`, `prefer` or `verify`")),
         }
     }

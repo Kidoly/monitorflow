@@ -8,7 +8,9 @@
 //! `MF_APPS_TEST_MSSQL`, `MF_APPS_TEST_REDIS`, `MF_APPS_TEST_TOMCAT` and
 //! `MF_APPS_TEST_KAFKA` (their Jolokia agents) are `host:port`; the account is `monitorflow`
 //! with the password in `MF_APPS_TEST_PASSWORD`. `MF_APPS_TEST_DOCKER=1`
-//! reads the local engine.
+//! reads the local engine. `MF_APPS_TEST_MSSQL_STRICT` is a SQL Server
+//! 2025 whose certificate the CA in `SSL_CERT_FILE` signed, for strict
+//! encryption.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -267,6 +269,86 @@ async fn mssql() {
         "permission",
         "{up:?}"
     );
+}
+
+/// TDS 8.0's strict encryption against SQL Server 2025, its certificate
+/// verified against the test's CA; the 2022 server's own certificate is
+/// refused for it.
+#[tokio::test]
+async fn mssql_strict() {
+    let Some((host, port)) = target("MF_APPS_TEST_MSSQL_STRICT") else {
+        eprintln!("MF_APPS_TEST_MSSQL_STRICT not set: skipped");
+        return;
+    };
+    let password = std::env::var("MF_APPS_TEST_PASSWORD").unwrap_or_default();
+    let mut strict = params(&host, &port, &password);
+    strict.insert("tls".into(), "strict".into());
+    let samples = collect("mssql", &strict).await;
+    let up = find(&samples, "up").unwrap();
+    assert_eq!(up.value, 1.0, "{samples:#?}");
+    assert!(up.labels["version"].starts_with("17."), "{up:?}");
+    assert!(find(&samples, "page_life_expectancy_seconds").is_some());
+    let mut wrong = strict.clone();
+    wrong.insert("password".into(), format!("{password}-wrong"));
+    let up = collect("mssql", &wrong).await;
+    assert_eq!(find(&up, "up").unwrap().labels["reason"], "login", "{up:?}");
+    // The same server by address: the certificate is for `localhost`.
+    let mut by_address = strict.clone();
+    by_address.insert("host".into(), "127.0.0.1".into());
+    let up = collect("mssql", &by_address).await;
+    assert_eq!(find(&up, "up").unwrap().labels["reason"], "tls", "{up:?}");
+
+    let Some((host, port)) = target("MF_APPS_TEST_MSSQL") else {
+        return;
+    };
+    let mut self_signed = params(&host, &port, &password);
+    self_signed.insert("tls".into(), "strict".into());
+    let up = collect("mssql", &self_signed).await;
+    assert_eq!(find(&up, "up").unwrap().labels["reason"], "tls", "{up:?}");
+}
+
+/// A named instance: the test plays SQL Server Browser on UDP 1434 of
+/// 127.0.0.1, giving the 2022 server's port, then stops answering.
+#[tokio::test]
+async fn mssql_named_instance() {
+    let Some((host, port)) = target("MF_APPS_TEST_MSSQL") else {
+        eprintln!("MF_APPS_TEST_MSSQL not set: skipped");
+        return;
+    };
+    let browser = tokio::net::UdpSocket::bind("127.0.0.1:1434")
+        .await
+        .expect("UDP 1434 of 127.0.0.1 is free for the test's SQL Server Browser");
+    let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = served.clone();
+    let answer = format!(
+        "ServerName;MF-TEST;InstanceName;MFTEST;IsClustered;No;Version;16.0.4000.0;tcp;{port};;"
+    );
+    let browsing = tokio::spawn(async move {
+        let mut buf = [0u8; 64];
+        loop {
+            let (n, from) = browser.recv_from(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], b"\x04MFTEST\x00");
+            let mut out = vec![0x05];
+            out.extend_from_slice(&u16::try_from(answer.len()).unwrap().to_le_bytes());
+            out.extend_from_slice(answer.as_bytes());
+            browser.send_to(&out, from).await.unwrap();
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    let password = std::env::var("MF_APPS_TEST_PASSWORD").unwrap_or_default();
+    let mut named = params(&host, &port, &password);
+    named.remove("port");
+    named.insert("instance".into(), "MFTEST".into());
+    let samples = collect("mssql", &named).await;
+    assert_eq!(find(&samples, "up").unwrap().value, 1.0, "{samples:#?}");
+    assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // No Browser: `connect`, saying so.
+    browsing.abort();
+    let _ = browsing.await;
+    let up = collect("mssql", &named).await;
+    let up = find(&up, "up").unwrap();
+    assert_eq!(up.labels["reason"], "connect", "{up:?}");
+    assert!(up.labels["error"].contains("Browser"), "{up:?}");
 }
 
 /// A real cluster (`scripts/kubernetes-test.sh` starts k3s):

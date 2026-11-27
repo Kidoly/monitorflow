@@ -360,17 +360,31 @@ pub const MSSQL_TEMPLATE: Template = Template {
     default_port: Some(1433),
     params: &[
         HOST,
-        p("port", Some("1433"), "Port; a named instance needs its fixed port"),
+        p(
+            "port",
+            Some("1433"),
+            "Port; with `instance` and no port, the instance's port from SQL Server Browser (UDP 1434)",
+        ),
+        p(
+            "instance",
+            None,
+            "A named instance, such as `SQLEXPRESS`: its port is asked from SQL Server Browser at each collection unless `port` is given",
+        ),
+        p(
+            "auth",
+            Some("sql"),
+            "`sql` (a SQL Server login) or `windows` (a Windows account through SSPI, NTLM or Kerberos; on the server's Windows agent only, not from a probe)",
+        ),
         p(
             "user",
             Some("monitorflow"),
-            "A SQL Server login with `VIEW SERVER STATE` only",
+            "A login with `VIEW SERVER STATE` only. With `auth` `windows`: empty for the account the agent runs as, or `DOMAIN\\name` or `name@domain` with its `password`",
         ),
         PASSWORD,
         p(
             "tls",
             Some("prefer"),
-            "`prefer` (encrypted, certificate not verified), `verify` (certificate and name verified) or `off` (the password then goes in clear)",
+            "`prefer` (encrypted, certificate not verified), `verify` (certificate and name verified), `strict` (TDS 8.0: TLS before anything else, certificate and name verified; SQL Server 2022 or later) or `off` (the password then goes in clear)",
         ),
     ],
     metrics: &[
