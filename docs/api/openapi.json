@@ -37411,7 +37411,7 @@
           "servers"
         ],
         "summary": "Close a remote session",
-        "description": "Ends an open session, wherever it runs: the shell gets a hangup and the person in it sees who closed it. A session whose WebSocket never came closes at once, and its token stops working.\n\n**Who**: whoever opened it, or an administrator of its server's site. **Area**: `servers`. Audited as `remote_session.close_request`, then `remote_session.close`.",
+        "description": "Ends an open session, wherever it runs: the shell gets a hangup, or the desktop's connection closes, and the person in it sees who closed it. A session whose WebSocket never came closes at once, and its token stops working.\n\n**Who**: whoever opened it, or an administrator of its server's site. **Area**: `servers`. Audited as `remote_session.close_request`, then `remote_session.close`.",
         "operationId": "close",
         "parameters": [
           {
@@ -37666,7 +37666,7 @@
           "servers"
         ],
         "summary": "Open a remote session's WebSocket",
-        "description": "The session's terminal, as a WebSocket (`Upgrade: websocket`). No key or cookie is needed: the first message must be a text message with the session's one-time token and the terminal's size, `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`, within 10 seconds.\n\nThen, from the central server: text messages `{\"type\": \"waiting\"}` while the agent opens the terminal, `{\"type\": \"opened\"}` once it did, `{\"type\": \"closed\", \"reason\": \"…\"}` at the end; and binary messages with what the terminal prints. To it: binary messages with keystrokes, and text messages `{\"type\": \"resize\", \"cols\": 100, \"rows\": 30}` or `{\"type\": \"close\"}`. Messages are at most 64 KiB.\n\nThe session closes after the idle time of the settings without keystrokes, when the shell exits, when the agent's connection drops, and after 12 hours.",
+        "description": "The session's terminal, as a WebSocket (`Upgrade: websocket`). No key or cookie is needed: the first message must be a text message with the session's one-time token and the terminal's size, `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`, within 10 seconds.\n\nThen, from the central server: text messages `{\"type\": \"waiting\"}` while the agent opens the terminal, `{\"type\": \"opened\"}` once it did, `{\"type\": \"closed\", \"reason\": \"…\"}` at the end; and binary messages with what the terminal prints. To it: binary messages with keystrokes, and text messages `{\"type\": \"resize\", \"cols\": 100, \"rows\": 30}` or `{\"type\": \"close\"}`. Messages are at most 64 KiB.\n\nThe session closes after the idle time of the settings without keystrokes, when the shell exits, when the agent's connection drops, and after 12 hours.\n\n**A desktop's WebSocket** (`kind` `desktop`) is IronRDP's RDCleanPath protocol instead, in binary messages only: the first is a DER `RDCleanPathPdu` request whose `proxy_auth` is the token and whose `x224_connection_pdu` is the client's X.224 connection request; its `destination` is ignored. The central server answers with the RDCleanPath response (the service's X.224 confirm and its TLS certificates, for network level authentication) or an error, then carries RDP both ways, the TLS with the host's service done on the central server's side. The WebSocket closes with why the session ended as its reason. The idle time counts from the last bytes the browser sent.",
         "operationId": "socket",
         "parameters": [
           {
@@ -42624,7 +42624,7 @@
           "servers"
         ],
         "summary": "List a server's remote sessions",
-        "description": "The server's last 100 remote sessions, newest first: who opened them, when, for how long, why they ended and whether they were recorded. Open ones have `closed_at` null.\n\n**Who**: those who may open terminals there, and the site's administrators. **Area**: `servers`.",
+        "description": "The server's last 100 remote sessions, terminals and desktops, newest first: who opened them, when, for how long, why they ended and whether they were recorded. Open ones have `closed_at` null.\n\n**Who**: those who may open terminals there, and the site's administrators. **Area**: `servers`.",
         "operationId": "list",
         "parameters": [
           {
@@ -42743,8 +42743,8 @@
         "tags": [
           "servers"
         ],
-        "summary": "Start a remote terminal",
-        "description": "Starts a terminal on the server, through its agent's connection and its relay: no port to open and nothing to install. Answers the session and a one-time `token`, valid one minute: open the WebSocket at `socket` and send it first, with the terminal's size, as `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. Only then does the central server send the agent a signed `remote_session` command, which opens a login shell as the agent's own user, or on Linux as the account the host's administrator chose (`MF_REMOTE_TERMINAL_USER`); the central server cannot choose it.\n\nThe host must have allowed it: `command_kinds.remote_session` of the server is `accepted` where its administrator ran the installer with `MF_REMOTE_TERMINAL=1`, or `monitorflow-agent remote-access terminal on`. The central server cannot allow it by itself. While the session is open, people logged in on the server are told who opened it and whether it is recorded.\n\n**Who**: the role `GET /api/v1/settings/remote-access` names, or above, on the server's site. **Area**: `servers`. Audited as `remote_session.start`, then `remote_session.open` and `remote_session.close` with its duration. **Not safe to repeat**: each call starts another session.",
+        "summary": "Start a remote terminal or desktop",
+        "description": "Starts a terminal on the server, through its agent's connection and its relay: no port to open and nothing to install. Answers the session and a one-time `token`, valid one minute: open the WebSocket at `socket` and send it first, with the terminal's size, as `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. Only then does the central server send the agent a signed `remote_session` command, which opens a login shell as the agent's own user, or on Linux as the account the host's administrator chose (`MF_REMOTE_TERMINAL_USER`); the central server cannot choose it.\n\nThe host must have allowed it: `command_kinds.remote_session` of the server is `accepted` where its administrator ran the installer with `MF_REMOTE_TERMINAL=1`, or `monitorflow-agent remote-access terminal on`. The central server cannot allow it by itself. While the session is open, people logged in on the server are told who opened it and whether it is recorded.\n\nWith `{\"kind\": \"desktop\"}`, on a Windows server, it is the host's own Remote Desktop service instead: the agent connects to `127.0.0.1:3389`, and to nothing else, and the WebSocket speaks the RDCleanPath protocol of IronRDP's web client, the `token` as its `proxy_auth` (see the socket). The host must have allowed desktops apart: `command_kinds.remote_desktop` is `accepted` where its administrator installed with `REMOTE_DESKTOP=1` or ran `monitorflow-agent.exe remote-access desktop on`. The person signs in to Windows as usual; MonitorFlow neither asks for nor keeps Windows passwords. Desktops are never recorded.\n\n**Who**: the role `GET /api/v1/settings/remote-access` names, or above, on the server's site. **Area**: `servers`. Audited as `remote_session.start`, then `remote_session.open` and `remote_session.close` with its duration. **Not safe to repeat**: each call starts another session.",
         "operationId": "start",
         "parameters": [
           {
@@ -42814,7 +42814,7 @@
             }
           },
           "400": {
-            "description": "Another `kind` than `terminal`: `invalid`",
+            "description": "Another `kind` than `terminal` or `desktop`: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -42854,7 +42854,7 @@
             }
           },
           "409": {
-            "description": "The server is removed, its host did not allow terminals (the message gives the line that allows it), its agent is too old or not connected: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "description": "The server is removed, its host did not allow this kind (the message gives the line that allows it), a desktop on a server that is not Windows, its agent is too old or not connected: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -47634,7 +47634,7 @@
           "settings"
         ],
         "summary": "Get the remote access settings",
-        "description": "Who may open remote terminals, whether sessions are recorded, when an idle one closes and how long recordings are kept. Each host must also allow terminals itself, which no setting here can change.\n\n**Who**: global administrators. **Area**: `administration`.",
+        "description": "Who may open remote terminals and desktops, whether terminals are recorded, when an idle session closes and how long recordings are kept. Each host must also allow terminals and desktops itself, each apart, which no setting here can change.\n\n**Who**: global administrators. **Area**: `administration`.",
         "operationId": "get_settings",
         "responses": {
           "200": {
@@ -47728,7 +47728,7 @@
           "settings"
         ],
         "summary": "Change the remote access settings",
-        "description": "Replaces the settings. `min_role` is the lowest role, on a server's site, that may open a terminal there: `operator`, `approver` or `administrator`; `null` lets nobody. New sessions follow the new values; open ones keep theirs.\n\n**Who**: global administrators. **Area**: `administration`. Audited as `settings.remote_access`.",
+        "description": "Replaces the settings. `min_role` is the lowest role, on a server's site, that may open a terminal or a desktop there: `operator`, `approver` or `administrator`; `null` lets nobody. New sessions follow the new values; open ones keep theirs.\n\n**Who**: global administrators. **Area**: `administration`. Audited as `settings.remote_access`.",
         "operationId": "set_settings",
         "parameters": [
           {
@@ -72190,7 +72190,7 @@
       },
       "RemoteAccessSettings": {
         "type": "object",
-        "description": "Who may open remote terminals, and how sessions run.",
+        "description": "Who may open remote terminals and desktops, and how sessions run.",
         "required": [
           "record",
           "idle_timeout_minutes",
@@ -72206,7 +72206,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Role",
-                "description": "The lowest role, on a server's site, that may open a terminal\nthere; `null` lets nobody. Viewers never may."
+                "description": "The lowest role, on a server's site, that may open a terminal or a\ndesktop there; `null` lets nobody. Viewers never may."
               },
               {
                 "type": "null"
@@ -72215,7 +72215,7 @@
           },
           "record": {
             "type": "boolean",
-            "description": "Whether what sessions print is kept, for replay by the site's\nadministrators."
+            "description": "Whether what terminals print is kept, for replay by the site's\nadministrators. Desktops are never recorded."
           },
           "retention_days": {
             "type": "integer",
@@ -72263,12 +72263,12 @@
           "bytes_in": {
             "type": "integer",
             "format": "int64",
-            "description": "Bytes typed."
+            "description": "Bytes typed, or sent to the RDP service."
           },
           "bytes_out": {
             "type": "integer",
             "format": "int64",
-            "description": "Bytes the terminal printed."
+            "description": "Bytes the terminal printed, or the RDP service sent."
           },
           "close_reason": {
             "type": [
@@ -72306,7 +72306,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`terminal`."
+            "description": "`terminal` or `desktop`."
           },
           "opened_at": {
             "type": [
@@ -72314,7 +72314,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "When the agent opened the terminal; `null` if it never did."
+            "description": "When the agent opened the terminal or reached the host's RDP\nservice; `null` if it never did."
           },
           "recorded": {
             "type": "boolean"
@@ -72348,7 +72348,7 @@
           },
           "token": {
             "type": "string",
-            "description": "Send it as the first WebSocket message, with the terminal's size:\n`{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. It works once."
+            "description": "A terminal's: send it as the first WebSocket message, with the\nterminal's size, `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. A\ndesktop's: the `proxy_auth` of the RDCleanPath request that starts\nthe WebSocket. It works once."
           },
           "token_expires_at": {
             "type": "string",
@@ -72380,7 +72380,7 @@
           },
           "recorded": {
             "type": "boolean",
-            "description": "Whether new sessions are recorded."
+            "description": "Whether new terminals are recorded. Desktops never are."
           }
         }
       },
@@ -77074,7 +77074,7 @@
               "string",
               "null"
             ],
-            "description": "`terminal`, the only kind for now; the default."
+            "description": "`terminal`, the default, or `desktop`: the host's own RDP service,\nWindows only."
           }
         },
         "additionalProperties": false

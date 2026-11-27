@@ -319,6 +319,7 @@ msiexec /i monitorflow-agent-0.11.0-x64.msi /qn /l*v install.log `
 | `AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page, on a new install or an upgrade: sets `[commands] from_web = true` in `agent.toml`, as `ai-commands from-web on` does[^0098] |
 | `ALLOW_SCRIPTS=1` | Let the agent run scripts of the script library, on a new install or an upgrade: sets `[commands] scripts = true` in `agent.toml`, as `scripts on` does[^0189] |
 | `REMOTE_TERMINAL=1` | Let people open a terminal on this server from its page, on a new install or an upgrade: sets `[remote] terminal = true` in `agent.toml`, as `remote-access terminal on` does; `REMOTE_TERMINAL=0` refuses it[^0190] |
+| `REMOTE_DESKTOP=1` | Let people open this server's desktop from its page, through its own Remote Desktop service, on a new install or an upgrade: sets `[remote] desktop = true` in `agent.toml`, as `remote-access desktop on` does; `REMOTE_DESKTOP=0` refuses it. A consent of its own, apart from terminals. "Allow a remote desktop" on the Add servers page, unticked by default, adds it[^0190] |
 | `SOFTWARE_FROM_WEB=1` | Let administrators install and remove software of the catalogue on this server, on a new install or an upgrade: sets `[commands] software = true` in `agent.toml`, as `software on` does. "Allow installing and removing software from the web interface" on the Add servers page, off by default, adds it to the command[^0188] |
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
@@ -455,6 +456,17 @@ Restart-Service MonitorFlowAgent
 
 `remote-access terminal off` takes it back. The shell runs as the agent's user (`monitorflow` with a login shell on Linux, `NT SERVICE\MonitorFlowAgent` with Windows PowerShell on Windows). On Linux, `remote-access terminal-user <account>` (or `MF_REMOTE_TERMINAL_USER`) makes it that account's login shell instead, started by the root helper `remote-shell` once it checked the signed command; it is never root unless you name root there. Keystrokes and output are sealed end to end between the central server and the agent, so relays cannot read or change them. While a session is open, people logged in on the server are told who opened it (`wall` on Linux, `msg` on Windows), and again when it closes. Sessions close after the idle time the central server sets, 15 minutes by default, and after 12 hours.
 
+### Remote desktops (Windows)
+
+On a Windows server, people of the same roles can also open its desktop from the Remote desktop tab: the agent reaches the server's own Remote Desktop service on `127.0.0.1:3389`, and nothing else, and carries it through its connection and its relay, sealed as terminals are; no port opens, the firewall rule for Remote Desktop can stay closed[^0190]. The person signs in with an account of the server, as with any Remote Desktop client, network level authentication included; MonitorFlow does not keep the password. The server must allow it, apart from terminals, and Remote Desktop must be turned on in its settings ("Enable Remote Desktop"):
+
+```powershell
+& "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" remote-access desktop on   # or REMOTE_DESKTOP=1 with the MSI
+Restart-Service MonitorFlowAgent
+```
+
+`remote-access desktop off` takes it back. The session is the server's usual Remote Desktop session: Windows Server gives one of its own, while Windows 10 or 11 allows one session at a time, so the person at its screen is disconnected. It closes after the same idle time as terminals and after 12 hours, people logged in are told who opened it, and it is audited but never recorded. Windows Server 2016 or newer, or Windows 10 or newer, is needed: the central server speaks TLS 1.2 or 1.3 with the service.
+
 Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SERVICE\MonitorFlowAgent`, from `C:\`, with the system `PATH`, and is stopped with everything it started at the time limit. That account is not an administrator: it reads services, processes, the System and Application event logs, disks and network state, but cannot restart most services. To let AI restart one service after approval, grant the account that right on that service, for example with `sc.exe sdshow` and `sc.exe sdset`, adding `(A;;RPWPLCRC;;;S-1-5-80-546755567-1596817566-60379001-3258130523-3598288828)` (the service SID of `MonitorFlowAgent`). Without it, the command fails with "access denied" and the incident goes to a person.
 
 ### Software from the catalogue on Windows
@@ -493,7 +505,7 @@ It sets `[commands] software = true` in `agent.toml`; `software off` takes it ba
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
 [^0182]: [ADR-0182: Major distribution upgrades](adr/0182-major-distribution-upgrades.md)
-[^0190]: [ADR-0190: Remote terminals through the agent's connection](adr/0190-remote-terminals.md)
+[^0190]: [ADR-0190: Remote terminals and desktops through the agent's connection](adr/0190-remote-terminals.md)
 [^0175]: [ADR-0175: A diagnosis for every alert, commands where allowed](adr/0175-diagnosis-for-every-alert.md)
 [^0181]: [ADR-0181: AI root actions, and the diagnosis in the reader's language](adr/0181-ai-root-actions.md)
 [^0189]: [ADR-0189: Script library and automation rules](adr/0189-script-library-and-automation-rules.md)

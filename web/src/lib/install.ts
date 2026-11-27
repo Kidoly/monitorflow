@@ -203,6 +203,12 @@ export const WINDOWS_ALLOW_TERMINAL = [
   `Restart-Service MonitorFlowAgent`,
 ].join("\n");
 
+/** The Windows lines that let an installed agent open remote desktops (ADR-0190). */
+export const WINDOWS_ALLOW_DESKTOP = [
+  `& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" remote-access desktop on`,
+  `Restart-Service MonitorFlowAgent`,
+].join("\n");
+
 /**
  * The lines that let an installed Windows agent run AI commands (ADR-0084), for
  * an elevated PowerShell: the agent sets `commands.shell` in its configuration,
@@ -298,6 +304,7 @@ export function windowsInstallCommand(
   scripts = false,
   remoteTerminal = false,
   softwareFromWeb = false,
+  remoteDesktop = false,
 ): Command {
   const files = base(target.install, source, origin);
   if ("unavailable" in files) return files;
@@ -309,6 +316,8 @@ export function windowsInstallCommand(
     aiFromWeb && "AI_COMMANDS_FROM_WEB=1",
     scripts && "ALLOW_SCRIPTS=1",
     remoteTerminal && "REMOTE_TERMINAL=1",
+    // Remote desktops (ADR-0190): a consent of their own, Windows only.
+    remoteDesktop && "REMOTE_DESKTOP=1",
     // Software from the catalogue (ADR-0188): Windows only for now.
     softwareFromWeb && "SOFTWARE_FROM_WEB=1",
   ].filter(Boolean);

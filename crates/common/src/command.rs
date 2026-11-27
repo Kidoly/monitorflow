@@ -22,6 +22,9 @@ pub const ROOT_ACTION: &str = "root_action";
 pub const RUN_SCRIPT: &str = "run_script";
 /// Kind of [`crate::proto::v1::RemoteSessionOpen`] commands (ADR-0190).
 pub const REMOTE_SESSION: &str = "remote_session";
+/// Kind of the [`crate::proto::v1::RemoteSessionOpen`] commands of remote
+/// desktops, with a consent of their own (ADR-0190).
+pub const REMOTE_DESKTOP: &str = "remote_desktop";
 /// Kind of [`crate::proto::v1::SelfUpdate`] commands (ADR-0053).
 pub const SELF_UPDATE: &str = "self_update";
 /// Kind of [`crate::proto::v1::TakeSnapshot`] commands (ADR-0094).

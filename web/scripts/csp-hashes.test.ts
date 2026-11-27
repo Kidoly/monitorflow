@@ -46,14 +46,14 @@ describe("pinPage", () => {
     const pinned = pinPage(page("<script>t()</script>"));
     expect(pinned).toBe(
       page(
-        `<meta http-equiv="Content-Security-Policy" content="script-src 'self' ${hashSource("t()")}"/>` +
+        `<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'wasm-unsafe-eval' ${hashSource("t()")}"/>` +
           "<script>t()</script>",
       ),
     );
   });
 
   it("allows only 'self' on a page without inline scripts", () => {
-    expect(pinPage(page(""))).toContain(`content="script-src 'self'"`);
+    expect(pinPage(page(""))).toContain(`content="script-src 'self' 'wasm-unsafe-eval'"`);
   });
 
   it("refuses a page pinned already", () => {

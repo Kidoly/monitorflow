@@ -1,0 +1,29 @@
+/* A remote desktop: IronRDP's client scales the screen to fit, without scrollbars. */
+.screen {
+  min-height: 360px;
+  border-radius: var(--radius-panel);
+  background: #0c0c0e;
+  overflow: hidden;
+}
+
+/* The sign-in: account, password, domain and the button on one line, of one height. */
+.signIn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+}
+
+.signIn label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.signIn input {
+  width: 100%;
+}

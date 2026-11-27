@@ -1,12 +1,14 @@
-//! Remote terminals from a server's page (ADR-0190): who may open them,
-//! starting one, its WebSocket, the list of past sessions and their
-//! recordings.
+//! Remote terminals and desktops from a server's page (ADR-0190): who
+//! may open them, starting one, its WebSocket, the list of past sessions
+//! and the recordings of terminals.
 //!
 //! Starting a session answers a one-time token, valid one minute, which
 //! the browser (or any API client) presents as the first message of the
 //! session's WebSocket. Only then is the signed command queued, by the
 //! instance holding that WebSocket, which runs the session
-//! ([`crate::remote`]).
+//! ([`crate::remote`]). A desktop's WebSocket starts with IronRDP's
+//! RDCleanPath request instead, the token in it
+//! ([`crate::remote::desktop`]).
 
 use std::time::Duration;
 
@@ -18,7 +20,8 @@ use axum::response::Response;
 use axum::Json;
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use monitorflow_common::command::REMOTE_SESSION;
+use futures_util::{SinkExt, StreamExt};
+use monitorflow_common::command::{REMOTE_DESKTOP, REMOTE_SESSION};
 use monitorflow_common::tls::PeerRole;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -32,6 +35,7 @@ use super::one_time::{hash_of, random_hex};
 use super::sensors::{body, parse_id};
 use super::server_update::require_global_admin;
 use super::{ApiError, ApiState, Role};
+use crate::remote::desktop::{self, DesktopError};
 use crate::remote::{FromBrowser, ToBrowser, TOKEN_TTL};
 
 /// Time the browser has to send its token once the WebSocket is open.
@@ -41,15 +45,15 @@ const MAX_MESSAGE: usize = 64 * 1024;
 /// Sessions listed per server.
 const LIST_LIMIT: i64 = 100;
 
-/// Who may open remote terminals, and how sessions run.
+/// Who may open remote terminals and desktops, and how sessions run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteAccessSettings {
-    /// The lowest role, on a server's site, that may open a terminal
-    /// there; `null` lets nobody. Viewers never may.
+    /// The lowest role, on a server's site, that may open a terminal or a
+    /// desktop there; `null` lets nobody. Viewers never may.
     pub min_role: Option<Role>,
-    /// Whether what sessions print is kept, for replay by the site's
-    /// administrators.
+    /// Whether what terminals print is kept, for replay by the site's
+    /// administrators. Desktops are never recorded.
     pub record: bool,
     /// A session closes after this many minutes without input, 1 to 1440.
     pub idle_timeout_minutes: i32,
@@ -176,7 +180,7 @@ pub struct RemoteTerminalAccess {
     pub can_open: bool,
     /// Whether this person may see the past sessions of this server.
     pub can_review: bool,
-    /// Whether new sessions are recorded.
+    /// Whether new terminals are recorded. Desktops never are.
     pub recorded: bool,
     pub idle_timeout_minutes: i32,
 }
@@ -201,12 +205,13 @@ pub struct RemoteSession {
     pub id: Uuid,
     pub server_id: Uuid,
     pub hostname: String,
-    /// `terminal`.
+    /// `terminal` or `desktop`.
     pub kind: String,
     /// The username of who opened it, kept when the account goes.
     pub requested_by: String,
     pub created_at: DateTime<Utc>,
-    /// When the agent opened the terminal; `null` if it never did.
+    /// When the agent opened the terminal or reached the host's RDP
+    /// service; `null` if it never did.
     pub opened_at: Option<DateTime<Utc>>,
     /// `null` while it is open.
     pub closed_at: Option<DateTime<Utc>>,
@@ -216,9 +221,9 @@ pub struct RemoteSession {
     /// opened.
     pub duration_seconds: Option<i64>,
     pub recorded: bool,
-    /// Bytes typed.
+    /// Bytes typed, or sent to the RDP service.
     pub bytes_in: i64,
-    /// Bytes the terminal printed.
+    /// Bytes the terminal printed, or the RDP service sent.
     pub bytes_out: i64,
 }
 
@@ -233,7 +238,8 @@ const SESSION_COLUMNS: &str = "r.id, r.server_id, s.hostname, r.kind, r.username
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StartRequest {
-    /// `terminal`, the only kind for now; the default.
+    /// `terminal`, the default, or `desktop`: the host's own RDP service,
+    /// Windows only.
     #[serde(default)]
     pub kind: Option<String>,
 }
@@ -242,8 +248,10 @@ pub struct StartRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RemoteSessionStart {
     pub session: RemoteSession,
-    /// Send it as the first WebSocket message, with the terminal's size:
-    /// `{"token": "…", "cols": 120, "rows": 40}`. It works once.
+    /// A terminal's: send it as the first WebSocket message, with the
+    /// terminal's size, `{"token": "…", "cols": 120, "rows": 40}`. A
+    /// desktop's: the `proxy_auth` of the RDCleanPath request that starts
+    /// the WebSocket. It works once.
     pub token: String,
     pub token_expires_at: DateTime<Utc>,
     /// The WebSocket's path, `/api/v1/remote-sessions/{id}/socket` through
@@ -261,12 +269,16 @@ struct Host {
     os_family: String,
     revoked: bool,
     acceptance: Option<String>,
+    desktop_acceptance: Option<String>,
 }
 
 /// Why the agent would refuse, by what it reported (ADR-0076).
-fn refusal(host: &Host) -> Option<String> {
+fn refusal(host: &Host, desktop: bool) -> Option<String> {
     if host.revoked {
         return Some("the server is removed".into());
+    }
+    if desktop {
+        return desktop_refusal(host);
     }
     match host.acceptance.as_deref() {
         Some("accepted") => None,
@@ -277,6 +289,27 @@ fn refusal(host: &Host) -> Option<String> {
         Some(_) => Some(not_allowed(&host.os_family).into()),
     }
 }
+
+fn desktop_refusal(host: &Host) -> Option<String> {
+    if host.os_family != "windows" {
+        return Some("remote desktops are for Windows servers; open a terminal instead".into());
+    }
+    match host.desktop_acceptance.as_deref() {
+        Some("accepted") => None,
+        None => {
+            Some("this server's agent cannot open remote desktops yet; it updates by itself".into())
+        }
+        Some("unsupported") => Some("this server's system cannot open remote desktops".into()),
+        Some(_) => Some(DESKTOP_NOT_ALLOWED.into()),
+    }
+}
+
+/// Why a desktop is refused where the host did not allow it, with the
+/// lines that allow it there.
+pub const DESKTOP_NOT_ALLOWED: &str =
+    "this server does not allow remote desktops; to allow them, run \
+     `monitorflow-agent.exe remote-access desktop on` there as an administrator, then restart \
+     the MonitorFlowAgent service";
 
 /// Why a terminal is refused where the host did not allow it, with the
 /// line that allows it there.
@@ -302,11 +335,12 @@ pub async fn start(
     let id = parse_id(&id)?;
     let host: Option<Host> = sqlx::query_as(
         "SELECT id, site_id, peer_id, hostname, os_family, revoked_at IS NOT NULL AS revoked,
-                command_kinds->>$2 AS acceptance
+                command_kinds->>$2 AS acceptance, command_kinds->>$3 AS desktop_acceptance
          FROM servers WHERE id = $1 AND kind = 'agent'",
     )
     .bind(id)
     .bind(REMOTE_SESSION)
+    .bind(REMOTE_DESKTOP)
     .fetch_optional(&state.pool)
     .await?;
     let site = authorize(&user, host.as_ref().map(|h| h.site_id), false)?;
@@ -316,12 +350,14 @@ pub async fn start(
         return Err(ApiError::Forbidden);
     }
     let kind = body(request)?.kind.unwrap_or_else(|| "terminal".into());
-    if kind != "terminal" {
-        return Err(ApiError::Invalid(
-            "kind must be terminal; remote desktops are not available yet".into(),
-        ));
-    }
-    if let Some(refusal) = refusal(&host) {
+    let desktop = match kind.as_str() {
+        "terminal" => false,
+        "desktop" => true,
+        _ => return Err(ApiError::Invalid("kind must be terminal or desktop".into())),
+    };
+    // A desktop shows the screen, not a transcript: nothing to record.
+    let recorded = settings.record && !desktop;
+    if let Some(refusal) = refusal(&host, desktop) {
         return Err(ApiError::Conflict(refusal));
     }
     if state.remote.is_none() {
@@ -345,7 +381,7 @@ pub async fn start(
     sqlx::query(
         "INSERT INTO remote_sessions (id, server_id, kind, requested_by, username, token_sha256,
              token_expires_at, recorded, idle_timeout_seconds)
-         VALUES ($1, $2, 'terminal', $3, $4, $5, $6, $7, $8)",
+         VALUES ($1, $2, $9, $3, $4, $5, $6, $7, $8)",
     )
     .bind(session)
     .bind(host.id)
@@ -353,8 +389,9 @@ pub async fn start(
     .bind(&user.username)
     .bind(hash_of(&token))
     .bind(expires)
-    .bind(settings.record)
+    .bind(recorded)
     .bind(settings.idle_timeout_minutes * 60)
+    .bind(&kind)
     .execute(&mut *tx)
     .await?;
     let actor = user.id.to_string();
@@ -369,14 +406,14 @@ pub async fn start(
                 "session_id": session,
                 "hostname": host.hostname,
                 "peer_id": host.peer_id,
-                "kind": "terminal",
-                "recorded": settings.record,
+                "kind": kind,
+                "recorded": recorded,
             }),
         },
     )
     .await?;
     tx.commit().await?;
-    tracing::info!(user = %user.id, %session, peer_id = %host.peer_id, "remote terminal requested");
+    tracing::info!(user = %user.id, %session, peer_id = %host.peer_id, %kind, "remote session requested");
     let session = one(&state, session).await?.ok_or(ApiError::NotFound)?;
     let socket = format!("/api/v1/remote-sessions/{}/socket", session.id);
     Ok((
@@ -624,13 +661,68 @@ async fn refuse(mut socket: WebSocket, reason: &str) {
 }
 
 async fn serve(hub: crate::remote::RemoteHub, id: Uuid, mut socket: WebSocket) {
-    let hello = match tokio::time::timeout(HELLO_TIMEOUT, socket.recv()).await {
-        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Hello>(&text).ok(),
-        _ => None,
+    match tokio::time::timeout(HELLO_TIMEOUT, socket.recv()).await {
+        Ok(Some(Ok(Message::Text(text)))) => match serde_json::from_str::<Hello>(&text) {
+            Ok(hello) => terminal(hub, id, socket, hello).await,
+            Err(_) => refuse(socket, "send the session's token first").await,
+        },
+        Ok(Some(Ok(Message::Binary(first)))) => {
+            serve_desktop(hub, id, socket, first.to_vec()).await
+        }
+        _ => refuse(socket, "send the session's token first").await,
+    }
+}
+
+/// The longest close reason a WebSocket frame takes, in bytes.
+const MAX_CLOSE_REASON: usize = 120;
+
+/// A desktop's WebSocket: RDCleanPath, then RDP, in binary messages both
+/// ways; it closes with why the session ended.
+async fn serve_desktop(hub: crate::remote::RemoteHub, id: Uuid, socket: WebSocket, first: Vec<u8>) {
+    let (mut sink, mut stream) = socket.split();
+    let (from_tx, from_rx) = mpsc::channel::<Vec<u8>>(64);
+    let (to_tx, mut to_rx) = mpsc::channel::<Vec<u8>>(64);
+    let session = tokio::spawn(async move { desktop::run(hub, id, &first, from_rx, to_tx).await });
+    // Read and write apart, so neither waits on the other.
+    let reader = tokio::spawn(async move {
+        while let Some(Ok(message)) = stream.next().await {
+            match message {
+                Message::Binary(bytes) => {
+                    if from_tx.send(bytes.to_vec()).await.is_err() {
+                        break;
+                    }
+                }
+                Message::Close(_) => break,
+                Message::Text(_) | Message::Ping(_) | Message::Pong(_) => {}
+            }
+        }
+    });
+    while let Some(bytes) = to_rx.recv().await {
+        if sink.send(Message::Binary(bytes.into())).await.is_err() {
+            break;
+        }
+    }
+    let (code, reason) = match session.await {
+        Ok(Ok(reason)) => (1000, reason),
+        Ok(Err(DesktopError::BadRequest)) => (4001, "send an RDCleanPath request first".into()),
+        Ok(Err(DesktopError::Refused(reason))) => (4001, reason),
+        Err(_) => (1011, "the session stopped".into()),
     };
-    let Some(hello) = hello else {
-        return refuse(socket, "send the session's token first").await;
-    };
+    reader.abort();
+    let mut end = reason.len().min(MAX_CLOSE_REASON);
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    let _ = sink
+        .send(Message::Close(Some(CloseFrame {
+            code,
+            reason: reason[..end].into(),
+        })))
+        .await;
+}
+
+/// A terminal's WebSocket, once its first message said hello.
+async fn terminal(hub: crate::remote::RemoteHub, id: Uuid, mut socket: WebSocket, hello: Hello) {
     let attached = match hub.attach(id, &hello.token, hello.cols, hello.rows).await {
         Ok(attached) => attached,
         Err(error) => return refuse(socket, &error.to_string()).await,
@@ -701,27 +793,51 @@ mod tests {
             os_family: os.into(),
             revoked: false,
             acceptance: acceptance.map(Into::into),
+            desktop_acceptance: acceptance.map(Into::into),
         }
     }
 
     #[test]
-    fn refusals_name_the_line_that_allows_terminals() {
-        assert_eq!(refusal(&host(Some("accepted"), "debian")), None);
-        assert!(refusal(&host(Some("off"), "debian"))
+    fn desktops_have_their_own_refusals() {
+        assert_eq!(refusal(&host(Some("accepted"), "windows"), true), None);
+        let terminal_only = Host {
+            desktop_acceptance: Some("off".into()),
+            ..host(Some("accepted"), "windows")
+        };
+        assert_eq!(refusal(&terminal_only, false), None);
+        assert!(refusal(&terminal_only, true)
             .unwrap()
-            .contains("MF_REMOTE_TERMINAL=1"));
-        assert!(refusal(&host(Some("off"), "windows"))
+            .contains("remote-access desktop on"));
+        assert!(refusal(&host(Some("accepted"), "debian"), true)
             .unwrap()
-            .contains("remote-access terminal on"));
-        assert!(refusal(&host(None, "debian"))
+            .contains("Windows servers"));
+        assert!(refusal(&host(None, "windows"), true)
             .unwrap()
             .contains("updates by itself"));
-        assert!(refusal(&host(Some("unsupported"), "linux")).is_some());
+    }
+
+    fn refusal_t(host: &Host) -> Option<String> {
+        refusal(host, false)
+    }
+
+    #[test]
+    fn refusals_name_the_line_that_allows_terminals() {
+        assert_eq!(refusal_t(&host(Some("accepted"), "debian")), None);
+        assert!(refusal_t(&host(Some("off"), "debian"))
+            .unwrap()
+            .contains("MF_REMOTE_TERMINAL=1"));
+        assert!(refusal_t(&host(Some("off"), "windows"))
+            .unwrap()
+            .contains("remote-access terminal on"));
+        assert!(refusal_t(&host(None, "debian"))
+            .unwrap()
+            .contains("updates by itself"));
+        assert!(refusal_t(&host(Some("unsupported"), "linux")).is_some());
         let removed = Host {
             revoked: true,
             ..host(Some("accepted"), "debian")
         };
-        assert!(refusal(&removed).unwrap().contains("removed"));
+        assert!(refusal_t(&removed).unwrap().contains("removed"));
     }
 
     #[test]

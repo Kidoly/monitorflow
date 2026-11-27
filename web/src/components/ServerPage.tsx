@@ -24,6 +24,7 @@ import { aiCommands, aiSwitch, commandSummary, unsupportedReason } from "@/lib/c
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
 import { administersCustomer, administersSite, modifiesSite, multiCustomer, multiSite, useMe } from "@/lib/me";
+import { hasDesktopTab } from "@/lib/remote";
 import { serverHref, siteHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorValues, sensorRows, valuesBySensor } from "@/lib/sensors";
@@ -57,6 +58,7 @@ import { ServerCommandsTab } from "./ServerCommandsTab";
 import { RollbackBadge, RollbackFact, useRollback } from "./ServerRollback";
 import { ServerLogsTab } from "./ServerLogsTab";
 import { type SensorRules, ServerSensorsTab } from "./ServerSensorsTab";
+import { ServerDesktopTab } from "./ServerDesktopTab";
 import { ServerTerminalTab } from "./ServerTerminalTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
 import styles from "./ServerPage.module.css";
@@ -67,7 +69,7 @@ export const COMMANDS_PAGE = 50;
 /** The API's largest page, which caps what a refresh reloads. */
 const MAX_LIMIT = 500;
 
-const TABS = ["sensors", "dependencies", "flows", "logs", "updates", "commands", "terminal", "inventory"] as const;
+const TABS = ["sensors", "dependencies", "flows", "logs", "updates", "commands", "terminal", "desktop", "inventory"] as const;
 export type ServerTab = (typeof TABS)[number];
 
 /** The server page for the `id` query parameter. */
@@ -200,11 +202,13 @@ export function ServerPage({ id }: { id: string | null }) {
   // (ADR-0148, ADR-0184); a server has no flows tab. Remote terminals
   // (ADR-0190): for those who may open them or see their sessions.
   const terminal = !device && !!server.remote_terminal && (server.remote_terminal.can_open || server.remote_terminal.can_review);
+  // Remote desktops: Windows servers only, the same people.
+  const desktop = hasDesktopTab(server);
   const shown: ServerTab = device
     ? tab === "dependencies" || tab === "flows"
       ? tab
       : "sensors"
-    : tab === "flows" || (tab === "terminal" && !terminal)
+    : tab === "flows" || (tab === "terminal" && !terminal) || (tab === "desktop" && !desktop)
       ? "sensors"
       : tab;
   const active = "commands" in commands ? commands.commands.filter(isActive).length : 0;
@@ -278,6 +282,7 @@ export function ServerPage({ id }: { id: string | null }) {
                   extra: active > 0 ? t("server.tab.running", { count: active }) : undefined,
                 },
                 ...(terminal ? [{ id: "terminal" as const, label: t("remote.tab") }] : []),
+                ...(desktop ? [{ id: "desktop" as const, label: t("remote.desktop.tab") }] : []),
                 { id: "inventory" as const, label: t("inventory.tab") },
               ]),
         ]}
@@ -317,6 +322,7 @@ export function ServerPage({ id }: { id: string | null }) {
           />
         )}
         {shown === "terminal" && <ServerTerminalTab server={server} />}
+        {shown === "desktop" && <ServerDesktopTab server={server} />}
       </TabPanel>
     </Page>
   );

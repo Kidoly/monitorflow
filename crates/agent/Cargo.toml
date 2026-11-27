@@ -74,3 +74,5 @@ monitorflow-server = { path = "../server" }
 sqlx.workspace = true
 # For the fake VictoriaMetrics shared with the server's tests.
 axum.workspace = true
+# The fake RDP service of the remote desktop test speaks TLS.
+tokio-rustls.workspace = true
