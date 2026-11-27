@@ -1171,7 +1171,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         ("GET", "/api/remote-sessions/{id}")
         | ("POST", "/api/remote-sessions/{id}/close")
-        | ("GET", "/api/remote-sessions/{id}/recording") => {
+        | ("GET", "/api/remote-sessions/{id}/recording")
+        | ("GET", "/api/remote-sessions/{id}/recording/frames/{seq}") => {
             let session = uuid::Uuid::new_v4();
             sqlx::query(
                 "INSERT INTO remote_sessions (id, server_id, kind, username, token_sha256,
@@ -1184,7 +1185,19 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             .execute(&ctx.pool)
             .await
             .unwrap();
-            let uri = path.replace("{id}", &session.to_string());
+            // A picture of B's recording, for A to miss.
+            sqlx::query(
+                "INSERT INTO remote_desktop_frames (session_id, seq, at_ms, x, y, width, height,
+                     screen_width, screen_height, image)
+                 VALUES ($1, 0, 0, 0, 0, 8, 8, 8, 8, 'png')",
+            )
+            .bind(session)
+            .execute(&ctx.pool)
+            .await
+            .unwrap();
+            let uri = path
+                .replace("{id}", &session.to_string())
+                .replace("{seq}", "0");
             assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
             let closed: Option<chrono::DateTime<chrono::Utc>> =
                 sqlx::query_scalar("SELECT closed_at FROM remote_sessions WHERE id = $1")
