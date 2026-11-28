@@ -334,6 +334,8 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc --version
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # monitorflow-apps builds monitorflow-common, whose build script runs protoc.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: scripts/kubernetes-test.sh --full
   # Website checks (ADR-0150) against nginx in a container: pages with
   # chosen status codes, text and redirects, and certificates of a
