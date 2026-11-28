@@ -18,7 +18,9 @@
 pub mod inventory;
 pub mod sensor;
 pub mod soap;
-pub mod tls;
+/// Certificates, always verified (ADR-0156): the verifier shared with
+/// Jolokia's checks, in `monitorflow-common`.
+pub use monitorflow_common::tls::trust as tls;
 pub mod xml;
 
 use std::collections::BTreeMap;

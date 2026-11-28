@@ -694,6 +694,7 @@ db_tests! {
             dnf: layout.served(Family::Dnf),
             public_key: layout.public_key(),
             agent: f.root.join("agent"),
+            software: f.root.join("software"),
         };
         let cache = layout.dnf_cache();
         std::fs::create_dir_all(cache.join("mf-rocky-0123456789abcdef")).unwrap();

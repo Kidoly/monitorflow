@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A tiny MSI package for the windows CI job (ADR-0188): the update
+  service's MSI code installs it from a local HTTP listener, checks the
+  property it was given and removes it again (crates/agent/tests/msi_windows.rs).
+  It installs one registry key and nothing else. Its ProductCode is fixed,
+  so the test knows it.
+
+    cd deploy/windows
+    dotnet tool restore
+    dotnet wix build -arch x64 -o ..\..\target\msi-test\tiny.msi test-msi\Tiny.wxs
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="MonitorFlow MSI test package" Manufacturer="MonitorFlow" Version="1.0.0"
+           ProductCode="{6F1C2E7A-3B9D-4C55-A0E2-8D4F7B1A9C30}"
+           UpgradeCode="2B8E5D41-7C3A-4F19-9E6B-0A5D3C7F1E82" Scope="perMachine">
+    <MediaTemplate EmbedCab="yes" />
+    <!-- A public property the test passes on msiexec's command line. -->
+    <Property Id="MARKER" Value="none" Secure="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="MonitorFlow MSI test" />
+    </StandardDirectory>
+    <Feature Id="Main">
+      <Component Directory="INSTALLFOLDER" Guid="C4A7E2B9-1D6F-4E83-B5C0-7F2A9D4E6B18">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\MonitorFlowMsiTest" Name="Marker"
+                       Type="string" Value="[MARKER]" KeyPath="yes" />
+      </Component>
+    </Feature>
+  </Package>
+</Wix>

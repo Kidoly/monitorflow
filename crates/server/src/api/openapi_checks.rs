@@ -11,16 +11,19 @@ use utoipa::OpenApi;
 
 use super::openapi::{Common, ErrorBody};
 use super::openapi_core::ex;
-use super::{check_templates, checks, recommendations, sensor_values, website_checks};
+use super::{
+    check_templates, checks, devices, jmx_test, recommendations, sensor_values, website_checks,
+};
 use crate::recommend;
 
 #[derive(OpenApi)]
 #[openapi(
     paths(sensor_values, website_checks, recommendations, dismiss_recommendation, restore_recommendation,
-        check_usage, list_check_templates),
+        check_usage, list_check_templates, test_jmx),
     components(schemas(recommend::Recommendation, recommend::Proposed, recommend::Params,
         check_templates::TemplateView, check_templates::ParamView, check_templates::MetricView,
-        check_templates::AlertView)),
+        check_templates::AlertView, jmx_test::JmxTestRequest, jmx_test::JmxTested,
+        devices::TestedCertificate)),
     modifiers(&Common),
 )]
 pub struct Doc;
@@ -226,3 +229,38 @@ should be read-only: the guides list the least privileges per application.\n\n\
         (status = 403, description = "Outside the key's areas: `api_key_scope`", body = ErrorBody),
     ))]
 fn list_check_templates() {}
+
+const JOLOKIA_PRINT: &str =
+    "5C:21:E0:7A:93:4B:D8:1F:66:A2:0C:BE:47:91:3D:F8:2A:C5:70:19:E4:8B:36:D2:0F:A7:5E:C1:98:43:B6:2D";
+
+#[utoipa::path(post, path = "/api/v1/servers/{id}/jmx/test", tag = "sensors",
+    summary = "Test a Java check's HTTPS certificate",
+    description = "Connects once to Jolokia over HTTPS from the probe that would run the server's Java \
+check (`jmx`, ADR-0183), or the one named, and shows its certificate: its SHA-256 fingerprint, subject and \
+expiry, and whether the probe's roots trust it. Jolokia's certificates are often self-signed: compare the \
+fingerprint with the one the JVM's machine shows (`keytool -list -v`, or `openssl x509 -fingerprint \
+-sha256`), then test again with it, and add it to the check as its `fingerprint` param with `tls` `verify` \
+(`POST /api/v1/servers/{id}/sensor_configs`, `PUT /api/v1/sensor_configs/{id}`). Jolokia is read, with the \
+user and password given, only when the certificate is trusted, by the roots or by the `fingerprint` given: \
+the password is never sent to a certificate that is not. Nothing is stored.\n\n\
+**Who**: operator or above on the server's site. **Area**: `servers`.",
+    params(("id" = uuid::Uuid, Path, description = "The server or device the check is for")),
+    request_body(content = jmx_test::JmxTestRequest, example = json!({
+        "probe": "central", "host": "192.0.2.40", "port": 8778, "user": "monitorflow",
+        "password": "a password", "fingerprint": JOLOKIA_PRINT})),
+    responses(
+        (status = 200, description = "What answered; also when nothing did: `answers` and `error` say so",
+            body = jmx_test::JmxTested, example = json!({
+                "answers": true, "error": null,
+                "certificate": {"fingerprint": JOLOKIA_PRINT, "trusted": true, "by_roots": false,
+                                "subject": "jvm.example.test", "not_after": "2028-03-01T12:00:00Z"},
+                "reads": true, "vm": "OpenJDK 64-Bit Server VM", "version": "21.0.5+11-LTS",
+                "probe": "central"})),
+        (status = 400, description = "Settings that are not valid, or no probe to run the test: `invalid`",
+            body = ErrorBody),
+        (status = 403, description = "Not an operator of the site, or outside the key's areas", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`", body = ErrorBody),
+        (status = 409, description = "The relay is not connected to this central server now: `conflict`",
+            body = ErrorBody),
+    ))]
+fn test_jmx() {}

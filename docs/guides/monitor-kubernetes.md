@@ -1,6 +1,6 @@
 ---
 title: "How to monitor Kubernetes"
-description: "Watch a Kubernetes cluster through its API with a read-only token: nodes and their conditions, pods that do not run or restart, deployments short of ready replicas and volume claims left pending."
+description: "Watch a Kubernetes cluster through its API with a read-only token: nodes and their conditions, pods that do not run or restart, deployments short of ready replicas, volume claims left pending and jobs that failed, with the cluster's nodes, namespaces and workloads listed on its page."
 slug: monitor-kubernetes
 lang: en
 translation: surveiller-kubernetes
@@ -25,6 +25,10 @@ The cluster is a **device** in MonitorFlow, and its **"Kubernetes cluster"** che
 | Pods | `pods`, `pods_not_running`, `namespace_pods`, `namespace_pods_not_running` (label `pods` names them and says why), `namespace_pod_restarts` (container restarts since the last check) | namespace |
 | Deployments, stateful sets and daemon sets | `workload_replicas_desired`, `workload_replicas_ready`, `workload_ready_ratio`, `workloads_short` | workload, named `namespace/deployment/name` |
 | Persistent volume claims | `claims_pending`, `namespace_claims_pending`, `namespace_claims_lost` (label `claims` names them) | namespace |
+| Jobs that failed | `jobs_failed`, `namespace_jobs_failed` (label `jobs` names them) | namespace |
+| Size and use | `node_cpu_cores`, `node_memory_bytes`, `node_pods`, `node_pods_capacity`; with metrics-server `node_cpu_usage_ratio`, `node_memory_usage_ratio`, `namespace_cpu_usage_cores`, `namespace_memory_usage_bytes`, `workload_cpu_usage_cores`, `workload_memory_usage_bytes` | node, namespace, workload |
+
+**A job counts as failed** when Kubernetes marks it `Failed` (its retries are used up, or it ran past its deadline). For a cron job, only its latest run counts: a failure that the next run made good is history. The job is counted while it exists, so delete it, or let its cron job replace it, once it is dealt with.
 
 **A pod counts as not running** when it is pending, failed or unknown, or running but not ready, as a pod in `CrashLoopBackOff` is. Pods that finished (`Succeeded`), failed pods of a job and pods being deleted are left out. **"Namespaces"** narrows pods, workloads and claims to the namespaces matching a regular expression; nodes are always the whole cluster's.
 
@@ -43,12 +47,25 @@ With **"Add the recommended alerts"** on, these alerts come with it:
 | `monitorflow_kubernetes_workload_ready_ratio` (per workload) | Under 1 | Under 0.5 | 10 minutes |
 | `monitorflow_kubernetes_namespace_claims_pending` (per namespace) | Over 0 | None | 10 minutes |
 | `monitorflow_kubernetes_namespace_claims_lost` (per namespace) | None | Over 0 | At once |
+| `monitorflow_kubernetes_namespace_jobs_failed` (per namespace) | Over 0 | None | At once |
+| `monitorflow_kubernetes_node_memory_usage_ratio` (per node, with metrics-server) | Over 0.9 | None | 10 minutes |
 
 One alert covers every node, namespace or workload: a crashing pod in `shop` is one incident that names `shop` and the pod.
 
+## The cluster's page
+
+The device's page lists what the last check read, as a vCenter's page lists its virtual machines:
+
+- **Nodes**, with their state (**Ready**, **Not ready**, **Cordoned**), roles, kubelet version, processor and memory, and their pods against how many they take. Each node is matched to the server MonitorFlow already watches when it is one of the same customer: by its hardware ID (the SMBIOS UUID the kubelet reports, which the agent reports too), then an address, then its host name. A node has no network card in the API, so MAC addresses do not match it. The **Server** column links to that server, and the server's page says "Kubernetes node worker-1 of k8s-prod". **"Not this one"** undoes a wrong match for good; a node without a server has **"Install the agent"**, as a virtual machine has.
+- **Namespaces**, with their pods and how many do not run, what their pods use, and their failed jobs.
+- **Workloads**: deployments, stateful sets and daemon sets with their ready replicas and what their pods use.
+- **Failed jobs**, with their cron job, why they failed and when.
+
+Processor and memory use come from **metrics-server**, which most clusters run (`kubectl top nodes` answers when it does). Without it, or without the rights below, the page says what it could not read, and the rest is read as before. A node or workload the cluster no longer lists shows "Not seen since" and goes after a day.
+
 ## Give MonitorFlow a read-only account
 
-The check needs a service account that may only **get and list** nodes, pods, persistent volume claims, deployments, stateful sets and daemon sets. It cannot read secrets, open a shell in a pod or change anything. Save this as `monitorflow-reader.yaml` (it is also in the repository, under `deploy/kubernetes/`):
+The check needs a service account that may only **get and list** nodes, namespaces, pods, persistent volume claims, deployments, stateful sets, daemon sets and jobs, and what metrics-server measures of nodes and pods. It cannot read secrets, open a shell in a pod or change anything. Save this as `monitorflow-reader.yaml` (it is also in the repository, under `deploy/kubernetes/`):
 
 ```yaml
 apiVersion: v1
@@ -68,10 +85,16 @@ metadata:
   name: monitorflow-reader
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods", "persistentvolumeclaims"]
+    resources: ["nodes", "namespaces", "pods", "persistentvolumeclaims"]
     verbs: ["get", "list"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -112,6 +135,8 @@ kubectl auth can-i list pods -A --as=system:serviceaccount:monitorflow:monitorfl
 kubectl auth can-i get secrets -A --as=system:serviceaccount:monitorflow:monitorflow-reader    # no
 ```
 
+A cluster set up with an earlier version of this file is still read: apply it again to add namespaces, jobs and metrics-server, and the page stops saying what it could not read.
+
 That secret's token does not expire, and deleting the secret revokes it. To use a token that expires instead, make one with `kubectl -n monitorflow create token monitorflow-reader --duration=8760h` and enter a new one on the check before it expires: the check then reports `up` 0 with the reason `login`.
 
 **The network:** the central server or the relay that checks the cluster must reach its API server, usually on port 6443. A managed cluster (EKS, AKS, GKE) whose API is private is checked from a relay inside its network.
@@ -147,7 +172,9 @@ The public API adds the same check: `POST /api/v1/servers/{id}/sensor_configs` o
 }
 ```
 
-The answer says `"secret_set": true` and never returns the token or the CA. An update without `token` keeps both; one with `token` replaces both, so give `ca_certificate` again with it. A kept token never follows the check to a new address or port: change those and give the token again.
+`GET /api/v1/servers/{id}/virtualization` on the device returns the cluster's page: its nodes, namespaces, workloads and failed jobs with their numbers, and the server each node is. `PUT /api/v1/virtual-objects/{id}/server` corrects a node's match, and `POST /api/v1/virtual-objects/{id}/install-agent` adds the server waiting for its agent.
+
+The answer to the `POST` above says `"secret_set": true` and never returns the token or the CA. An update without `token` keeps both; one with `token` replaces both, so give `ca_certificate` again with it. A kept token never follows the check to a new address or port: change those and give the token again.
 
 ## Change the alert
 
@@ -183,6 +210,7 @@ Click **"Acknowledge"**, then check:
 2. **A pod not running:** the incident's `pods` label names it and says why (`CrashLoopBackOff`, `ImagePullBackOff`, `Pending`). `kubectl -n <namespace> describe pod <name>` and `kubectl -n <namespace> logs <name> --previous` say more.
 3. **A workload short of replicas:** `kubectl -n <namespace> rollout status deployment/<name>`, and its pods as above.
 4. **A pending claim:** `kubectl -n <namespace> describe pvc <name>` shows whether its storage class exists and what the provisioner said.
+5. **A failed job:** the incident's `jobs` label and the **Failed jobs** table name it and say why. `kubectl -n <namespace> describe job <name>` and `kubectl -n <namespace> logs job/<name>` say more.
 
 ## Moving from another tool
 

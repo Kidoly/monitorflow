@@ -76,9 +76,10 @@ pub struct DeviceRequest {
     /// `POST /api/devices/vmware/test`. Stored sealed, never returned.
     #[serde(default)]
     pub vmware: Option<vmware::CredentialsRequest>,
-    /// For a cloud account (ADR-0183): an AWS account or an Azure
-    /// subscription, read with read-only credentials. The device then
-    /// gets its `aws` or `azure` check every 5 minutes on the central
+    /// For a cloud account (ADR-0183): an AWS account, an Azure
+    /// subscription or a Google Cloud project, read with read-only
+    /// credentials. The device then gets its `aws`, `azure` or `gcp`
+    /// check every 5 minutes on the central
     /// server, which lists its virtual machines, with the alerts that
     /// come with it. Test them first with `POST /api/devices/cloud/test`.
     /// The secret is stored sealed, never returned. Not with `snmp`,
@@ -786,8 +787,8 @@ pub struct VmwareTestRequest {
 /// The certificate a test met.
 #[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
 pub struct TestedCertificate {
-    /// `AB:CD:…`, to compare with the one the vCenter shows and send back
-    /// as `fingerprint`.
+    /// `AB:CD:…`, to compare with the one the vCenter or Jolokia shows and
+    /// send back as `fingerprint`.
     pub fingerprint: String,
     /// Whether it is trusted: by the probe's roots, or by the fingerprint
     /// given.
@@ -797,6 +798,24 @@ pub struct TestedCertificate {
     pub subject: String,
     /// When it expires; `null` when it does not read.
     pub not_after: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl TestedCertificate {
+    /// What a test's `certificate_trusted` sample says.
+    pub fn of(sample: &monitorflow_common::proto::v1::Sample) -> Self {
+        let label = |name: &str| sample.labels.get(name).cloned().unwrap_or_default();
+        Self {
+            fingerprint: label("fingerprint"),
+            trusted: sample.value >= 1.0,
+            by_roots: label("by_roots") == "true",
+            subject: label("subject"),
+            not_after: label("not_after")
+                .parse::<i64>()
+                .ok()
+                .filter(|t| *t > 0)
+                .and_then(|t| chrono::DateTime::from_timestamp(t, 0)),
+        }
+    }
 }
 
 /// What a vCenter or ESXi host answered.
@@ -849,18 +868,7 @@ pub fn vmware_tested(
         product: label(answers.filter(|_| up), "product"),
         version: label(answers.filter(|_| up), "version"),
         api_type: label(answers.filter(|_| up), "api_type"),
-        certificate: certificate.map(|c| TestedCertificate {
-            fingerprint: c.labels.get("fingerprint").cloned().unwrap_or_default(),
-            trusted: c.value >= 1.0,
-            by_roots: c.labels.get("by_roots").is_some_and(|v| v == "true"),
-            subject: c.labels.get("subject").cloned().unwrap_or_default(),
-            not_after: c
-                .labels
-                .get("not_after")
-                .and_then(|t| t.parse::<i64>().ok())
-                .filter(|t| *t > 0)
-                .and_then(|t| chrono::DateTime::from_timestamp(t, 0)),
-        }),
+        certificate: certificate.map(TestedCertificate::of),
         login: login.map(|l| l.value >= 1.0),
         objects: samples
             .iter()
@@ -1041,7 +1049,8 @@ pub struct CloudTested {
     /// Machines the credentials see, and how many run.
     pub vms: u64,
     pub running: u64,
-    /// Whether metrics (CloudWatch, Azure Monitor) could be read; `null`
+    /// Whether metrics (CloudWatch, Azure Monitor, Cloud Monitoring) could
+    /// be read; `null`
     /// when there was nothing to ask.
     pub metrics: Option<bool>,
     /// Why metrics could not be read, or another call that failed

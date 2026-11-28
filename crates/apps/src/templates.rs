@@ -360,17 +360,31 @@ pub const MSSQL_TEMPLATE: Template = Template {
     default_port: Some(1433),
     params: &[
         HOST,
-        p("port", Some("1433"), "Port; a named instance needs its fixed port"),
+        p(
+            "port",
+            Some("1433"),
+            "Port; with `instance` and no port, the instance's port from SQL Server Browser (UDP 1434)",
+        ),
+        p(
+            "instance",
+            None,
+            "A named instance, such as `SQLEXPRESS`: its port is asked from SQL Server Browser at each collection unless `port` is given",
+        ),
+        p(
+            "auth",
+            Some("sql"),
+            "`sql` (a SQL Server login) or `windows` (a Windows account through SSPI, NTLM or Kerberos; on the server's Windows agent only, not from a probe)",
+        ),
         p(
             "user",
             Some("monitorflow"),
-            "A SQL Server login with `VIEW SERVER STATE` only",
+            "A login with `VIEW SERVER STATE` only. With `auth` `windows`: empty for the account the agent runs as, or `DOMAIN\\name` or `name@domain` with its `password`",
         ),
         PASSWORD,
         p(
             "tls",
             Some("prefer"),
-            "`prefer` (encrypted, certificate not verified), `verify` (certificate and name verified) or `off` (the password then goes in clear)",
+            "`prefer` (encrypted, certificate not verified), `verify` (certificate and name verified), `strict` (TDS 8.0: TLS before anything else, certificate and name verified; SQL Server 2022 or later) or `off` (the password then goes in clear)",
         ),
     ],
     metrics: &[
@@ -1109,6 +1123,109 @@ pub const KUBERNETES_TEMPLATE: Template = Template {
             Some("namespace"),
             "Claims whose volume is gone, named in label `claims`",
         ),
+        m(
+            "node_info",
+            "",
+            Some("node"),
+            "Always 1; labels describe the node for the inventory: `key` (its UID), `uuid` (its SMBIOS UUID), `hostname`, `addresses`, `roles`, `kubelet_version`, `os_image`, `kernel`, `runtime`, `architecture`",
+        ),
+        m(
+            "node_cpu_cores",
+            "",
+            Some("node"),
+            "Processor cores pods may use (allocatable)",
+        ),
+        m(
+            "node_memory_bytes",
+            "bytes",
+            Some("node"),
+            "Memory pods may use (allocatable)",
+        ),
+        m(
+            "node_pods_capacity",
+            "count",
+            Some("node"),
+            "Pods the node takes at most",
+        ),
+        m(
+            "node_pods",
+            "count",
+            Some("node"),
+            "Pods on the node that have not finished",
+        ),
+        m(
+            "node_cpu_usage_cores",
+            "",
+            Some("node"),
+            "Processor cores in use, from metrics-server",
+        ),
+        m(
+            "node_cpu_usage_ratio",
+            "ratio",
+            Some("node"),
+            "Processor in use against what pods may use, from metrics-server",
+        ),
+        m(
+            "node_memory_usage_bytes",
+            "bytes",
+            Some("node"),
+            "Memory in use (working set), from metrics-server",
+        ),
+        m(
+            "node_memory_usage_ratio",
+            "ratio",
+            Some("node"),
+            "Memory in use against what pods may use, from metrics-server",
+        ),
+        m(
+            "namespace_info",
+            "",
+            Some("namespace"),
+            "Always 1; labels `key` (its UID) and `phase` (`Active`, `Terminating`) when namespaces can be listed",
+        ),
+        m(
+            "namespace_cpu_usage_cores",
+            "",
+            Some("namespace"),
+            "Processor cores its pods use, from metrics-server",
+        ),
+        m(
+            "namespace_memory_usage_bytes",
+            "bytes",
+            Some("namespace"),
+            "Memory its pods use, from metrics-server",
+        ),
+        m(
+            "namespace_jobs_failed",
+            "count",
+            Some("namespace"),
+            "Jobs that failed, named in label `jobs`: a job of no cron job, or a cron job's latest run",
+        ),
+        m("jobs_failed", "count", None, "Jobs that failed in the watched namespaces"),
+        m(
+            "job_info",
+            "",
+            Some("job"),
+            "Always 1, for each failed job (`namespace/name`); labels `key`, `namespace`, `cron_job`, `reason`, `message`, `failed_at`",
+        ),
+        m(
+            "workload_info",
+            "",
+            Some("workload"),
+            "Always 1; labels `key` (its UID), `namespace`, `workload` and `name`",
+        ),
+        m(
+            "workload_cpu_usage_cores",
+            "",
+            Some("workload"),
+            "Processor cores its pods use, from metrics-server",
+        ),
+        m(
+            "workload_memory_usage_bytes",
+            "bytes",
+            Some("workload"),
+            "Memory its pods use, from metrics-server",
+        ),
     ],
     alerts: &[
         a("up", "<", None, Some(1.0), 2),
@@ -1122,6 +1239,8 @@ pub const KUBERNETES_TEMPLATE: Template = Template {
         a("workload_ready_ratio", "<", Some(1.0), Some(0.5), 10),
         a("namespace_claims_pending", ">", Some(0.0), None, 10),
         a("namespace_claims_lost", ">", None, Some(0.0), 0),
+        a("namespace_jobs_failed", ">", Some(0.0), None, 0),
+        a("node_memory_usage_ratio", ">", Some(0.9), None, 10),
     ],
 };
 

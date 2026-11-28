@@ -400,6 +400,114 @@ fn sql_server_errors_say_why() {
     let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
     assert_eq!(failure(&TdsError::Io(refused)).reason, Reason::Connect);
     assert!(failure(&server(18456)).error.contains("error 18456"));
+    assert_eq!(
+        failure(&TdsError::Sspi("no domain".into())).reason,
+        Reason::Login
+    );
+    assert_eq!(
+        failure(&TdsError::Browser("no answer".into())).reason,
+        Reason::Connect
+    );
+}
+
+/// A named instance, Windows sign-in and strict encryption (ADR-0183).
+#[test]
+fn sql_server_instances_windows_sign_in_and_strict_encryption() {
+    let ok = |pairs: &[(&str, &str)], place| build(MSSQL, &params(pairs), place).is_ok();
+    assert!(ok(&[("instance", "SQLEXPRESS")], Place::Relay));
+    assert!(ok(
+        &[("instance", "SALES"), ("port", "50123")],
+        Place::Relay
+    ));
+    assert!(error(MSSQL, &[("instance", "a\\b")], Place::Check).contains("an instance name"));
+    assert!(ok(&[("tls", "strict")], Place::Relay));
+    assert!(error(MSSQL, &[("tls", "maybe")], Place::Check).contains("`verify` or `strict`"));
+    // Strict is SQL Server's alone.
+    assert!(error(POSTGRESQL, &[("tls", "strict")], Place::Check).contains("`prefer` or `verify`"));
+    assert!(error(MSSQL, &[("auth", "kerberos")], Place::Check).contains("`sql` or `windows`"));
+
+    // The server checks a row anywhere; probes never sign in to Windows.
+    let windows = [("auth", "windows")];
+    assert!(ok(&windows, Place::Check));
+    for probe in [Place::Relay, Place::Central] {
+        assert!(error(MSSQL, &windows, probe).contains("not from a probe"));
+    }
+    let named = [
+        ("auth", "windows"),
+        ("user", "EXAMPLE\\svc-monitor"),
+        ("password", "pw"),
+    ];
+    assert!(ok(&named, Place::Check));
+    assert!(
+        error(MSSQL, &named[..2], Place::Check).contains("needs its password"),
+        "a named account without its password"
+    );
+    assert!(error(MSSQL, &[named[0], named[2]], Place::Check).contains("DOMAIN"));
+    if cfg!(windows) {
+        assert!(ok(&windows, Place::Agent(None)));
+    } else {
+        assert!(error(MSSQL, &windows, Place::Agent(None)).contains("agent on Windows"));
+    }
+}
+
+#[test]
+fn windows_accounts_and_their_service_name() {
+    use crate::tds::sspi::{spn, Account};
+    match Account::named("EXAMPLE\\svc", "pw") {
+        Account::Named { user, domain, .. } => {
+            assert_eq!((user.as_str(), domain.as_str()), ("svc", "EXAMPLE"));
+        }
+        Account::Own => panic!(),
+    }
+    match Account::named("svc@example.com", "pw") {
+        Account::Named { user, domain, .. } => {
+            assert_eq!((user.as_str(), domain.as_str()), ("svc@example.com", ""));
+        }
+        Account::Own => panic!(),
+    }
+    assert!(!format!("{:?}", Account::named("a\\b", "secret-pw")).contains("secret-pw"));
+    assert_eq!(spn("db.example.com", 1433), "MSSQLSvc/db.example.com:1433");
+}
+
+/// The port SQL Server Browser gives is checked against the agent's
+/// `sensors.port_targets` before anything connects to it.
+#[tokio::test]
+async fn an_instance_s_port_stays_within_the_agent_s_limits() {
+    let browser = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let browser_port = browser.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let mut buf = [0u8; 64];
+        loop {
+            let (_, from) = browser.recv_from(&mut buf).await.unwrap();
+            let text = b"ServerName;DB1;InstanceName;SALES;IsClustered;No;tcp;50123;;";
+            let mut answer = vec![0x05];
+            answer.extend_from_slice(&u16::try_from(text.len()).unwrap().to_le_bytes());
+            answer.extend_from_slice(text);
+            browser.send_to(&answer, from).await.unwrap();
+        }
+    });
+    let targets = PortTargets::parse(&[format!("127.0.0.1:{browser_port}")]).unwrap();
+    let map = params(&[("instance", "SALES"), ("port", "")]);
+    let mut map = map;
+    map.remove("port");
+    let mut p = Params::new(MSSQL, &map);
+    // Browser's own port, as the agent's list allows it.
+    let mut check = mssql::Mssql::from_params(&mut p, Place::Agent(Some(&targets)));
+    assert!(check.is_err(), "1434 is not in the list");
+    let targets = PortTargets::parse(&["127.0.0.1:1434".to_owned()]).unwrap();
+    let mut p = Params::new(MSSQL, &map);
+    check = mssql::Mssql::from_params(&mut p, Place::Agent(Some(&targets)));
+    let mut check = check.unwrap();
+    check.browse_at(browser_port);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let samples = check.collect(deadline).await.unwrap();
+    let up = &samples[0];
+    assert_eq!(up.value, 0.0);
+    assert_eq!(up.labels["reason"], "connect");
+    assert!(
+        up.labels["error"].contains("listens on port 50123"),
+        "{up:?}"
+    );
 }
 
 #[test]
@@ -433,6 +541,41 @@ fn jmx_parameters_are_checked() {
         assert!(build(JMX, &params(&pairs), Place::Relay).is_ok(), "{host}");
     }
     assert!(error(JMX, &[("host", "169.254.169.254")], Place::Central).contains("link-local"));
+}
+
+#[test]
+fn jmx_pins_a_certificate_over_https_only() {
+    let print = "AB:".repeat(31) + "AB";
+    let pinned = [
+        ("host", "192.0.2.7"),
+        ("password", "secret"),
+        ("tls", "verify"),
+        ("fingerprint", print.as_str()),
+    ];
+    assert!(build(JMX, &params(&pinned), Place::Relay).is_ok());
+    let hex = "ab".repeat(32);
+    let lower = [("tls", "verify"), ("fingerprint", hex.as_str())];
+    assert!(build(JMX, &params(&lower), Place::Relay).is_ok());
+    // A fingerprint over HTTP would mean nothing.
+    assert!(error(JMX, &[("fingerprint", print.as_str())], Place::Check).contains("HTTPS only"));
+    let bad = [("tls", "verify"), ("fingerprint", "abc")];
+    assert!(error(JMX, &bad, Place::Check).contains("64 hexadecimal digits"));
+    // The test looks at an HTTPS certificate.
+    assert!(build(
+        JMX,
+        &params(&[("tls", "verify"), ("what", "test")]),
+        Place::Relay
+    )
+    .is_ok());
+    assert!(error(JMX, &[("what", "test")], Place::Check).contains("`tls` `verify`"));
+    assert!(error(JMX, &[("what", "look")], Place::Check).contains("`collect` or `test`"));
+    // Still no password in clear to a pinned host over HTTP.
+    let clear = [
+        ("host", "192.0.2.7"),
+        ("password", "secret"),
+        ("tls", "off"),
+    ];
+    assert!(error(JMX, &clear, Place::Relay).contains("over HTTPS only"));
 }
 
 #[test]

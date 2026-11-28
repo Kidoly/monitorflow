@@ -335,23 +335,69 @@ impl Handler for SoftwareHandler {
         }
         let install_action = change.action == i32::from(Action::Install);
         let verb = if install_action { "install" } else { "remove" };
-        let ids: Vec<&str> = change.packages.iter().map(|p| p.id.as_str()).collect();
         let mut output = Output::default();
-        output
-            .stdout
-            .extend_from_slice(format!("$ winget {verb} {}\n", ids.join(" ")).as_bytes());
-        let signed = Request::signed(command, Step::Software, None);
-        let result = install(self.service.as_ref(), &signed).await;
+        // winget's packages, then Windows Installer's, each a step of its
+        // own: a service that predates MSI packages refuses theirs.
+        let mut steps = Vec::new();
+        let winget: Vec<&str> = change
+            .packages
+            .iter()
+            .filter(|p| p.msi.is_none())
+            .map(|p| p.id.as_str())
+            .collect();
+        if !winget.is_empty() {
+            output
+                .stdout
+                .extend_from_slice(format!("$ winget {verb} {}\n", winget.join(" ")).as_bytes());
+            steps.push(Step::Software);
+        }
+        let msi: Vec<&str> = change
+            .packages
+            .iter()
+            .filter_map(|p| {
+                let file = p.msi.as_ref()?;
+                Some(
+                    if file.name.is_empty() {
+                        &p.id
+                    } else {
+                        &file.name
+                    }
+                    .as_str(),
+                )
+            })
+            .collect();
+        if !msi.is_empty() {
+            let flag = if install_action { "/i" } else { "/x" };
+            output
+                .stdout
+                .extend_from_slice(format!("$ msiexec {flag} {}\n", msi.join(", ")).as_bytes());
+            steps.push(Step::SoftwareMsi);
+        }
+        let mut installed = Installed::default();
+        let mut failure = None;
+        for step in steps {
+            match install(self.service.as_ref(), &Request::signed(command, step, None)).await {
+                Ok(done) => {
+                    installed.results.extend(done.results);
+                    installed.unchanged.extend(done.unchanged);
+                    installed.not_pending.extend(done.not_pending);
+                    installed.reboot_required |= done.reboot_required;
+                }
+                Err(error) => {
+                    failure = Some(error.to_string());
+                    break;
+                }
+            }
+        }
         // Whatever happened, the server gets the state of the host.
         self.reports.collect().await;
-        let installed = match result {
-            Ok(installed) => installed,
-            Err(error) => {
-                output.exit_code = -1;
-                output.error = Some(error.to_string());
-                return output;
-            }
-        };
+        if let Some(error) = failure {
+            let (text, _) = describe_change(&installed, install_action);
+            output.stdout.extend_from_slice(text.as_bytes());
+            output.exit_code = -1;
+            output.error = Some(error);
+            return output;
+        }
         let (text, error) = describe_change(&installed, install_action);
         output.stdout.extend_from_slice(text.as_bytes());
         tracing::info!(
@@ -378,6 +424,30 @@ impl Handler for SoftwareHandler {
     }
 }
 
+/// Reports `software_msi` in `Hello` (ADR-0188), with the acceptance of
+/// `software`: this agent's `software` commands may carry MSI packages.
+/// The kind is never sent as a command; one that comes is refused.
+pub struct MsiPackages {
+    switch: Arc<SoftwareSwitch>,
+}
+
+impl MsiPackages {
+    pub fn new(switch: Arc<SoftwareSwitch>) -> Self {
+        Self { switch }
+    }
+}
+
+#[async_trait::async_trait]
+impl Handler for MsiPackages {
+    fn acceptance(&self) -> CommandAcceptance {
+        self.switch.acceptance()
+    }
+
+    async fn run(&self, _payload: &[u8]) -> Output {
+        Output::rejected("MSI packages come in software commands")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -393,6 +463,7 @@ mod tests {
         reboot: Option<Reply>,
         winget: Option<Reply>,
         apps: Option<Reply>,
+        msi: Option<Reply>,
     }
 
     #[async_trait::async_trait]
@@ -415,6 +486,7 @@ mod tests {
                     Step::Install | Step::InstallApproved | Step::Software => self.install.clone(),
                     Step::Reboot => self.reboot.clone(),
                     Step::Winget | Step::WingetApproved => self.winget.clone(),
+                    Step::SoftwareMsi => self.msi.clone(),
                     Step::SelfUpdate => None,
                 },
                 Request::WingetScan => self.apps.clone(),
@@ -423,7 +495,9 @@ mod tests {
                 | Request::SelfUpdate(_)
                 | Request::WingetUpgrade { .. }
                 | Request::WingetInstall { .. }
-                | Request::WingetRemove { .. } => None,
+                | Request::WingetRemove { .. }
+                | Request::MsiInstall { .. }
+                | Request::MsiRemove { .. } => None,
             };
             reply.ok_or_else(|| PackageError::Helper("the update service is not running".into()))
         }
@@ -859,6 +933,7 @@ mod tests {
             packages: vec![monitorflow_common::proto::v1::SoftwarePackage {
                 id: "Example.App".into(),
                 source: "winget".into(),
+                msi: None,
             }],
             allow_reboot,
         }
@@ -938,5 +1013,107 @@ mod tests {
         bad.packages[0].source = "msstore".into();
         let (output, calls, _) = run_software(Fake::default(), true, bad).await;
         assert!(output.rejected && calls.is_empty());
+    }
+
+    fn with_msi(action: Action) -> SoftwareChange {
+        let install = action == Action::Install;
+        let mut change = change(action, true);
+        change
+            .packages
+            .push(monitorflow_common::proto::v1::SoftwarePackage {
+                id: "{0D3D4C9E-6C7B-4F5B-9F65-2B8F1E4A7C11}".into(),
+                source: String::new(),
+                msi: Some(monitorflow_common::proto::v1::MsiFile {
+                    sha256: if install {
+                        "ab".repeat(32)
+                    } else {
+                        String::new()
+                    },
+                    size: u64::from(install),
+                    urls: if install {
+                        vec!["http://relay.example:7480/software/x.msi".into()]
+                    } else {
+                        vec![]
+                    },
+                    name: "Tiny".into(),
+                    ..Default::default()
+                }),
+            });
+        change
+    }
+
+    #[tokio::test]
+    async fn msi_packages_are_a_step_of_their_own() {
+        let code = "{0D3D4C9E-6C7B-4F5B-9F65-2B8F1E4A7C11}";
+        let fake = || Fake {
+            install: Some(installed(&[("Example.App", Outcome::Succeeded)], false)),
+            msi: Some(Reply::Installed(Installed {
+                results: vec![InstallResult {
+                    name: code.into(),
+                    title: "Tiny".into(),
+                    result: Outcome::Succeeded,
+                    hresult: 3010,
+                }],
+                reboot_required: true,
+                ..Installed::default()
+            })),
+            reboot: Some(Reply::Rebooting(())),
+            ..Fake::default()
+        };
+        let (output, calls, _) = run_software(fake(), true, with_msi(Action::Install)).await;
+        assert_eq!((output.exit_code, output.error.as_deref()), (0, None));
+        assert_eq!(
+            signed_steps(&calls),
+            [Step::Software, Step::SoftwareMsi, Step::Reboot]
+        );
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!(
+                "$ winget install Example.App\n\
+                 $ msiexec /i Tiny\n\
+                 Example.App succeeded: Example.App title\n\
+                 {code} succeeded: Tiny\n\
+                 a restart is required\n\
+                 restarting in one minute\n"
+            )
+        );
+
+        // MSI packages only: no winget step.
+        let mut only = with_msi(Action::Remove);
+        only.packages.remove(0);
+        let (output, calls, _) = run_software(fake(), true, only).await;
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(signed_steps(&calls), [Step::SoftwareMsi, Step::Reboot]);
+        assert!(String::from_utf8(output.stdout)
+            .unwrap()
+            .starts_with("$ msiexec /x Tiny\n"));
+
+        // A service that predates MSI packages refuses the step: the
+        // winget part stays done, and the command fails.
+        let older = Fake {
+            msi: None,
+            ..fake()
+        };
+        let (output, calls, _) = run_software(older, true, with_msi(Action::Install)).await;
+        assert_eq!(output.exit_code, -1);
+        assert!(output.error.is_some());
+        assert_eq!(signed_steps(&calls), [Step::Software, Step::SoftwareMsi]);
+        assert!(String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("Example.App succeeded"));
+    }
+
+    #[tokio::test]
+    async fn msi_packages_are_reported_with_the_consent_and_never_run() {
+        for allowed in [false, true] {
+            let handler = MsiPackages::new(Arc::new(SoftwareSwitch::fixed(allowed)));
+            let expected = if allowed {
+                CommandAcceptance::Accepted
+            } else {
+                CommandAcceptance::Disabled
+            };
+            assert_eq!(handler.acceptance(), expected);
+            assert!(handler.run(b"").await.rejected);
+        }
     }
 }

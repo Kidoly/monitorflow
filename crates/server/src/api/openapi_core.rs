@@ -286,7 +286,11 @@ Server), `redis`, `jmx` (a Java virtual machine through Jolokia) and `docker`; `
 their parameters, metrics and default alerts. All but `docker` run on the agent (against `127.0.0.1` by default, \
 within its `sensors.port_targets`) or from a probe, and take a `password` kept sealed like a website check's: \
 an update without it keeps it only while `host` and `port` stay the same. A `jmx` password is sent over HTTPS \
-only (`tls` `verify`), or to the loopback. `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the \
+only (`tls` `verify`), or to the loopback. An `mssql` check names a named instance with `instance` (its port \
+asked from SQL Server Browser on UDP 1434 at each collection, unless `port` is given), signs in with a Windows \
+account with `auth` `windows` (SSPI, NTLM or Kerberos: on the server's Windows agent only, never with `probe`; \
+`user` empty for the account the agent runs as, or `DOMAIN\\name` with its `password`), and takes `tls` \
+`strict` for TDS 8.0 (TLS before anything else, the certificate and name verified). `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the \
 template's alerts, named after the check, where none exists on that metric.\n\n\
 Audited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the \
 parameters but never their values. Connected agents get the change within seconds."
@@ -354,6 +358,10 @@ that its site or the built-in checks give; with `enabled: false`, removes that s
         ("mssql" = (summary = "Watch SQL Server on this Windows server, with its default alerts (ADR-0183)",
             value = json!({"kind": "mssql", "interval_ms": 60000, "default_alerts": true,
                            "params": {"port": "1433", "user": "monitorflow", "password": "a password"}}))),
+        ("mssql_windows" = (summary = "Watch a named SQL Server instance, signing in as the agent's Windows account (ADR-0183)",
+            value = json!({"kind": "mssql", "interval_ms": 60000, "default_alerts": true,
+                           "params": {"instance": "SQLEXPRESS", "auth": "windows", "tls": "verify",
+                                      "host": "db1.example.com"}}))),
         ("redis_from_relay" = (summary = "Watch Redis from the site's relay",
             value = json!({"kind": "redis", "interval_ms": 60000, "default_alerts": true,
                            "probe": "5b7f3c2e-1a4d-4e8f-9b6a-0c2d4e6f8a10",

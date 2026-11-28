@@ -52,6 +52,13 @@ rustls.workspace = true
 # tunnel, behind IronRDP's RDCleanPath handshake.
 tokio-rustls.workspace = true
 ironrdp-rdcleanpath.workspace = true
+ironrdp-pdu.workspace = true
+ironrdp-core.workspace = true
+ironrdp-bulk.workspace = true
+ironrdp-graphics.workspace = true
+ironrdp-session.workspace = true
+ironrdp-cliprdr.workspace = true
+png.workspace = true
 futures-util.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
@@ -81,6 +88,7 @@ chrono-tz.workspace = true
 # CSR parsing and signature verification need rcgen's x509-parser feature.
 rcgen = { workspace = true, features = ["x509-parser"] }
 ring.workspace = true
+msi.workspace = true
 pem.workspace = true
 time.workspace = true
 x509-parser.workspace = true

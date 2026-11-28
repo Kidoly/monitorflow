@@ -8659,7 +8659,7 @@
           "devices"
         ],
         "summary": "Add a device",
-        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\nWith `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes from the same probe, and its alerts; test the connection and confirm its certificate first with `POST /api/v1/devices/vmware/test`.\n\nWith `cloud` credentials (ADR-0183), it is an AWS account or an Azure subscription: its `address` may be left out (it becomes the provider's API), it gets no ping unless asked, and its `aws` or `azure` check lists its virtual machines every 5 minutes from the central server, with its alerts; test the credentials first with `POST /api/v1/devices/cloud/test`. The secret is stored sealed and never returned.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
+        "description": "Adds an address without an agent to a site, with an ID made from its name (made unique as install keys do), and by default a ping every minute from the relay of its site, or from the central server when the site has no relay, with its thresholds: critical when it gets no answer for 2 minutes, a warning above 20% packet loss for 5 minutes. Add more checks with `POST /api/v1/servers/{id}/sensor_configs` and a `probe`.\n\nWith `snmp` credentials and a `template` (ADR-0149), it also gets the SNMP checks and thresholds of that kind of device, run from the same probe; `POST /api/v1/devices/detect` suggests the template. The credentials are stored sealed and never returned.\n\nWith `vmware` credentials (ADR-0156), a vCenter or ESXi host also gets its `vmware` check every 5 minutes from the same probe, and its alerts; test the connection and confirm its certificate first with `POST /api/v1/devices/vmware/test`.\n\nWith `cloud` credentials (ADR-0183), it is an AWS account, an Azure subscription or a Google Cloud project: its `address` may be left out (it becomes the provider's API), it gets no ping unless asked, and its `aws`, `azure` or `gcp` check lists its virtual machines every 5 minutes from the central server, with its alerts; test the credentials first with `POST /api/v1/devices/cloud/test`. The secret is stored sealed and never returned.\n\n**Who**: operator or above on the site. **Area**: `servers`. Audited as `device.create`.",
         "operationId": "create_device",
         "parameters": [
           {
@@ -8884,7 +8884,7 @@
           "cloud"
         ],
         "summary": "Test cloud credentials",
-        "description": "Signs in once from the central server, lists the account's virtual machines and reads their metrics, then says what worked. For AWS, a machine-less account still asks CloudWatch, so a missing `cloudwatch:GetMetricData` right shows. Nothing is stored.\n\n**Who**: operator or above on the site. **Area**: `servers`.",
+        "description": "Signs in once from the central server, lists the account's virtual machines and reads their metrics, then says what worked. For AWS, a machine-less account still asks CloudWatch, so a missing `cloudwatch:GetMetricData` right shows; Google Cloud always asks Cloud Monitoring. Nothing is stored.\n\n**Who**: operator or above on the site. **Area**: `servers`.",
         "operationId": "test_cloud",
         "parameters": [
           {
@@ -8930,6 +8930,17 @@
                       "secret": "a client secret",
                       "subscription": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
                       "tenant": "72f988bf-86f1-41af-91ab-2d7cd011db47"
+                    },
+                    "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                  }
+                },
+                "gcp": {
+                  "summary": "A Google Cloud project read by a service account",
+                  "value": {
+                    "cloud": {
+                      "project": "my-project-123",
+                      "provider": "gcp",
+                      "secret": "{\"type\": \"service_account\", \"client_email\": …, \"private_key\": …}"
                     },
                     "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
                   }
@@ -9690,6 +9701,7 @@
                 },
                 "example": {
                   "key_id": "AKIAIOSFODNN7EXAMPLE",
+                  "project": null,
                   "provider": "aws",
                   "regions": [
                     "eu-west-3",
@@ -9778,7 +9790,7 @@
           "cloud"
         ],
         "summary": "Set a device's cloud credentials",
-        "description": "Replaces them; what is left out is kept. The secret is kept only while the provider and the identity stay the same (the access key ID, or the tenant and application): a kept secret never goes to another one. The provider cannot change: remove the credentials first. A device without the provider's check gets it, on the central server every 5 minutes, with its alerts: the account cannot be read for 10 minutes (`monitorflow_<provider>_up`), and a machine's status check failing for 10 minutes (`monitorflow_<provider>_vm_status_checks_failed`), both critical. Thresholds the device has already stay.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.cloud_update`, without the secret.",
+        "description": "Replaces them; what is left out is kept. The secret is kept only while the provider and the identity stay the same (the access key ID, the tenant and application, or the service account): a kept secret never goes to another one. The provider cannot change: remove the credentials first. A device without the provider's check gets it, on the central server every 5 minutes, with its alerts: the account cannot be read for 10 minutes (`monitorflow_<provider>_up`), and, for AWS and Azure, a machine's status check failing for 10 minutes (`monitorflow_<provider>_vm_status_checks_failed`), both critical. Thresholds the device has already stay.\n\n**Who**: operator or above on the device's site. **Area**: `servers`. Audited as `device.cloud_update`, without the secret.",
         "operationId": "set_device_cloud",
         "parameters": [
           {
@@ -9829,6 +9841,7 @@
                 },
                 "example": {
                   "key_id": "AKIAIOSFODNN7EXAMPLE",
+                  "project": null,
                   "provider": "aws",
                   "regions": [
                     "eu-west-3",
@@ -19680,7 +19693,7 @@
           "campaigns"
         ],
         "summary": "List the servers that can move to the next release",
-        "description": "For each server the caller sees on a release MonitorFlow can upgrade\nfrom (Debian 12 for now), or with a major upgrade recorded: the next\nrelease, every check before upgrading to it, the rollback it would\nget, and the progress of its last upgrade (ADR-0182). The central\nserver's checks come first (`allowed`: the server allows major upgrades\nfrom the web interface; `agent_version`: its agent knows the target;\n`mirror`: the mirrors carry the target when the server uses them), then\nthe agent's (`up_to_date`, `held_packages`, `broken_packages`,\n`free_space`, `reboot_pending`, `sources`, `third_party_sources`). A\n`warning` never blocks; `ready` is false while any check `failed`. The\nagent runs its checks again just before the upgrade. Upgrades\nthemselves are campaigns with `major_upgrade`.\n\nNeeds any role on the servers' sites and the key area \"updates\".",
+        "description": "For each server the caller sees on a release MonitorFlow can upgrade\nfrom (Debian 12, Ubuntu LTS, RHEL 8 and 9, Rocky Linux 8, AlmaLinux 8\nand 9), or with a major upgrade recorded: the next\nrelease, every check before upgrading to it, the rollback it would\nget, and the progress of its last upgrade (ADR-0182). The central\nserver's checks come first (`allowed`: the server allows major upgrades\nfrom the web interface; `agent_version`: its agent knows the target;\n`mirror`: the mirrors carry the target when the server uses them; on\nUbuntu and the RHEL family, a `warning` when they do not, as the\ncampaign puts the server's own sources back for the upgrade and keeps\nthem until the mirrors carry the new release), then the agent's\n(`up_to_date`, `held_packages`, `broken_packages`, `free_space`,\n`reboot_pending`, `sources`, `release_offered` on Ubuntu, `leapp` on the\nRHEL family, `third_party_sources`). A `warning` never blocks; `ready`\nis false while any check `failed`. The agent runs its checks again just\nbefore the upgrade. Upgrades themselves are campaigns with\n`major_upgrade`; `leapp preupgrade` alone is `POST\n/servers/{id}/major-upgrade/preupgrade`, whose report comes back in\n`progress` with `preupgrade_only`.\n\nNeeds any role on the servers' sites and the key area \"updates\".",
         "operationId": "list_major_upgrades",
         "parameters": [
           {
@@ -19722,6 +19735,7 @@
                 "example": {
                   "servers": [
                     {
+                      "can_preupgrade": false,
                       "can_upgrade": true,
                       "checks": [
                         {
@@ -39301,10 +39315,12 @@
                 "example": {
                   "bytes_in": 412,
                   "bytes_out": 18734,
+                  "clipboard": false,
                   "close_reason": "closed by alice",
                   "closed_at": "2026-11-23T09:41:15Z",
                   "created_at": "2026-11-23T09:30:00Z",
                   "duration_seconds": 673,
+                  "file_transfer": false,
                   "hostname": "web-1",
                   "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
                   "kind": "terminal",
@@ -39519,7 +39535,7 @@
           "servers"
         ],
         "summary": "Get a remote session's recording",
-        "description": "What a recorded session printed, in order, each chunk with its time after the session opened: written into a terminal of the session's size, it shows what the person saw. Keystrokes are not kept apart: what the terminal echoed is in it, and what it did not, such as a password, is not.\n\n**Who**: administrators of the server's site. **Area**: `servers`. Audited as `remote_session.recording_read`.",
+        "description": "A terminal's: what it printed, in order, each chunk with its time after the session opened: written into a terminal of the session's size, it shows what the person saw. Keystrokes are not kept apart: what the terminal echoed is in it, and what it did not, such as a password, is not.\n\nA desktop's: the pictures of its screen in `frames`, `chunks` empty. The central server decodes the screen from the RDP it carries and keeps a picture at most once a second, of the part that changed, and of the whole screen at the start, when its size changes and once a minute while it changes. Get each with `GET /api/v1/remote-sessions/{id}/recording/frames/{seq}` and draw it at `x`, `y`: from a picture of the whole screen (`width` and `height` equal to `screen_width` and `screen_height`) on, they show what the screen showed. A desktop's recording stops at 256 MiB of pictures, and the session with it.\n\n**Who**: administrators of the server's site. **Area**: `servers`. Audited as `remote_session.recording_read`.",
         "operationId": "recording",
         "parameters": [
           {
@@ -39552,13 +39568,16 @@
                       "data": "dXB0aW1lDQogMDk6MzA6MDYgdXAgMyBkYXlzDQo="
                     }
                   ],
+                  "frames": [],
                   "session": {
                     "bytes_in": 412,
                     "bytes_out": 18734,
+                    "clipboard": false,
                     "close_reason": "closed by alice",
                     "closed_at": "2026-11-23T09:41:15Z",
                     "created_at": "2026-11-23T09:30:00Z",
                     "duration_seconds": 673,
+                    "file_transfer": false,
                     "hostname": "web-1",
                     "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
                     "kind": "terminal",
@@ -39642,13 +39661,125 @@
         }
       }
     },
+    "/api/v1/remote-sessions/{id}/recording/frames/{seq}": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Get a picture of a desktop's recording",
+        "description": "One picture of a recorded desktop's screen, as a PNG: the part `x`, `y`, `width`, `height` its entry in the recording's `frames` gives.\n\n**Who**: administrators of the server's site. **Area**: `servers`. Reading the recording is audited once, as `remote_session.recording_read`, not each picture.",
+        "operationId": "frame",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The session",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "description": "The picture's `seq`",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The picture",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "$ref": "#/components/schemas/Png"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator there: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session or picture, not recorded, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/remote-sessions/{id}/socket": {
       "get": {
         "tags": [
           "servers"
         ],
         "summary": "Open a remote session's WebSocket",
-        "description": "The session's terminal, as a WebSocket (`Upgrade: websocket`). No key or cookie is needed: the first message must be a text message with the session's one-time token and the terminal's size, `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`, within 10 seconds.\n\nThen, from the central server: text messages `{\"type\": \"waiting\"}` while the agent opens the terminal, `{\"type\": \"opened\"}` once it did, `{\"type\": \"closed\", \"reason\": \"…\"}` at the end; and binary messages with what the terminal prints. To it: binary messages with keystrokes, and text messages `{\"type\": \"resize\", \"cols\": 100, \"rows\": 30}` or `{\"type\": \"close\"}`. Messages are at most 64 KiB.\n\nThe session closes after the idle time of the settings without keystrokes, when the shell exits, when the agent's connection drops, and after 12 hours.\n\n**A desktop's WebSocket** (`kind` `desktop`) is IronRDP's RDCleanPath protocol instead, in binary messages only: the first is a DER `RDCleanPathPdu` request whose `proxy_auth` is the token and whose `x224_connection_pdu` is the client's X.224 connection request; its `destination` is ignored. The central server answers with the RDCleanPath response (the service's X.224 confirm and its TLS certificates, for network level authentication) or an error, then carries RDP both ways, the TLS with the host's service done on the central server's side. The WebSocket closes with why the session ended as its reason. The idle time counts from the last bytes the browser sent.",
+        "description": "The session's terminal, as a WebSocket (`Upgrade: websocket`). No key or cookie is needed: the first message must be a text message with the session's one-time token and the terminal's size, `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`, within 10 seconds.\n\nThen, from the central server: text messages `{\"type\": \"waiting\"}` while the agent opens the terminal, `{\"type\": \"opened\"}` once it did, `{\"type\": \"closed\", \"reason\": \"…\"}` at the end; and binary messages with what the terminal prints. To it: binary messages with keystrokes, and text messages `{\"type\": \"resize\", \"cols\": 100, \"rows\": 30}` or `{\"type\": \"close\"}`. Messages are at most 64 KiB.\n\nThe session closes after the idle time of the settings without keystrokes, when the shell exits, when the agent's connection drops, and after 12 hours.\n\n**A desktop's WebSocket** (`kind` `desktop`) is IronRDP's RDCleanPath protocol instead, in binary messages only: the first is a DER `RDCleanPathPdu` request whose `proxy_auth` is the token and whose `x224_connection_pdu` is the client's X.224 connection request; its `destination` is ignored. The central server answers with the RDCleanPath response (the service's X.224 confirm and its TLS certificates, for network level authentication) or an error, then carries RDP both ways, the TLS with the host's service done on the central server's side. The WebSocket closes with why the session ended as its reason. The idle time counts from the last bytes the browser sent. The central server passes whole RDP PDUs only, and drops what the session does not allow on the `cliprdr` channel (the clipboard, file contents) and, without file transfers, the `rdpdr` channel.",
         "operationId": "socket",
         "parameters": [
           {
@@ -40475,7 +40606,7 @@
           "sensors"
         ],
         "summary": "Replace a sensor row",
-        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP), `http`, `postgresql`, `mysql`, `mssql`, `redis` and `jmx` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. A website check names its `url` and takes no address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nA website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\nA custom SNMP check of a device is kind `snmp_custom` (ADR-0157), run by a probe with the device's credentials: up to 10 channels, `oidN` (a numeric OID) with optional `nameN`, `keyN` (the metric suffix, from the name), `typeN` (`gauge`, `counter` for a rate per second, or `text`), `unitN`, `multiplyN`, `divideN`, `lookupN` (`builtin:<name>` or the ID of a lookup of the customer) and, for a text, `matchN` (`contains`, `not_contains`, `equals`, `not_equals`, `matches`, `not_matches`), `expectN` and `severityN` (`warning` or `critical`); or a `table` OID with a `name_column`, each `oidN` then a column of it. Credentials and `lookupN_map` are refused: they are added when the check is sent to its probe. `/api/v1/devices/{id}/snmp-checks` reads and writes the same rows with their thresholds.\n\nThe ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server), `redis`, `jmx` (a Java virtual machine through Jolokia) and `docker`; `GET /api/v1/check-templates` lists their parameters, metrics and default alerts. All but `docker` run on the agent (against `127.0.0.1` by default, within its `sensors.port_targets`) or from a probe, and take a `password` kept sealed like a website check's: an update without it keeps it only while `host` and `port` stay the same. A `jmx` password is sent over HTTPS only (`tls` `verify`), or to the loopback. `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the template's alerts, named after the check, where none exists on that metric.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP), `http`, `postgresql`, `mysql`, `mssql`, `redis` and `jmx` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. A website check names its `url` and takes no address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nA website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\nA custom SNMP check of a device is kind `snmp_custom` (ADR-0157), run by a probe with the device's credentials: up to 10 channels, `oidN` (a numeric OID) with optional `nameN`, `keyN` (the metric suffix, from the name), `typeN` (`gauge`, `counter` for a rate per second, or `text`), `unitN`, `multiplyN`, `divideN`, `lookupN` (`builtin:<name>` or the ID of a lookup of the customer) and, for a text, `matchN` (`contains`, `not_contains`, `equals`, `not_equals`, `matches`, `not_matches`), `expectN` and `severityN` (`warning` or `critical`); or a `table` OID with a `name_column`, each `oidN` then a column of it. Credentials and `lookupN_map` are refused: they are added when the check is sent to its probe. `/api/v1/devices/{id}/snmp-checks` reads and writes the same rows with their thresholds.\n\nThe ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server), `redis`, `jmx` (a Java virtual machine through Jolokia) and `docker`; `GET /api/v1/check-templates` lists their parameters, metrics and default alerts. All but `docker` run on the agent (against `127.0.0.1` by default, within its `sensors.port_targets`) or from a probe, and take a `password` kept sealed like a website check's: an update without it keeps it only while `host` and `port` stay the same. A `jmx` password is sent over HTTPS only (`tls` `verify`), or to the loopback. An `mssql` check names a named instance with `instance` (its port asked from SQL Server Browser on UDP 1434 at each collection, unless `port` is given), signs in with a Windows account with `auth` `windows` (SSPI, NTLM or Kerberos: on the server's Windows agent only, never with `probe`; `user` empty for the account the agent runs as, or `DOMAIN\\name` with its `password`), and takes `tls` `strict` for TDS 8.0 (TLS before anything else, the certificate and name verified). `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the template's alerts, named after the check, where none exists on that metric.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
         "operationId": "update_sensor_config",
         "parameters": [
           {
@@ -42961,6 +43092,172 @@
         }
       }
     },
+    "/api/v1/servers/{id}/jmx/test": {
+      "post": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Test a Java check's HTTPS certificate",
+        "description": "Connects once to Jolokia over HTTPS from the probe that would run the server's Java check (`jmx`, ADR-0183), or the one named, and shows its certificate: its SHA-256 fingerprint, subject and expiry, and whether the probe's roots trust it. Jolokia's certificates are often self-signed: compare the fingerprint with the one the JVM's machine shows (`keytool -list -v`, or `openssl x509 -fingerprint -sha256`), then test again with it, and add it to the check as its `fingerprint` param with `tls` `verify` (`POST /api/v1/servers/{id}/sensor_configs`, `PUT /api/v1/sensor_configs/{id}`). Jolokia is read, with the user and password given, only when the certificate is trusted, by the roots or by the `fingerprint` given: the password is never sent to a certificate that is not. Nothing is stored.\n\n**Who**: operator or above on the server's site. **Area**: `servers`.",
+        "operationId": "test_jmx",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server or device the check is for",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JmxTestRequest"
+              },
+              "example": {
+                "fingerprint": "5C:21:E0:7A:93:4B:D8:1F:66:A2:0C:BE:47:91:3D:F8:2A:C5:70:19:E4:8B:36:D2:0F:A7:5E:C1:98:43:B6:2D",
+                "host": "192.0.2.40",
+                "password": "a password",
+                "port": 8778,
+                "probe": "central",
+                "user": "monitorflow"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What answered; also when nothing did: `answers` and `error` say so",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JmxTested"
+                },
+                "example": {
+                  "answers": true,
+                  "certificate": {
+                    "by_roots": false,
+                    "fingerprint": "5C:21:E0:7A:93:4B:D8:1F:66:A2:0C:BE:47:91:3D:F8:2A:C5:70:19:E4:8B:36:D2:0F:A7:5E:C1:98:43:B6:2D",
+                    "not_after": "2028-03-01T12:00:00Z",
+                    "subject": "jvm.example.test",
+                    "trusted": true
+                  },
+                  "error": null,
+                  "probe": "central",
+                  "reads": true,
+                  "version": "21.0.5+11-LTS",
+                  "vm": "OpenJDK 64-Bit Server VM"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Settings that are not valid, or no probe to run the test: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator of the site, or outside the key's areas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The relay is not connected to this central server now: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/logs": {
       "get": {
         "tags": [
@@ -43154,6 +43451,159 @@
           },
           "504": {
             "description": "The logs database did not answer in time: `logs_timeout`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/major-upgrade/preupgrade": {
+      "post": {
+        "tags": [
+          "campaigns"
+        ],
+        "summary": "Run leapp preupgrade alone on a server",
+        "description": "Queues a `leapp_preupgrade` command for the next release of a server of\nthe RHEL family (RHEL, Rocky Linux, AlmaLinux), before any campaign\n(ADR-0182). Its agent's root helper checks the signed command, that the\nserver allows major upgrades from the web interface, that leapp and its\ndata are installed and that no upgrade is running, then runs `leapp\npreupgrade` alone in the upgrade's unit: it writes leapp's report and\nchanges nothing on the server. The report comes back in the server's\n`progress` of `GET /major-upgrades`, with `preupgrade_only` set:\n`done` when leapp found no inhibitor, `failed` with the inhibitors'\ntitles otherwise. The command succeeds once leapp started; it waits an\nhour for an offline server. Audited as `command.create`.\n\nNeeds the administrator role on the server's customer as a whole, never\na site's, as for a major upgrade campaign. Through an API key, the\n\"updates\" area. `can_preupgrade` of `GET /major-upgrades` says whether\nthe caller may run it now.",
+        "operationId": "leapp_preupgrade",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Command queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDetail"
+                },
+                "example": {
+                  "error": null,
+                  "exit_code": null,
+                  "expires_at": "2026-11-27T11:00:00Z",
+                  "finished_at": null,
+                  "id": "b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e",
+                  "issued_at": "2026-11-27T10:00:00Z",
+                  "kind": "leapp_preupgrade",
+                  "parameters": {
+                    "from": "rocky 8",
+                    "to": "rocky 9"
+                  },
+                  "requested_by": "0d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a",
+                  "sent_at": null,
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "started_at": null,
+                  "state": "queued",
+                  "stderr": "",
+                  "stdout": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: a bad ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller does not administer the server's customer as a whole. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such server, or of a site the caller cannot read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`, saying why in a sentence: the server is not of the RHEL family, MonitorFlow knows no next release for it, it does not allow major upgrades from the web interface, its agent predates this command, or it is removed; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -44636,10 +45086,12 @@
                   {
                     "bytes_in": 412,
                     "bytes_out": 18734,
+                    "clipboard": false,
                     "close_reason": "closed by alice",
                     "closed_at": "2026-11-23T09:41:15Z",
                     "created_at": "2026-11-23T09:30:00Z",
                     "duration_seconds": 673,
+                    "file_transfer": false,
                     "hostname": "web-1",
                     "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
                     "kind": "terminal",
@@ -44727,7 +45179,7 @@
           "servers"
         ],
         "summary": "Start a remote terminal or desktop",
-        "description": "Starts a terminal on the server, through its agent's connection and its relay: no port to open and nothing to install. Answers the session and a one-time `token`, valid one minute: open the WebSocket at `socket` and send it first, with the terminal's size, as `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. Only then does the central server send the agent a signed `remote_session` command, which opens a login shell as the agent's own user, or on Linux as the account the host's administrator chose (`MF_REMOTE_TERMINAL_USER`); the central server cannot choose it.\n\nThe host must have allowed it: `command_kinds.remote_session` of the server is `accepted` where its administrator ran the installer with `MF_REMOTE_TERMINAL=1`, or `monitorflow-agent remote-access terminal on`. The central server cannot allow it by itself. While the session is open, people logged in on the server are told who opened it and whether it is recorded.\n\nWith `{\"kind\": \"desktop\"}`, on a Windows server, it is the host's own Remote Desktop service instead: the agent connects to `127.0.0.1:3389`, and to nothing else, and the WebSocket speaks the RDCleanPath protocol of IronRDP's web client, the `token` as its `proxy_auth` (see the socket). The host must have allowed desktops apart: `command_kinds.remote_desktop` is `accepted` where its administrator installed with `REMOTE_DESKTOP=1` or ran `monitorflow-agent.exe remote-access desktop on`. The person signs in to Windows as usual; MonitorFlow neither asks for nor keeps Windows passwords. Desktops are never recorded.\n\n**Who**: the role `GET /api/v1/settings/remote-access` names, or above, on the server's site. **Area**: `servers`. Audited as `remote_session.start`, then `remote_session.open` and `remote_session.close` with its duration. **Not safe to repeat**: each call starts another session.",
+        "description": "Starts a terminal on the server, through its agent's connection and its relay: no port to open and nothing to install. Answers the session and a one-time `token`, valid one minute: open the WebSocket at `socket` and send it first, with the terminal's size, as `{\"token\": \"…\", \"cols\": 120, \"rows\": 40}`. Only then does the central server send the agent a signed `remote_session` command, which opens a login shell as the agent's own user, or on Linux as the account the host's administrator chose (`MF_REMOTE_TERMINAL_USER`); the central server cannot choose it.\n\nThe host must have allowed it: `command_kinds.remote_session` of the server is `accepted` where its administrator ran the installer with `MF_REMOTE_TERMINAL=1`, or `monitorflow-agent remote-access terminal on`. The central server cannot allow it by itself. While the session is open, people logged in on the server are told who opened it and whether it is recorded.\n\nWith `{\"kind\": \"desktop\"}`, on a Windows server, it is the host's own Remote Desktop service instead: the agent connects to `127.0.0.1:3389`, and to nothing else, and the WebSocket speaks the RDCleanPath protocol of IronRDP's web client, the `token` as its `proxy_auth` (see the socket). The host must have allowed desktops apart: `command_kinds.remote_desktop` is `accepted` where its administrator installed with `REMOTE_DESKTOP=1` or ran `monitorflow-agent.exe remote-access desktop on`. The person signs in to Windows as usual; MonitorFlow neither asks for nor keeps Windows passwords. Where `record` is on, the central server records the desktop's screen from the RDP it carries (see the recording). The session keeps whether its clipboard and its file transfers pass (`clipboard`, `file_transfer`), as the settings say when it starts; the central server lets through only that, and audits each copy as `remote_session.clipboard` and each file as `remote_session.file`, with their direction, kind or name and size, never what they hold.\n\n**Who**: the role `GET /api/v1/settings/remote-access` names, or above, on the server's site. **Area**: `servers`. Audited as `remote_session.start`, then `remote_session.open` and `remote_session.close` with its duration. **Not safe to repeat**: each call starts another session.",
         "operationId": "start",
         "parameters": [
           {
@@ -44777,10 +45229,12 @@
                   "session": {
                     "bytes_in": 0,
                     "bytes_out": 0,
+                    "clipboard": false,
                     "close_reason": null,
                     "closed_at": null,
                     "created_at": "2026-11-23T09:30:00Z",
                     "duration_seconds": null,
+                    "file_transfer": false,
                     "hostname": "web-1",
                     "id": "0b5c8a52-6c43-4a6e-8f1e-9d8a3f1c2b7e",
                     "kind": "terminal",
@@ -45502,7 +45956,7 @@
           "sensors"
         ],
         "summary": "Add a sensor row to a server",
-        "description": "Adds a sensor to one server, or replaces for it the sensor of the same name and instance that its site or the built-in checks give; with `enabled: false`, removes that sensor from it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP), `http`, `postgresql`, `mysql`, `mssql`, `redis` and `jmx` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. A website check names its `url` and takes no address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nA website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\nA custom SNMP check of a device is kind `snmp_custom` (ADR-0157), run by a probe with the device's credentials: up to 10 channels, `oidN` (a numeric OID) with optional `nameN`, `keyN` (the metric suffix, from the name), `typeN` (`gauge`, `counter` for a rate per second, or `text`), `unitN`, `multiplyN`, `divideN`, `lookupN` (`builtin:<name>` or the ID of a lookup of the customer) and, for a text, `matchN` (`contains`, `not_contains`, `equals`, `not_equals`, `matches`, `not_matches`), `expectN` and `severityN` (`warning` or `critical`); or a `table` OID with a `name_column`, each `oidN` then a column of it. Credentials and `lookupN_map` are refused: they are added when the check is sent to its probe. `/api/v1/devices/{id}/snmp-checks` reads and writes the same rows with their thresholds.\n\nThe ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server), `redis`, `jmx` (a Java virtual machine through Jolokia) and `docker`; `GET /api/v1/check-templates` lists their parameters, metrics and default alerts. All but `docker` run on the agent (against `127.0.0.1` by default, within its `sensors.port_targets`) or from a probe, and take a `password` kept sealed like a website check's: an update without it keeps it only while `host` and `port` stay the same. A `jmx` password is sent over HTTPS only (`tls` `verify`), or to the loopback. `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the template's alerts, named after the check, where none exists on that metric.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "description": "Adds a sensor to one server, or replaces for it the sensor of the same name and instance that its site or the built-in checks give; with `enabled: false`, removes that sensor from it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP), `http`, `postgresql`, `mysql`, `mssql`, `redis` and `jmx` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. A website check names its `url` and takes no address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nA website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\nA custom SNMP check of a device is kind `snmp_custom` (ADR-0157), run by a probe with the device's credentials: up to 10 channels, `oidN` (a numeric OID) with optional `nameN`, `keyN` (the metric suffix, from the name), `typeN` (`gauge`, `counter` for a rate per second, or `text`), `unitN`, `multiplyN`, `divideN`, `lookupN` (`builtin:<name>` or the ID of a lookup of the customer) and, for a text, `matchN` (`contains`, `not_contains`, `equals`, `not_equals`, `matches`, `not_matches`), `expectN` and `severityN` (`warning` or `critical`); or a `table` OID with a `name_column`, each `oidN` then a column of it. Credentials and `lookupN_map` are refused: they are added when the check is sent to its probe. `/api/v1/devices/{id}/snmp-checks` reads and writes the same rows with their thresholds.\n\nThe ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server), `redis`, `jmx` (a Java virtual machine through Jolokia) and `docker`; `GET /api/v1/check-templates` lists their parameters, metrics and default alerts. All but `docker` run on the agent (against `127.0.0.1` by default, within its `sensors.port_targets`) or from a probe, and take a `password` kept sealed like a website check's: an update without it keeps it only while `host` and `port` stay the same. A `jmx` password is sent over HTTPS only (`tls` `verify`), or to the loopback. An `mssql` check names a named instance with `instance` (its port asked from SQL Server Browser on UDP 1434 at each collection, unless `port` is given), signs in with a Windows account with `auth` `windows` (SSPI, NTLM or Kerberos: on the server's Windows agent only, never with `probe`; `user` empty for the account the agent runs as, or `DOMAIN\\name` with its `password`), and takes `tls` `strict` for TDS 8.0 (TLS before anything else, the certificate and name verified). `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the template's alerts, named after the check, where none exists on that metric.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
         "operationId": "create_server_sensor_config",
         "parameters": [
           {
@@ -45544,6 +45998,20 @@
                       "password": "a password",
                       "port": "1433",
                       "user": "monitorflow"
+                    }
+                  }
+                },
+                "mssql_windows": {
+                  "summary": "Watch a named SQL Server instance, signing in as the agent's Windows account (ADR-0183)",
+                  "value": {
+                    "default_alerts": true,
+                    "interval_ms": 60000,
+                    "kind": "mssql",
+                    "params": {
+                      "auth": "windows",
+                      "host": "db1.example.com",
+                      "instance": "SQLEXPRESS",
+                      "tls": "verify"
                     }
                   }
                 },
@@ -47660,7 +48128,7 @@
           "virtualization"
         ],
         "summary": "Read a server's virtualization",
-        "description": "For a vCenter, ESXi or Hyper-V source, whether its last collection worked and its hosts, clusters, virtual machines and datastores, with their numbers of that collection. For any server, the virtual machines it is (`guest_of`), from sources the caller can read. An object the source stopped listing is `stale` after 15 minutes and removed after a day. A matched server the caller cannot read is shown as `null`.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "description": "For a vCenter, ESXi or Hyper-V source, whether its last collection worked and its hosts, clusters, virtual machines and datastores, with their numbers of that collection. For a Kubernetes cluster, its nodes, namespaces, workloads (deployments, stateful sets, daemon sets) and the jobs that failed, with what metrics-server measures of their use when it runs; `source.details.unread` says what the service account could not read. For any server, the virtual machines and Kubernetes nodes it is (`guest_of`), from sources the caller can read. An object the source stopped listing is `stale` after 15 minutes and removed after a day. A matched server the caller cannot read is shown as `null`.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
         "operationId": "server_virtualization",
         "parameters": [
           {
@@ -47682,59 +48150,123 @@
                 "schema": {
                   "$ref": "#/components/schemas/Virtualization"
                 },
-                "example": {
-                  "guest_of": [],
-                  "objects": [
-                    {
-                      "collected_at": "2026-11-18T10:20:00Z",
-                      "details": {
-                        "addresses": "192.0.2.21",
-                        "guest_hostname": "web-1.example.test",
-                        "guest_os": "Debian GNU/Linux 12 (64-bit)",
-                        "host": "esx-02",
-                        "macs": "00:50:56:aa:bb:01",
-                        "power_state": "poweredOn",
-                        "uuid": "4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"
-                      },
-                      "id": "8a1f3c52-6b7d-4e9f-a0b1-c2d3e4f5a6b7",
-                      "key": "vm-42",
-                      "kind": "vm",
-                      "link_fixed": false,
-                      "matched_by": "uuid",
-                      "metrics": {
-                        "alarms_critical": 0.0,
-                        "alarms_warning": 0.0,
-                        "cpu_count": 2.0,
-                        "cpu_usage_ratio": 0.12,
-                        "memory_bytes": 4294967296.0,
-                        "memory_usage_ratio": 0.4,
-                        "powered_on": 1.0,
-                        "snapshot_age_seconds": 864000.0,
-                        "snapshots": 1.0,
-                        "status": 0.0,
-                        "storage_used_bytes": 21474836480.0
-                      },
-                      "name": "web-1",
-                      "seen_at": "2026-11-18T10:20:03Z",
-                      "server": {
-                        "awaiting_agent": false,
-                        "hostname": "web-1",
-                        "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
-                        "kind": "agent"
-                      },
-                      "stale": false
+                "examples": {
+                  "kubernetes": {
+                    "summary": "A Kubernetes cluster without metrics-server's pod measures",
+                    "value": {
+                      "guest_of": [],
+                      "objects": [
+                        {
+                          "collected_at": "2026-11-27T10:20:00Z",
+                          "details": {
+                            "addresses": "192.0.2.31",
+                            "architecture": "amd64",
+                            "hostname": "worker-1",
+                            "kernel": "6.8.0-49-generic",
+                            "kubelet_version": "v1.31.4",
+                            "os_image": "Ubuntu 24.04.1 LTS",
+                            "roles": "worker",
+                            "runtime": "containerd://1.7.23",
+                            "uuid": "4c4c4544-0042-3510-8051-b4c04f4a3032"
+                          },
+                          "id": "5c2e8b14-3a9f-4d6e-b7c1-0f2a3b4c5d6e",
+                          "key": "0b7e3d2c-9a41-4f5e-8c6d-1e2f3a4b5c6d",
+                          "kind": "node",
+                          "link_fixed": false,
+                          "matched_by": "uuid",
+                          "metrics": {
+                            "cpu_cores": 4.0,
+                            "cpu_usage_cores": 0.61,
+                            "cpu_usage_ratio": 0.15,
+                            "memory_bytes": 8221999104.0,
+                            "memory_usage_bytes": 3170893824.0,
+                            "memory_usage_ratio": 0.39,
+                            "pods": 23.0,
+                            "pods_capacity": 110.0,
+                            "ready": 1.0,
+                            "unschedulable": 0.0
+                          },
+                          "name": "worker-1",
+                          "seen_at": "2026-11-27T10:20:03Z",
+                          "server": {
+                            "awaiting_agent": false,
+                            "hostname": "worker-1",
+                            "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                            "kind": "agent"
+                          },
+                          "stale": false
+                        }
+                      ],
+                      "source": {
+                        "details": {
+                          "product": "Kubernetes",
+                          "unread": "metrics-server pods (not allowed)",
+                          "version": "v1.31.4"
+                        },
+                        "error": null,
+                        "reason": null,
+                        "seen_at": "2026-11-27T10:20:03Z",
+                        "up": true
+                      }
                     }
-                  ],
-                  "source": {
-                    "details": {
-                      "api_type": "VirtualCenter",
-                      "product": "VMware vCenter Server 8.0.2",
-                      "version": "8.0.2"
-                    },
-                    "error": null,
-                    "reason": null,
-                    "seen_at": "2026-11-18T10:20:03Z",
-                    "up": true
+                  },
+                  "vcenter": {
+                    "summary": "A vCenter",
+                    "value": {
+                      "guest_of": [],
+                      "objects": [
+                        {
+                          "collected_at": "2026-11-18T10:20:00Z",
+                          "details": {
+                            "addresses": "192.0.2.21",
+                            "guest_hostname": "web-1.example.test",
+                            "guest_os": "Debian GNU/Linux 12 (64-bit)",
+                            "host": "esx-02",
+                            "macs": "00:50:56:aa:bb:01",
+                            "power_state": "poweredOn",
+                            "uuid": "4237aa10-1c2b-4d3e-8f4a-5b6c7d8e9f01"
+                          },
+                          "id": "8a1f3c52-6b7d-4e9f-a0b1-c2d3e4f5a6b7",
+                          "key": "vm-42",
+                          "kind": "vm",
+                          "link_fixed": false,
+                          "matched_by": "uuid",
+                          "metrics": {
+                            "alarms_critical": 0.0,
+                            "alarms_warning": 0.0,
+                            "cpu_count": 2.0,
+                            "cpu_usage_ratio": 0.12,
+                            "memory_bytes": 4294967296.0,
+                            "memory_usage_ratio": 0.4,
+                            "powered_on": 1.0,
+                            "snapshot_age_seconds": 864000.0,
+                            "snapshots": 1.0,
+                            "status": 0.0,
+                            "storage_used_bytes": 21474836480.0
+                          },
+                          "name": "web-1",
+                          "seen_at": "2026-11-18T10:20:03Z",
+                          "server": {
+                            "awaiting_agent": false,
+                            "hostname": "web-1",
+                            "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                            "kind": "agent"
+                          },
+                          "stale": false
+                        }
+                      ],
+                      "source": {
+                        "details": {
+                          "api_type": "VirtualCenter",
+                          "product": "VMware vCenter Server 8.0.2",
+                          "version": "8.0.2"
+                        },
+                        "error": null,
+                        "reason": null,
+                        "seen_at": "2026-11-18T10:20:03Z",
+                        "up": true
+                      }
+                    }
                   }
                 }
               }
@@ -49794,7 +50326,7 @@
           "settings"
         ],
         "summary": "Get the remote access settings",
-        "description": "Who may open remote terminals and desktops, whether terminals are recorded, when an idle session closes and how long recordings are kept. Each host must also allow terminals and desktops itself, each apart, which no setting here can change.\n\n**Who**: global administrators. **Area**: `administration`.",
+        "description": "Who may open remote terminals and desktops, whether they are recorded, when an idle session closes, how long recordings are kept, and whether desktops share the clipboard (`desktop_clipboard`, on by default) and copy files (`desktop_files`, off by default) with the browser, both ways. Each host must also allow terminals and desktops itself, each apart, which no setting here can change.\n\n**Who**: global administrators. **Area**: `administration`.",
         "operationId": "get_settings",
         "responses": {
           "200": {
@@ -49805,6 +50337,8 @@
                   "$ref": "#/components/schemas/RemoteAccessSettings"
                 },
                 "example": {
+                  "desktop_clipboard": true,
+                  "desktop_files": false,
                   "idle_timeout_minutes": 15,
                   "min_role": "administrator",
                   "record": true,
@@ -49888,7 +50422,7 @@
           "settings"
         ],
         "summary": "Change the remote access settings",
-        "description": "Replaces the settings. `min_role` is the lowest role, on a server's site, that may open a terminal or a desktop there: `operator`, `approver` or `administrator`; `null` lets nobody. New sessions follow the new values; open ones keep theirs.\n\n**Who**: global administrators. **Area**: `administration`. Audited as `settings.remote_access`.",
+        "description": "Replaces the settings. `min_role` is the lowest role, on a server's site, that may open a terminal or a desktop there: `operator`, `approver` or `administrator`; `null` lets nobody. `record` keeps what terminals print and the screen of desktops. `desktop_clipboard` and `desktop_files` take their defaults when left out. New sessions follow the new values; open ones keep theirs.\n\n**Who**: global administrators. **Area**: `administration`. Audited as `settings.remote_access`.",
         "operationId": "set_settings",
         "parameters": [
           {
@@ -49910,6 +50444,8 @@
                 "$ref": "#/components/schemas/RemoteAccessSettings"
               },
               "example": {
+                "desktop_clipboard": true,
+                "desktop_files": false,
                 "idle_timeout_minutes": 15,
                 "min_role": "administrator",
                 "record": true,
@@ -49928,6 +50464,8 @@
                   "$ref": "#/components/schemas/RemoteAccessSettings"
                 },
                 "example": {
+                  "desktop_clipboard": true,
+                  "desktop_files": false,
                   "idle_timeout_minutes": 15,
                   "min_role": "administrator",
                   "record": true,
@@ -51962,7 +52500,7 @@
           "sensors"
         ],
         "summary": "Add a sensor row to a site",
-        "description": "Adds a sensor to every server of the site, or replaces the built-in sensor of the same name and instance; with `enabled: false`, removes it. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP), `http`, `postgresql`, `mysql`, `mssql`, `redis` and `jmx` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. A website check names its `url` and takes no address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nA website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\nA custom SNMP check of a device is kind `snmp_custom` (ADR-0157), run by a probe with the device's credentials: up to 10 channels, `oidN` (a numeric OID) with optional `nameN`, `keyN` (the metric suffix, from the name), `typeN` (`gauge`, `counter` for a rate per second, or `text`), `unitN`, `multiplyN`, `divideN`, `lookupN` (`builtin:<name>` or the ID of a lookup of the customer) and, for a text, `matchN` (`contains`, `not_contains`, `equals`, `not_equals`, `matches`, `not_matches`), `expectN` and `severityN` (`warning` or `critical`); or a `table` OID with a `name_column`, each `oidN` then a column of it. Credentials and `lookupN_map` are refused: they are added when the check is sent to its probe. `/api/v1/devices/{id}/snmp-checks` reads and writes the same rows with their thresholds.\n\nThe ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server), `redis`, `jmx` (a Java virtual machine through Jolokia) and `docker`; `GET /api/v1/check-templates` lists their parameters, metrics and default alerts. All but `docker` run on the agent (against `127.0.0.1` by default, within its `sensors.port_targets`) or from a probe, and take a `password` kept sealed like a website check's: an update without it keeps it only while `host` and `port` stay the same. A `jmx` password is sent over HTTPS only (`tls` `verify`), or to the loopback. `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the template's alerts, named after the check, where none exists on that metric.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "description": "Adds a sensor to every server of the site, or replaces the built-in sensor of the same name and instance; with `enabled: false`, removes it. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nA server's own row may name a `probe` (ADR-0148): `central` for the central server, or the ID of a relay of the server's site, which then runs it instead of the agent. Probes run `ping`, `port` (TCP or UDP), `http`, `postgresql`, `mysql`, `mssql`, `redis` and `jmx` checks; a device's rows always have one, and default to the relay of its site, else the central server. A probe check of a server with an agent names its `host`; a device's checks default to its address. A website check names its `url` and takes no address. Its `instance` defaults to the probe's key (`central` or the relay's name), so two probes watching one address keep apart. `ping` and UDP never run on an agent.\n\nA website check is kind `http` (ADR-0150): `params.url` and optional `method`, `status`, `contains`, `not_contains`, `follow_redirects`, `headers`, `username`, `password` and `ip`. `password` is sent only over `https://`, kept sealed and never returned: rows say `secret_set` instead; an update without it keeps the stored one, and `\"\"` removes it. Its last runs are read with `GET /api/v1/servers/{id}/website-checks`.\n\nA custom SNMP check of a device is kind `snmp_custom` (ADR-0157), run by a probe with the device's credentials: up to 10 channels, `oidN` (a numeric OID) with optional `nameN`, `keyN` (the metric suffix, from the name), `typeN` (`gauge`, `counter` for a rate per second, or `text`), `unitN`, `multiplyN`, `divideN`, `lookupN` (`builtin:<name>` or the ID of a lookup of the customer) and, for a text, `matchN` (`contains`, `not_contains`, `equals`, `not_equals`, `matches`, `not_matches`), `expectN` and `severityN` (`warning` or `critical`); or a `table` OID with a `name_column`, each `oidN` then a column of it. Credentials and `lookupN_map` are refused: they are added when the check is sent to its probe. `/api/v1/devices/{id}/snmp-checks` reads and writes the same rows with their thresholds.\n\nThe ready-made application checks (ADR-0183) are kinds `postgresql`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server), `redis`, `jmx` (a Java virtual machine through Jolokia) and `docker`; `GET /api/v1/check-templates` lists their parameters, metrics and default alerts. All but `docker` run on the agent (against `127.0.0.1` by default, within its `sensors.port_targets`) or from a probe, and take a `password` kept sealed like a website check's: an update without it keeps it only while `host` and `port` stay the same. A `jmx` password is sent over HTTPS only (`tls` `verify`), or to the loopback. An `mssql` check names a named instance with `instance` (its port asked from SQL Server Browser on UDP 1434 at each collection, unless `port` is given), signs in with a Windows account with `auth` `windows` (SSPI, NTLM or Kerberos: on the server's Windows agent only, never with `probe`; `user` empty for the account the agent runs as, or `DOMAIN\\name` with its `password`), and takes `tls` `strict` for TDS 8.0 (TLS before anything else, the certificate and name verified). `docker` runs on the server's agent only. On a create, `\"default_alerts\": true` also adds the template's alerts, named after the check, where none exists on that metric.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
         "operationId": "create_site_sensor_config",
         "parameters": [
           {
@@ -54779,11 +55317,13 @@
                       "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
                       "customer_id": null,
                       "description": "File archiver",
+                      "file": null,
                       "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
                       "manager": "winget",
                       "mirror": null,
                       "name": "7-Zip",
                       "package_id": "7zip.7zip",
+                      "properties": [],
                       "source": "winget",
                       "updated_at": "2026-11-20T09:00:00Z"
                     }
@@ -54867,7 +55407,7 @@
           "software"
         ],
         "summary": "Add software to the catalogue",
-        "description": "A winget package by its ID, and the source it installs from (`winget`,\nthe community source, by default; never the store's, `msstore`). Or,\nwith `manager` `apt` or `dnf`, a package of the distribution by name,\nwithout a source, and optionally the `mirror` of the central server\nof the same family it installs from. A package is listed once per\ncustomer and manager, and once among shared entries.\n\nNeeds an administrator role on `customer_id` as a whole, or a global\none for a shared entry, and the key area \"updates\". Audited as\n`software.create`.",
+        "description": "A winget package by its ID, and the source it installs from (`winget`,\nthe community source, by default; never the store's, `msstore`). Or,\nwith `manager` `apt` or `dnf`, a package of the distribution by name,\nwithout a source, and optionally the `mirror` of the central server\nof the same family it installs from. Or, with `manager` `msi`, a file\nuploaded with `POST /software/files` by its `file_sha256`, which the\ncaller uploaded or an entry they see names, its ProductCode\n(`package_id`, the file's own when absent) and public `properties`\npassed to `msiexec` at every install. A package is listed once per\ncustomer and manager, and once among shared entries.\n\nNeeds an administrator role on `customer_id` as a whole, or a global\none for a shared entry, and the key area \"updates\". Audited as\n`software.create`.",
         "operationId": "create_software",
         "parameters": [
           {
@@ -54911,11 +55451,13 @@
                   "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
                   "customer_id": null,
                   "description": "File archiver",
+                  "file": null,
                   "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
                   "manager": "winget",
                   "mirror": null,
                   "name": "7-Zip",
                   "package_id": "7zip.7zip",
+                  "properties": [],
                   "source": "winget",
                   "updated_at": "2026-11-20T09:00:00Z"
                 }
@@ -54923,7 +55465,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: a bad name, manager, package ID, source, mirror or description",
+            "description": "`invalid`: a bad name, manager, package ID, source, mirror, file, property or description, or a file without a ProductCode and none given",
             "content": {
               "application/json": {
                 "schema": {
@@ -54971,6 +55513,160 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/software/files": {
+      "post": {
+        "tags": [
+          "software"
+        ],
+        "summary": "Upload an MSI file",
+        "description": "The body is the file itself, at most 2 GiB, Windows Installer's own\nlimit. The central server reads its Property table (ProductCode,\nProductName, ProductVersion, Manufacturer) and keeps it once by\nSHA-256, whoever uploads it; then `POST /software` with `manager`\n`msi` and `file_sha256` adds it to the catalogue. It keeps at most 20\nGiB of MSI files in all. A file no entry or campaign names goes 8\ndays later. The file is readable by anyone who reaches a mirror\nlistener and knows its SHA-256: it must hold no license key or\npassword.\n\nNeeds an administrator role on a customer or everything, and the key\narea \"updates\". Audited as `software.upload`.",
+        "operationId": "upload_software_file",
+        "parameters": [
+          {
+            "name": "file_name",
+            "in": "query",
+            "description": "The file's name, for people only, like `tool-1.2.msi`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "$ref": "#/components/schemas/MsiFileBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The file, stored or already there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoftwareFile"
+                },
+                "example": {
+                  "file_name": "tool-1.2.msi",
+                  "manufacturer": "Example",
+                  "product_code": "{6F1C2E7A-3B9D-4C55-A0E2-8D4F7B1A9C30}",
+                  "product_name": "Example Tool",
+                  "product_version": "1.2.0",
+                  "sha256": "3f0c4d9a1b2e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a",
+                  "size": 2457600
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: an empty file, or one that is not a Windows Installer package",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller administers no customer. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: the central server keeps 20 GiB of MSI files already; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The file is over 2 GiB"
           },
           "422": {
             "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
@@ -55073,11 +55769,13 @@
                   "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
                   "customer_id": null,
                   "description": "File archiver",
+                  "file": null,
                   "id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
                   "manager": "winget",
                   "mirror": null,
                   "name": "7-Zip",
                   "package_id": "7zip.7zip",
+                  "properties": [],
                   "source": "winget",
                   "updated_at": "2026-11-20T09:00:00Z"
                 }
@@ -56843,14 +57541,14 @@
         "tags": [
           "virtualization"
         ],
-        "summary": "Install the agent on a virtual machine",
-        "description": "Adds a server waiting for its agent in the source's site, named after the virtual machine's guest host name (else its name), a Windows server when its guest system says so, and ties the virtual machine to it. Its page then shows the install command; the agent takes it over when it enrolls with that name (ADR-0146).\n\n**Who**: administrator of the source's customer, as for install keys. **Area**: `servers`. Audited as `virt.install_agent`.",
+        "summary": "Install the agent on a virtual machine or a Kubernetes node",
+        "description": "Adds a server waiting for its agent in the source's site, named after the virtual machine's guest host name or the node's host name (else its name), a Windows server when its system says so, and ties the virtual machine or node to it. Its page then shows the install command; the agent takes it over when it enrolls with that name (ADR-0146).\n\n**Who**: administrator of the source's customer, as for install keys. **Area**: `servers`. Audited as `virt.install_agent`.",
         "operationId": "install_agent",
         "parameters": [
           {
             "name": "id",
             "in": "path",
-            "description": "The virtual machine",
+            "description": "The virtual machine or node",
             "required": true,
             "schema": {
               "type": "string",
@@ -56912,7 +57610,7 @@
             }
           },
           "400": {
-            "description": "Not a virtual machine: `invalid`",
+            "description": "Not a virtual machine or node: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -57007,14 +57705,14 @@
         "tags": [
           "virtualization"
         ],
-        "summary": "Tie a virtual machine to a server by hand",
-        "description": "Says which server or device of the source's customer a virtual machine is, or that it is none (`\"server_id\": null`); matching then never changes it. `\"automatic\": true` hands it back to matching, which runs at once.\n\n**Who**: operator or above on the source's site, for a server they can read. **Area**: `servers`. Audited as `virt.link`, with the server before and after.",
+        "summary": "Tie a virtual machine or a Kubernetes node to a server by hand",
+        "description": "Says which server or device of the source's customer a virtual machine or node is, or that it is none (`\"server_id\": null`); matching then never changes it. `\"automatic\": true` hands it back to matching, which runs at once.\n\n**Who**: operator or above on the source's site, for a server they can read. **Area**: `servers`. Audited as `virt.link`, with the server before and after.",
         "operationId": "link_virtual_machine",
         "parameters": [
           {
             "name": "id",
             "in": "path",
-            "description": "The virtual machine, from `objects` or `guest_of`",
+            "description": "The virtual machine or node, from `objects` or `guest_of`",
             "required": true,
             "schema": {
               "type": "string",
@@ -57097,7 +57795,7 @@
             }
           },
           "400": {
-            "description": "Not a virtual machine, or a server of another customer: `invalid`",
+            "description": "Not a virtual machine or node, or a server of another customer: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -60521,7 +61219,7 @@
               "null"
             ],
             "format": "uuid",
-            "description": "With pinned snapshots: the `configure_sources` command before the\nupdate and the command restoring the sources after it."
+            "description": "With pinned snapshots: the `configure_sources` command before the\nupdate and the command restoring the sources after it. In a major\nupgrade of Ubuntu or the RHEL family on the mirrors: the\n`revert_sources` before it, and the command putting the mirrors\nback after it, the revert itself when the server keeps its own\nsources (ADR-0182)."
           },
           "status": {
             "type": "string",
@@ -61518,11 +62216,18 @@
         "properties": {
           "key_id": {
             "type": "string",
-            "description": "The access key ID, or the application (client) ID."
+            "description": "The access key ID, the application (client) ID, or the service\naccount's address."
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Google Cloud: the project; `null` otherwise."
           },
           "provider": {
             "type": "string",
-            "description": "`aws` or `azure`."
+            "description": "`aws`, `azure` or `gcp`."
           },
           "regions": {
             "type": "array",
@@ -61539,14 +62244,14 @@
               "string",
               "null"
             ],
-            "description": "Azure: the subscription; `null` for AWS."
+            "description": "Azure: the subscription; `null` otherwise."
           },
           "tenant": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Azure: the tenant; `null` for AWS."
+            "description": "Azure: the tenant; `null` otherwise."
           },
           "updated_at": {
             "type": "string",
@@ -61556,21 +62261,28 @@
       },
       "CloudCredentialsRequest": {
         "type": "object",
-        "description": "Body of a device's cloud credentials. On a change, what is left out\nis kept, the secret only while the provider and the identity it\nbelongs to (access key ID, or tenant and application) stay the same.",
+        "description": "Body of a device's cloud credentials. On a change, what is left out\nis kept, the secret only while the provider and the identity it\nbelongs to (access key ID, tenant and application, or service\naccount) stay the same.",
         "properties": {
           "key_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "AWS: the access key ID (`AKIA…`). Azure: the application (client)\nID of the service principal."
+            "description": "AWS: the access key ID (`AKIA…`). Azure: the application (client)\nID of the service principal. Google Cloud: the service account's\naddress, taken from the key when one is given."
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Google Cloud: the project ID, like `my-project-123`; the key's own\nproject when left out."
           },
           "provider": {
             "type": [
               "string",
               "null"
             ],
-            "description": "`aws` or `azure`. Required the first time; it cannot change."
+            "description": "`aws`, `azure` or `gcp`. Required the first time; it cannot change."
           },
           "regions": {
             "type": [
@@ -61587,7 +62299,7 @@
               "string",
               "null"
             ],
-            "description": "AWS: the secret access key. Azure: the client secret. Secret,\nnever returned."
+            "description": "AWS: the secret access key. Azure: the client secret. Google\nCloud: the service account's JSON key file, whole. Secret, never\nreturned."
           },
           "subscription": {
             "type": [
@@ -61651,7 +62363,7 @@
               "boolean",
               "null"
             ],
-            "description": "Whether metrics (CloudWatch, Azure Monitor) could be read; `null`\nwhen there was nothing to ask."
+            "description": "Whether metrics (CloudWatch, Azure Monitor, Cloud Monitoring) could\nbe read; `null`\nwhen there was nothing to ask."
           },
           "reason": {
             "type": [
@@ -62822,6 +63534,64 @@
           "network_device"
         ]
       },
+      "DesktopFrame": {
+        "type": "object",
+        "description": "One picture of a desktop's recording (ADR-0192).",
+        "required": [
+          "seq",
+          "at_ms",
+          "x",
+          "y",
+          "width",
+          "height",
+          "screen_width",
+          "screen_height",
+          "bytes"
+        ],
+        "properties": {
+          "at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds after the session opened."
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The size of its PNG, in bytes."
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "screen_height": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "screen_width": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The size of the whole screen when it was taken. A picture as large\nas it starts the screen again."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Its number, for `GET /api/v1/remote-sessions/{id}/recording/frames/{seq}`."
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "x": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The part of the screen the picture covers, in pixels."
+          },
+          "y": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "DetectRequest": {
         "type": "object",
         "description": "Body of `POST /api/devices/detect`.",
@@ -62930,7 +63700,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/CloudCredentialsRequest",
-                "description": "For a cloud account (ADR-0183): an AWS account or an Azure\nsubscription, read with read-only credentials. The device then\ngets its `aws` or `azure` check every 5 minutes on the central\nserver, which lists its virtual machines, with the alerts that\ncome with it. Test them first with `POST /api/devices/cloud/test`.\nThe secret is stored sealed, never returned. Not with `snmp`,\n`template` or `vmware`, and only from the central server."
+                "description": "For a cloud account (ADR-0183): an AWS account, an Azure\nsubscription or a Google Cloud project, read with read-only\ncredentials. The device then gets its `aws`, `azure` or `gcp`\ncheck every 5 minutes on the central\nserver, which lists its virtual machines, with the alerts that\ncome with it. Test them first with `POST /api/devices/cloud/test`.\nThe secret is stored sealed, never returned. Not with `snmp`,\n`template` or `vmware`, and only from the central server."
               },
               {
                 "type": "null"
@@ -64131,7 +64901,7 @@
       },
       "GuestOf": {
         "type": "object",
-        "description": "A virtual machine a server is, with where it runs.",
+        "description": "A virtual machine or Kubernetes node a server is, with where it runs.",
         "required": [
           "object",
           "source_id",
@@ -64140,12 +64910,12 @@
         "properties": {
           "object": {
             "$ref": "#/components/schemas/ObjectView",
-            "description": "The virtual machine."
+            "description": "The virtual machine (`kind` `vm`) or node (`node`)."
           },
           "source_id": {
             "type": "string",
             "format": "uuid",
-            "description": "The vCenter, ESXi or Hyper-V host listing it."
+            "description": "The vCenter, ESXi or Hyper-V host, cloud account or Kubernetes\ncluster listing it."
           },
           "source_name": {
             "type": "string"
@@ -66439,6 +67209,118 @@
           }
         }
       },
+      "JmxTestRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/jmx/test`: the Java check's settings.",
+        "properties": {
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The SHA-256 fingerprint to trust, as a previous test showed it."
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Jolokia's address; absent: the server's."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sent only once the certificate is trusted."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`/jolokia/` when absent."
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "8778 when absent.",
+            "minimum": 0
+          },
+          "probe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`central` or the ID of a relay of the server's site. Absent: a\ndevice's default probe; a server with an agent must name one, as\nthe test runs from a probe."
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "JmxTested": {
+        "type": "object",
+        "description": "What a Jolokia over HTTPS answered.",
+        "required": [
+          "answers",
+          "probe"
+        ],
+        "properties": {
+          "answers": {
+            "type": "boolean",
+            "description": "Whether a TLS handshake worked at the address."
+          },
+          "certificate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TestedCertificate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, or why Jolokia could not be read, in words; `null`\notherwise."
+          },
+          "probe": {
+            "type": "string",
+            "description": "`central` or the relay that asked."
+          },
+          "reads": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether Jolokia answered the check's reads; `null` when they were\nnot tried, as the certificate is not trusted yet and the password\nis never sent then."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "vm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The JVM's name and version, after a read."
+          }
+        }
+      },
       "KeyView": {
         "type": "object",
         "description": "One key of a dimension over the period.",
@@ -66781,14 +67663,14 @@
               "null"
             ],
             "format": "uuid",
-            "description": "The server or device the virtual machine is, of the source's\ncustomer; `null` for none. Kept until changed: matching leaves it."
+            "description": "The server or device the virtual machine or node is, of the\nsource's customer; `null` for none. Kept until changed: matching leaves it."
           }
         },
         "additionalProperties": false
       },
       "LinkedServer": {
         "type": "object",
-        "description": "The server or device a virtual machine is.",
+        "description": "The server or device a virtual machine or Kubernetes node is.",
         "required": [
           "id",
           "hostname",
@@ -67378,6 +68260,10 @@
           "phase": {
             "type": "string",
             "description": "`starting`, `preupgrade` (leapp), `sources`, `refreshing`,\n`upgrading`, `full_upgrade`, `rebooting`, `done` or `failed`."
+          },
+          "preupgrade_only": {
+            "type": "boolean",
+            "description": "`leapp preupgrade` alone (`leapp_preupgrade`), not an upgrade:\n`done` means leapp found no inhibitor; the release did not change."
           },
           "report": {
             "type": [
@@ -68913,6 +69799,29 @@
           }
         }
       },
+      "MsiFileBody": {
+        "type": "string",
+        "format": "binary",
+        "description": "The MSI file itself, as `application/octet-stream`."
+      },
+      "MsiProperty": {
+        "type": "object",
+        "description": "One public property of an MSI install, `NAME=value`.",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Upper-case letters, digits and `_`, starting with a letter."
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "NameRequest": {
         "type": "object",
         "description": "Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.",
@@ -69889,7 +70798,7 @@
       },
       "ObjectView": {
         "type": "object",
-        "description": "One host, cluster, virtual machine or datastore.",
+        "description": "One host, cluster, virtual machine or datastore; or one node,\nnamespace, workload or failed job of a Kubernetes cluster.",
         "required": [
           "id",
           "kind",
@@ -69909,7 +70818,7 @@
           },
           "details": {
             "type": "object",
-            "description": "What it says of itself: for a virtual machine `uuid`, `host`,\n`power_state`, `guest_hostname`, `guest_os`, `addresses`, `macs`,\n`replication_mode`, `replication_state`; for a host `cluster`,\n`connection_state`, `maintenance`, `product`, `vendor`, `model`;\nfor a datastore `type`."
+            "description": "What it says of itself: for a virtual machine `uuid`, `host`,\n`power_state`, `guest_hostname`, `guest_os`, `addresses`, `macs`,\n`replication_mode`, `replication_state`; for a host `cluster`,\n`connection_state`, `maintenance`, `product`, `vendor`, `model`;\nfor a datastore `type`. For a node `uuid`, `hostname`,\n`addresses`, `roles`, `kubelet_version`, `os_image`, `kernel`,\n`runtime`, `architecture`; for a namespace `phase`; for a workload\n`namespace`, `workload` (`deployment`, `statefulset`,\n`daemonset`), `name`; for a job `namespace`, `cron_job`, `reason`,\n`message`, `failed_at`."
           },
           "id": {
             "type": "string",
@@ -69917,11 +70826,11 @@
           },
           "key": {
             "type": "string",
-            "description": "Its ID at the source: a managed object ID, or Hyper-V's VM ID."
+            "description": "Its ID at the source: a managed object ID, Hyper-V's VM ID, or a\nKubernetes object's UID."
           },
           "kind": {
             "type": "string",
-            "description": "`vm`, `host`, `cluster` or `datastore`."
+            "description": "`vm`, `host`, `cluster` or `datastore`; for a Kubernetes cluster\n`node`, `namespace`, `workload` or `job` (a job that failed, listed\nwhile it does: an older row than the source's last reading no\nlonger fails)."
           },
           "link_fixed": {
             "type": "boolean",
@@ -69936,11 +70845,11 @@
           },
           "metrics": {
             "type": "object",
-            "description": "Its numbers at the last collection, by measure without the check's\nand kind's prefix: `powered_on`, `cpu_usage_ratio`,\n`memory_bytes`, `snapshots`, `snapshot_age_seconds`,\n`free_ratio`, `alarms_critical`, and so on."
+            "description": "Its numbers at the last collection, by measure without the check's\nand kind's prefix: `powered_on`, `cpu_usage_ratio`,\n`memory_bytes`, `snapshots`, `snapshot_age_seconds`,\n`free_ratio`, `alarms_critical`, and so on. For a node `ready`,\n`cpu_cores`, `memory_bytes`, `pods`, `pods_capacity`,\n`cpu_usage_ratio`, `memory_usage_ratio` (the last two with\nmetrics-server); for a namespace `pods`, `pods_not_running`,\n`claims_pending`, `jobs_failed`, `cpu_usage_cores`,\n`memory_usage_bytes`; for a workload `replicas_desired`,\n`replicas_ready`, `cpu_usage_cores`, `memory_usage_bytes`."
           },
           "name": {
             "type": "string",
-            "description": "Its name, as its series' `instance`."
+            "description": "Its name, as its series' `instance`: for a workload\n`namespace/kind/name`, for a job `namespace/name`."
           },
           "seen_at": {
             "type": "string",
@@ -69950,7 +70859,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/LinkedServer",
-                "description": "For a virtual machine, the server or device it is; `null` when\nnone is known, or when the viewer cannot read it."
+                "description": "For a virtual machine or a node, the server or device it is;\n`null` when none is known, or when the viewer cannot read it."
               },
               {
                 "type": "null"
@@ -71934,6 +72843,11 @@
             "type": "string"
           }
         }
+      },
+      "Png": {
+        "type": "string",
+        "format": "binary",
+        "description": "A PNG picture."
       },
       "PreviewIncident": {
         "type": "object",
@@ -74953,6 +75867,14 @@
           "retention_days"
         ],
         "properties": {
+          "desktop_clipboard": {
+            "type": "boolean",
+            "description": "Whether desktops share the clipboard with the browser, both ways:\ntext, pictures and the rest but files. On when left out."
+          },
+          "desktop_files": {
+            "type": "boolean",
+            "description": "Whether files are copied between the browser and desktops, both\nways. Off when left out."
+          },
           "idle_timeout_minutes": {
             "type": "integer",
             "format": "int32",
@@ -74971,7 +75893,7 @@
           },
           "record": {
             "type": "boolean",
-            "description": "Whether what terminals print is kept, for replay by the site's\nadministrators. Desktops are never recorded."
+            "description": "Whether sessions are recorded, for replay by the site's\nadministrators: what terminals print, and the screen of desktops."
           },
           "retention_days": {
             "type": "integer",
@@ -74986,7 +75908,8 @@
         "description": "Answer of `GET /api/remote-sessions/{id}/recording`.",
         "required": [
           "session",
-          "chunks"
+          "chunks",
+          "frames"
         ],
         "properties": {
           "chunks": {
@@ -74994,7 +75917,14 @@
             "items": {
               "$ref": "#/components/schemas/RecordingChunk"
             },
-            "description": "In order; replaying them into a terminal of the session's size\nshows what it showed."
+            "description": "A terminal's, in order; replaying them into a terminal of the\nsession's size shows what it showed. Empty for a desktop."
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesktopFrame"
+            },
+            "description": "A desktop's pictures, in order; drawing each at its place, from a\npicture of the whole screen on, shows what the screen showed.\nEmpty for a terminal."
           },
           "session": {
             "$ref": "#/components/schemas/RemoteSession"
@@ -75013,7 +75943,9 @@
           "created_at",
           "recorded",
           "bytes_in",
-          "bytes_out"
+          "bytes_out",
+          "clipboard",
+          "file_transfer"
         ],
         "properties": {
           "bytes_in": {
@@ -75025,6 +75957,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Bytes the terminal printed, or the RDP service sent."
+          },
+          "clipboard": {
+            "type": "boolean",
+            "description": "A desktop's clipboard passes, as the settings said when it started\n(ADR-0192); always false for a terminal."
           },
           "close_reason": {
             "type": [
@@ -75052,6 +75988,10 @@
             ],
             "format": "int64",
             "description": "From opening to closing, or to now while open; `null` if it never\nopened."
+          },
+          "file_transfer": {
+            "type": "boolean",
+            "description": "A desktop's file transfers pass; always false for a terminal."
           },
           "hostname": {
             "type": "string"
@@ -75119,7 +76059,9 @@
           "can_open",
           "can_review",
           "recorded",
-          "idle_timeout_minutes"
+          "idle_timeout_minutes",
+          "desktop_clipboard",
+          "desktop_files"
         ],
         "properties": {
           "can_open": {
@@ -75130,13 +76072,21 @@
             "type": "boolean",
             "description": "Whether this person may see the past sessions of this server."
           },
+          "desktop_clipboard": {
+            "type": "boolean",
+            "description": "Whether new desktops share the clipboard (ADR-0192)."
+          },
+          "desktop_files": {
+            "type": "boolean",
+            "description": "Whether new desktops copy files."
+          },
           "idle_timeout_minutes": {
             "type": "integer",
             "format": "int32"
           },
           "recorded": {
             "type": "boolean",
-            "description": "Whether new terminals are recorded. Desktops never are."
+            "description": "Whether new terminals and desktops are recorded."
           }
         }
       },
@@ -76614,7 +77564,7 @@
           },
           "params": {
             "type": "object",
-            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused.\n\nA website check (`http`, ADR-0150) takes `url` (required),\n`method` (`GET` or `HEAD`), `status` (`200-299` by default, like\n`200,301-302`), `contains`, `not_contains`, `follow_redirects`\n(`true` by default), `headers` (`Name: value` lines), `username`,\n`password` and `ip` (`any`, `4` or `6`). `password` is accepted\nwith an `https://` URL only, kept sealed and never returned: absent\nfrom an update, the stored one is kept; `\"\"` removes it.\n\nThe ready-made application checks (ADR-0183) take `host`\n(`127.0.0.1` from the agent; the device's address from a probe),\n`port`, `user` and `password` (kept sealed as above), and `tls`\n(`prefer`, `verify` or `off`): `postgresql` also `database` and\n`slow_after`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server)\nand `redis` nothing more.\n`jmx` (a Java virtual machine through Jolokia) takes `tls` `off` or\n`verify` only, its password over HTTPS or to the loopback only, and\nalso `path` (`/jolokia/`) and `groups` (`tomcat`, `kafka`, `none`).\n`docker`, run by the agent only, takes `engine` (`docker` or\n`podman`), `containers` (a regular expression on names) and\n`stats`. `kubernetes`, run from a probe only, takes `host` (the\ndevice's address by default), `port` (6443), `token` (a read-only\nservice account's) and `ca_certificate` (the cluster's CA in PEM,\nor a kubeconfig's `certificate-authority-data`), sealed together\nand never returned (an update without `token` keeps both; one\nwith it replaces both), and `namespaces` (a regular expression).\n`GET /api/check-templates` lists what each measures."
+            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused.\n\nA website check (`http`, ADR-0150) takes `url` (required),\n`method` (`GET` or `HEAD`), `status` (`200-299` by default, like\n`200,301-302`), `contains`, `not_contains`, `follow_redirects`\n(`true` by default), `headers` (`Name: value` lines), `username`,\n`password` and `ip` (`any`, `4` or `6`). `password` is accepted\nwith an `https://` URL only, kept sealed and never returned: absent\nfrom an update, the stored one is kept; `\"\"` removes it.\n\nThe ready-made application checks (ADR-0183) take `host`\n(`127.0.0.1` from the agent; the device's address from a probe),\n`port`, `user` and `password` (kept sealed as above), and `tls`\n(`prefer`, `verify` or `off`): `postgresql` also `database` and\n`slow_after`, `mysql` (MySQL and MariaDB) and `redis` nothing\nmore. `mssql` (SQL Server) also takes `instance` (a named\ninstance, its port from SQL Server Browser unless `port` is\ngiven), `auth` (`sql`, or `windows` for a Windows account through\nSSPI, on the server's Windows agent only: `user` then empty for\nthe agent's own account, or `DOMAIN\\name` with its `password`),\nand `tls` `strict` (TDS 8.0).\n`jmx` (a Java virtual machine through Jolokia) takes `tls` `off` or\n`verify` only, its password over HTTPS or to the loopback only, and\nalso `path` (`/jolokia/`), `groups` (`tomcat`, `kafka`, `none`) and,\nwith `verify`, `fingerprint`: the SHA-256 of a certificate the\nprobe's roots do not trust (often Jolokia's self-signed one), as\n`POST /api/servers/{id}/jmx/test` shows it.\n`docker`, run by the agent only, takes `engine` (`docker` or\n`podman`), `containers` (a regular expression on names) and\n`stats`. `kubernetes`, run from a probe only, takes `host` (the\ndevice's address by default), `port` (6443), `token` (a read-only\nservice account's) and `ca_certificate` (the cluster's CA in PEM,\nor a kubeconfig's `certificate-authority-data`), sealed together\nand never returned (an update without `token` keeps both; one\nwith it replaces both), and `namespaces` (a regular expression).\n`GET /api/check-templates` lists what each measures."
           },
           "probe": {
             "type": [
@@ -77236,9 +78186,14 @@
           "ready",
           "checks",
           "rollback",
-          "can_upgrade"
+          "can_upgrade",
+          "can_preupgrade"
         ],
         "properties": {
+          "can_preupgrade": {
+            "type": "boolean",
+            "description": "The user may run `leapp preupgrade` alone on it now (`POST\n/servers/{id}/major-upgrade/preupgrade`): the RHEL family, an\nadministrator of its customer, and an agent that accepts it."
+          },
           "can_upgrade": {
             "type": "boolean",
             "description": "The user may start it: an administrator of its customer."
@@ -79515,6 +80470,33 @@
         },
         "additionalProperties": false
       },
+      "SoftwareDeploymentMsi": {
+        "type": "object",
+        "description": "The file of an MSI package of a [`SoftwareSpec`] (ADR-0188).",
+        "required": [
+          "sha256",
+          "size"
+        ],
+        "properties": {
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MsiProperty"
+            },
+            "description": "Public properties passed to `msiexec`."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "SHA-256 of the file, lower-case hex."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "SoftwareDeploymentPackage": {
         "type": "object",
         "description": "One package of a [`SoftwareSpec`], as the catalogue held it.",
@@ -79543,6 +80525,10 @@
             "type": "string",
             "description": "The mirror of the central server an apt or dnf package installs\nfrom, added to the server's sources for the campaign; absent when\nit comes from the server's own sources."
           },
+          "msi": {
+            "$ref": "#/components/schemas/SoftwareDeploymentMsi",
+            "description": "`msi` only: the file and properties, as the catalogue held them;\n`id` is then the ProductCode."
+          },
           "name": {
             "type": "string"
           },
@@ -79562,6 +80548,7 @@
           "manager",
           "package_id",
           "source",
+          "properties",
           "description",
           "created_at",
           "updated_at"
@@ -79590,13 +80577,24 @@
           "description": {
             "type": "string"
           },
+          "file": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SoftwareFile",
+                "description": "`msi` only: the uploaded file; `null` for the other managers."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "format": "uuid"
           },
           "manager": {
             "type": "string",
-            "description": "`winget` (Windows), `apt` (Debian and Ubuntu) or `dnf` (RHEL and\nits derivatives)."
+            "description": "`winget` or `msi` (Windows), `apt` (Debian and Ubuntu) or `dnf`\n(RHEL and its derivatives)."
           },
           "mirror": {
             "type": [
@@ -79611,7 +80609,14 @@
           },
           "package_id": {
             "type": "string",
-            "description": "The manager's package ID, like `7zip.7zip`, or the distribution's\npackage name, like `nginx`."
+            "description": "The manager's package ID, like `7zip.7zip`, the distribution's\npackage name, like `nginx`, or for `msi` the ProductCode, like\n`{6F1C2E7A-3B9D-4C55-A0E2-8D4F7B1A9C30}`."
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MsiProperty"
+            },
+            "description": "`msi` only: public properties passed to `msiexec` at every\ninstall; empty for the other managers."
           },
           "source": {
             "type": "string",
@@ -79627,8 +80632,7 @@
         "type": "object",
         "description": "Body of `POST /api/software` and `PUT /api/software/{id}`.",
         "required": [
-          "name",
-          "package_id"
+          "name"
         ],
         "properties": {
           "customer_id": {
@@ -79643,9 +80647,16 @@
             "type": "string",
             "description": "Up to 500 characters."
           },
+          "file_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "msi only: the SHA-256 of a file uploaded with `POST\n/api/software/files`, by the caller or named by an entry they see."
+          },
           "manager": {
             "type": "string",
-            "description": "`winget`, the default, `apt` or `dnf`."
+            "description": "`winget`, the default, `msi`, `apt` or `dnf`."
           },
           "mirror": {
             "type": [
@@ -79660,7 +80671,14 @@
           },
           "package_id": {
             "type": "string",
-            "description": "For winget a package ID: 2 to 8 segments joined by `.`, like\n`7zip.7zip`. For apt and dnf a package name of the distribution:\nletters, digits and `.+_:-`, like `nginx`; never an option, a\npath, a glob or a group."
+            "description": "For winget a package ID: 2 to 8 segments joined by `.`, like\n`7zip.7zip`. For apt and dnf a package name of the distribution:\nletters, digits and `.+_:-`, like `nginx`; never an option, a\npath, a glob or a group. For msi the ProductCode, an upper-case\nGUID between braces; absent or empty for the one read from the\nfile."
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MsiProperty"
+            },
+            "description": "msi only: up to 32 public properties passed to `msiexec`, each\nname once. Names are upper-case letters, digits and `_`, starting\nwith a letter, never one that changes what msiexec does (`REBOOT`,\n`REMOVE`, `TRANSFORMS`, `PATCH`...); values are up to 256\nprintable ASCII characters but `\"` and `;`. They travel in the\nsigned command, not on the mirror listeners."
           },
           "source": {
             "type": [
@@ -79671,6 +80689,50 @@
           }
         },
         "additionalProperties": false
+      },
+      "SoftwareFile": {
+        "type": "object",
+        "description": "An uploaded MSI file (ADR-0188), as `POST /api/software/files`\nanswers and an `msi` entry shows it.",
+        "required": [
+          "sha256",
+          "size",
+          "file_name",
+          "product_name",
+          "product_version",
+          "manufacturer"
+        ],
+        "properties": {
+          "file_name": {
+            "type": "string",
+            "description": "As the uploader named it; may be empty."
+          },
+          "manufacturer": {
+            "type": "string"
+          },
+          "product_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Read from its Property table, upper case; `null` when it has none."
+          },
+          "product_name": {
+            "type": "string"
+          },
+          "product_version": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "SHA-256 of the file, lower-case hex: what entries name it by."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "In bytes.",
+            "minimum": 0
+          }
+        }
       },
       "SoftwareOffChange": {
         "type": "object",
@@ -79766,7 +80828,7 @@
         "properties": {
           "details": {
             "type": "object",
-            "description": "What answered: `product`, `version`, `api_type`, `host`."
+            "description": "What answered: `product`, `version`, `api_type`, `host`; for a\ncloud account `provider`; for a Kubernetes cluster `product`\n(`Kubernetes`), `version`, and `unread`, what could not be read and\nwhy, such as `metrics-server (not installed)`."
           },
           "error": {
             "type": [
@@ -79780,7 +80842,7 @@
               "string",
               "null"
             ],
-            "description": "Why not: `connect`, `tls`, `certificate`, `login`, `api` for a\nvCenter; `not_installed`, `denied`, `failed` for Hyper-V."
+            "description": "Why not: `connect`, `tls`, `certificate`, `login`, `api` for a\nvCenter; `not_installed`, `denied`, `failed` for Hyper-V;\n`connect`, `timeout`, `tls`, `login`, `permission`, `protocol` for\na Kubernetes cluster."
           },
           "seen_at": {
             "type": "string",
@@ -80208,7 +81270,7 @@
           },
           "fingerprint": {
             "type": "string",
-            "description": "`AB:CD:…`, to compare with the one the vCenter shows and send back\nas `fingerprint`."
+            "description": "`AB:CD:…`, to compare with the one the vCenter or Jolokia shows and\nsend back as `fingerprint`."
           },
           "not_after": {
             "type": [
@@ -81476,14 +82538,14 @@
             "items": {
               "$ref": "#/components/schemas/GuestOf"
             },
-            "description": "The virtual machines this server is, from sources the viewer can\nread: usually none or one."
+            "description": "The virtual machines and nodes this server is, from sources the\nviewer can read: usually none or one, two when a virtual machine\nis also a cluster's node."
           },
           "objects": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ObjectView"
             },
-            "description": "When the server is a source: its objects, hosts first, then\nclusters, virtual machines and datastores, by name."
+            "description": "When the server is a source: its objects, hosts first, then\nclusters, nodes, virtual machines, namespaces, workloads, jobs and\ndatastores, by name."
           },
           "source": {
             "oneOf": [
@@ -82132,7 +83194,7 @@
     },
     {
       "name": "software",
-      "description": "The software catalogue: what campaigns and commands install on servers or remove from them (`software` of `POST /campaigns` and of `POST /servers/{id}/commands`). An entry names a winget package and the source it installs from (Windows), or a package of the distribution for apt (Debian and Ubuntu) or dnf (RHEL and its derivatives), optionally from a mirror of the central server that a campaign adds to the servers' sources first. Each server takes the entries of its own manager. An entry is shared by every customer (`customer_id` null), which only global administrators change, or belongs to one customer, whose administrators change it. A server takes software only where its administrator allowed it at install (`SOFTWARE_FROM_WEB=1` on Windows, `MF_SOFTWARE_FROM_WEB=1` on Linux, or `monitorflow-agent software on`): the central server cannot grant itself that right. It can only take it away, with `POST /servers/{id}/software`. Needs the key area \"updates\"."
+      "description": "The software catalogue: what campaigns and commands install on servers or remove from them (`software` of `POST /campaigns` and of `POST /servers/{id}/commands`). An entry names a winget package and the source it installs from (Windows), or a package of the distribution for apt (Debian and Ubuntu) or dnf (RHEL and its derivatives), optionally from a mirror of the central server that a campaign adds to the servers' sources first, or an MSI file uploaded with `POST /software/files` (Windows), by its ProductCode. MSI files are served to agents by the mirror listeners of relays and of the central server, plain HTTP, at `/software/<sha256>.msi`, and checked against the SHA-256 in the signed command: anyone who reaches a mirror listener and knows a file's SHA-256 can download it, so an MSI file must hold no license key or password. Each server takes the entries of its own manager. An entry is shared by every customer (`customer_id` null), which only global administrators change, or belongs to one customer, whose administrators change it. A server takes software only where its administrator allowed it at install (`SOFTWARE_FROM_WEB=1` on Windows, `MF_SOFTWARE_FROM_WEB=1` on Linux, or `monitorflow-agent software on`): the central server cannot grant itself that right. It can only take it away, with `POST /servers/{id}/software`. Needs the key area \"updates\"."
     },
     {
       "name": "automatic updates",
@@ -82152,11 +83214,11 @@
     },
     {
       "name": "virtualization",
-      "description": "VMware and Hyper-V: the hosts, clusters, virtual machines and datastores of a vCenter or ESXi host (a device with a `vmware` check, run from a probe) or of a Hyper-V host (a Windows server with a `hyperv` check), kept from what their checks last reported. Each virtual machine is matched to the server or device of the same customer it is, by its hardware ID, a network card, an address or its name. Area `servers`."
+      "description": "VMware and Hyper-V: the hosts, clusters, virtual machines and datastores of a vCenter or ESXi host (a device with a `vmware` check, run from a probe) or of a Hyper-V host (a Windows server with a `hyperv` check), kept from what their checks last reported. Each virtual machine is matched to the server or device of the same customer it is, by its hardware ID, a network card, an address or its name. A Kubernetes cluster (a device with a `kubernetes` check) lists its nodes, namespaces, workloads and failed jobs the same way, its nodes matched to servers by their SMBIOS UUID, an address or their host name. Area `servers`."
     },
     {
       "name": "cloud",
-      "description": "Cloud accounts: an AWS account or an Azure subscription is a device whose `aws` or `azure` check, run every 5 minutes by the central server alone, lists its virtual machines with their state, status checks and basic metrics (processor, network, disks). They join the inventory of `GET /api/v1/servers/{id}/virtualization` and are matched to monitored servers as a vCenter's are. The credentials are read-only, stored sealed and never returned. Area `servers`."
+      "description": "Cloud accounts: an AWS account, an Azure subscription or a Google Cloud project is a device whose `aws`, `azure` or `gcp` check, run every 5 minutes by the central server alone, lists its virtual machines with their state, status checks (AWS, Azure) and basic metrics (processor, network, disks). A Google Cloud project is read with a service account's JSON key, given whole as `secret`; its address and project come from the key unless `project` names another. They join the inventory of `GET /api/v1/servers/{id}/virtualization` and are matched to monitored servers as a vCenter's are. The credentials are read-only, stored sealed and never returned. Area `servers`."
     },
     {
       "name": "inventory",

@@ -95,6 +95,37 @@ message SoftwarePackage {
   // removal takes the app as installed and ignores it. Empty for apt and
   // dnf, which install from the host's configured sources.
   string source = 2;
+  // Set on Windows for a Windows Installer package of the catalogue
+  // (ADR-0188), which the change's manager (winget) does not install:
+  // `id` is then its ProductCode, `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`,
+  // and `source` is empty. Agents before MSI packages refuse the change,
+  // since a ProductCode is no winget ID.
+  MsiFile msi = 3;
+}
+
+// The file of an MSI package of a SoftwareChange (ADR-0188). The digest
+// in the signed command is what protects the file: it travels on plain
+// HTTP mirror listeners and carries no other signature. A removal sets
+// none of the fields: the ProductCode is enough.
+message MsiFile {
+  // SHA-256 of the file, 64 lower-case hex digits.
+  string sha256 = 1;
+  // Its size in bytes.
+  uint64 size = 2;
+  // Where to download it, tried in order: the mirror listener of the
+  // agent's relay, then the central server's. http or https.
+  repeated string urls = 3;
+  // Public properties passed to `msiexec`, each name once
+  // (`common::software::valid_msi_property`).
+  repeated MsiProperty properties = 4;
+  // The catalogue entry's name, for the command's output only.
+  string name = 5;
+}
+
+// One public property of an MSI install, `NAME=value`.
+message MsiProperty {
+  string name = 1;
+  string value = 2;
 }
 
 // Payload of a Command of kind "software_off" (ADR-0188): stops the

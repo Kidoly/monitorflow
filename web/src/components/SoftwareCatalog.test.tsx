@@ -51,7 +51,7 @@ describe("SoftwareCatalog", () => {
     expect(within(table).getByText("7zip.7zip")).toBeInTheDocument();
     expect(within(table).getByText("Shared")).toBeInTheDocument();
     expect(within(table).getByText("acme")).toBeInTheDocument();
-    expect(screen.getByText(/installed with winget on Windows, apt on Debian/)).toBeInTheDocument();
+    expect(screen.getByText(/installed with winget or from uploaded MSI files on Windows, apt on Debian/)).toBeInTheDocument();
 
     const form = screen.getByRole("form", { name: "Add software" });
     await userEvent.type(within(form).getByLabelText("Name"), "Notepad++");
@@ -141,6 +141,58 @@ describe("SoftwareCatalog", () => {
       mirror: "nginx-debian",
       description: "",
     });
+  });
+
+  it("uploads an MSI file, takes its ProductCode and name, and checks the properties", async () => {
+    const code = "{6F1C2E7A-3B9D-4C55-A0E2-8D4F7B1A9C30}";
+    const file = {
+      sha256: "ab".repeat(32),
+      size: 2_457_600,
+      file_name: "tool-1.2.msi",
+      product_code: code,
+      product_name: "Example Tool",
+      product_version: "1.2.0",
+      manufacturer: "Example",
+    };
+    const entry: SoftwareEntry = { ...shared, name: "Example Tool", manager: "msi", package_id: code, source: "", file, properties: [{ name: "MARKER", value: "x y" }] };
+    const fetchMock = stubFetch({
+      "GET /api/software": [list([]), list([entry])],
+      "GET /api/customers": customers,
+      "POST /api/software/files?file_name=tool-1.2.msi": { status: 201, body: file },
+      "POST /api/software": { status: 201, body: entry },
+    });
+    show();
+    const form = await screen.findByRole("form", { name: "Add software" });
+    await userEvent.selectOptions(within(form).getByLabelText("Manager"), "msi");
+    expect(within(form).queryByLabelText("Source")).not.toBeInTheDocument();
+    expect(within(form).getByText(/anyone who reaches a listener and knows a file's digest/)).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("button", { name: "Add" }));
+    expect(screen.getByText("Upload the MSI file first.")).toBeInTheDocument();
+
+    await userEvent.upload(within(form).getByLabelText("MSI file"), new File(["MSI"], "tool-1.2.msi"));
+    expect(await within(form).findByText("Uploaded: tool-1.2.msi 1.2.0 (2.3 MiB).")).toBeInTheDocument();
+    expect(within(form).getByLabelText("Name")).toHaveValue("Example Tool");
+    expect(within(form).getByLabelText("ProductCode")).toHaveValue(code);
+
+    const properties = within(form).getByLabelText("Properties");
+    await userEvent.type(properties, "REBOOT=Force");
+    await userEvent.click(within(form).getByRole("button", { name: "Add" }));
+    expect(screen.getByText(/Properties are NAME=value separated by semicolons/)).toBeInTheDocument();
+    await userEvent.clear(properties);
+    await userEvent.type(properties, "MARKER=x y;");
+    await userEvent.click(within(form).getByRole("button", { name: "Add" }));
+    const post = fetchMock.mock.calls.find(([url, init]) => init?.method === "POST" && url === "/api/software");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+      customer_id: null,
+      name: "Example Tool",
+      manager: "msi",
+      package_id: code,
+      file_sha256: "ab".repeat(32),
+      properties: [{ name: "MARKER", value: "x y" }],
+      description: "",
+    });
+    const table = await screen.findByRole("table", { name: "Software catalogue" });
+    expect(within(table).getByText("tool-1.2.msi 1.2.0 (2.3 MiB)")).toBeInTheDocument();
   });
 
   it("shows a failed save in a banner", async () => {

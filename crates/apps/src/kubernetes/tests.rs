@@ -26,16 +26,30 @@ struct Cluster {
     pods: Value,
     /// Paths answered 403.
     forbidden: Vec<&'static str>,
+    /// Paths answered 404, as metrics-server's are without it.
+    missing: Vec<&'static str>,
     /// Requests seen, path and query.
     seen: Vec<String>,
 }
 
 fn node(name: &str, ready: &str, pressure: &str, role: &str) -> Value {
     json!({
-        "metadata": {"name": name, "labels": {format!("node-role.kubernetes.io/{role}"): ""}},
+        "metadata": {"name": name, "uid": format!("uid-{name}"), "labels": {format!("node-role.kubernetes.io/{role}"): ""}},
         "spec": {},
         "status": {
-            "nodeInfo": {"kubeletVersion": "v1.31.4"},
+            "nodeInfo": {
+                "kubeletVersion": "v1.31.4",
+                "systemUUID": format!("4C4C4544-0000-0000-0000-00000000000{}", name.len() % 10),
+                "osImage": "Ubuntu 24.04.1 LTS",
+                "kernelVersion": "6.8.0-49-generic",
+                "containerRuntimeVersion": "containerd://1.7.23",
+                "architecture": "amd64",
+            },
+            "addresses": [
+                {"type": "InternalIP", "address": format!("192.0.2.{}", name.len())},
+                {"type": "Hostname", "address": format!("{name}.cluster.example")},
+            ],
+            "allocatable": {"cpu": "4", "memory": "8Gi", "pods": "110"},
             "conditions": [
                 {"type": "Ready", "status": ready},
                 {"type": "MemoryPressure", "status": pressure},
@@ -49,6 +63,7 @@ fn node(name: &str, ready: &str, pressure: &str, role: &str) -> Value {
 fn pod(ns: &str, name: &str, phase: &str, ready: bool, restarts: u32) -> Value {
     json!({
         "metadata": {"namespace": ns, "name": name, "uid": format!("uid-{name}")},
+        "spec": if phase == "Pending" { json!({}) } else { json!({"nodeName": "cp-1"}) },
         "status": {
             "phase": phase,
             "conditions": [{"type": "Ready", "status": if ready { "True" } else { "False" }}],
@@ -64,16 +79,44 @@ fn crashing(ns: &str, name: &str, restarts: u32) -> Value {
     p
 }
 
+/// A pod of the deployment `web`, through its replica set.
+fn web_pod() -> Value {
+    let mut p = pod("shop", "web-1", "Running", true, 0);
+    p["metadata"]["labels"] = json!({"pod-template-hash": "7d4b9"});
+    p["metadata"]["ownerReferences"] =
+        json!([{"kind": "ReplicaSet", "name": "web-7d4b9", "controller": true}]);
+    p
+}
+
+fn job(name: &str, cron: Option<&str>, created: &str, failed: Option<&str>) -> Value {
+    let mut j = json!({
+        "metadata": {"namespace": "shop", "name": name, "uid": format!("uid-{name}"), "creationTimestamp": created},
+        "status": {"conditions": [{"type": "Complete", "status": "True"}]},
+    });
+    if let Some(cron) = cron {
+        j["metadata"]["ownerReferences"] = json!([{"kind": "CronJob", "name": cron}]);
+    }
+    if let Some(reason) = failed {
+        j["status"]["conditions"] = json!([{
+            "type": "Failed", "status": "True", "reason": reason,
+            "message": "Job has reached the specified backoff limit",
+            "lastTransitionTime": "2026-11-27T01:05:00Z",
+        }]);
+    }
+    j
+}
+
 fn initial() -> Cluster {
     Cluster {
         pods: json!([
-            pod("shop", "web-1", "Running", true, 0),
+            web_pod(),
             crashing("shop", "api-1", 4),
             pod("shop", "setup-1", "Succeeded", false, 0),
             pod("kube-system", "dns-1", "Running", true, 1),
             pod("kube-system", "pending-1", "Pending", false, 0),
         ]),
         forbidden: Vec::new(),
+        missing: Vec::new(),
         seen: Vec::new(),
     }
 }
@@ -82,6 +125,9 @@ fn answer_for(cluster: &mut Cluster, path: &str, query: &str) -> (u16, Value) {
     cluster.seen.push(format!("{path}?{query}"));
     if cluster.forbidden.contains(&path) {
         return (403, json!({"kind": "Status", "code": 403}));
+    }
+    if cluster.missing.contains(&path) {
+        return (404, json!({"kind": "Status", "code": 404}));
     }
     let list = |items: Value| json!({"metadata": {}, "items": items});
     let body = match path {
@@ -102,11 +148,11 @@ fn answer_for(cluster: &mut Cluster, path: &str, query: &str) -> (u16, Value) {
             }
         }
         "/apis/apps/v1/deployments" => list(json!([
-            {"metadata": {"namespace": "shop", "name": "web"}, "spec": {"replicas": 3}, "status": {"readyReplicas": 1}},
+            {"metadata": {"namespace": "shop", "name": "web", "uid": "uid-deploy-web"}, "spec": {"replicas": 3}, "status": {"readyReplicas": 1}},
             {"metadata": {"namespace": "shop", "name": "idle"}, "spec": {"replicas": 0}, "status": {}},
         ])),
         "/apis/apps/v1/statefulsets" => list(json!([
-            {"metadata": {"namespace": "shop", "name": "db"}, "spec": {}, "status": {"readyReplicas": 1}},
+            {"metadata": {"namespace": "shop", "name": "db", "uid": "uid-sts-db"}, "spec": {}, "status": {"readyReplicas": 1}},
         ])),
         "/apis/apps/v1/daemonsets" => list(json!([
             {"metadata": {"namespace": "kube-system", "name": "proxy"}, "status": {"desiredNumberScheduled": 2, "numberReady": 2}},
@@ -115,6 +161,49 @@ fn answer_for(cluster: &mut Cluster, path: &str, query: &str) -> (u16, Value) {
             {"metadata": {"namespace": "shop", "name": "data-db-0"}, "status": {"phase": "Bound"}},
             {"metadata": {"namespace": "shop", "name": "uploads"}, "status": {"phase": "Pending"}},
             {"metadata": {"namespace": "kube-system", "name": "old"}, "status": {"phase": "Lost"}},
+        ])),
+        "/api/v1/namespaces" => list(json!([
+            {"metadata": {"name": "shop", "uid": "uid-ns-shop"}, "status": {"phase": "Active"}},
+            {"metadata": {"name": "kube-system", "uid": "uid-ns-system"}, "status": {"phase": "Active"}},
+            {"metadata": {"name": "empty", "uid": "uid-ns-empty"}, "status": {"phase": "Active"}},
+            {"metadata": {"name": "old", "uid": "uid-ns-old"}, "status": {"phase": "Terminating"}},
+        ])),
+        "/apis/batch/v1/jobs" => list(json!([
+            // A failure the next run made good.
+            job(
+                "backup-100",
+                Some("backup"),
+                "2026-11-26T01:00:00Z",
+                Some("BackoffLimitExceeded")
+            ),
+            job("backup-200", Some("backup"), "2026-11-27T01:00:00Z", None),
+            job(
+                "report-1",
+                Some("report"),
+                "2026-11-27T01:00:00Z",
+                Some("DeadlineExceeded")
+            ),
+            job(
+                "migrate",
+                None,
+                "2026-11-20T01:00:00Z",
+                Some("BackoffLimitExceeded")
+            ),
+        ])),
+        "/apis/metrics.k8s.io/v1beta1/nodes" => list(json!([
+            {"metadata": {"name": "cp-1"}, "usage": {"cpu": "1", "memory": "2Gi"}},
+        ])),
+        "/apis/metrics.k8s.io/v1beta1/pods" => list(json!([
+            {"metadata": {"namespace": "shop", "name": "web-1"}, "containers": [
+                {"name": "main", "usage": {"cpu": "200m", "memory": "48Mi"}},
+                {"name": "sidecar", "usage": {"cpu": "50m", "memory": "16Mi"}},
+            ]},
+            {"metadata": {"namespace": "shop", "name": "api-1"}, "containers": [
+                {"name": "main", "usage": {"cpu": "50000000n", "memory": "32Mi"}},
+            ]},
+            {"metadata": {"namespace": "kube-system", "name": "dns-1"}, "containers": [
+                {"name": "main", "usage": {"cpu": "10m", "memory": "16Mi"}},
+            ]},
         ])),
         _ => return (404, json!({})),
     };
@@ -370,6 +459,11 @@ async fn namespaces_narrow_pods_workloads_and_claims() {
     );
     // Nodes are the cluster's, whatever the namespaces.
     assert_eq!(value(&samples, "nodes", ""), Some(2.0));
+    // So are the inventory's namespaces and jobs.
+    assert!(!samples
+        .iter()
+        .any(|s| s.sensor == "namespace_info" && s.instance != "shop"));
+    assert_eq!(value(&samples, "jobs_failed", ""), Some(2.0));
 }
 
 #[tokio::test]
@@ -426,6 +520,176 @@ async fn failures_are_samples_with_their_reason() {
     drop(closed);
     let down = build(KUBERNETES, &params(&fake, &[("port", &port)]), Place::Relay).unwrap();
     assert_eq!(reason(&collect(&down).await).0, "connect");
+}
+
+fn find<'a>(samples: &'a [Sample], metric: &str, instance: &str) -> &'a Sample {
+    samples
+        .iter()
+        .find(|s| s.sensor == metric && s.instance == instance)
+        .unwrap_or_else(|| panic!("no {metric} for {instance:?}"))
+}
+
+#[tokio::test]
+async fn fills_the_inventory() {
+    let fake = serve().await;
+    let sensor = build(KUBERNETES, &params(&fake, &[]), Place::Relay).unwrap();
+    let samples = collect(&sensor).await;
+    let up = up(&samples);
+    assert_eq!(up.value, 1.0, "{samples:#?}");
+    assert_eq!(up.labels["virt"], "source");
+    assert_eq!(up.labels["product"], "Kubernetes");
+    assert!(!up.labels.contains_key("unread"), "{up:?}");
+
+    // Nodes: what matches them to servers, their size and use.
+    let cp = find(&samples, "node_info", "cp-1");
+    assert_eq!(cp.value, 1.0);
+    assert_eq!(cp.labels["key"], "uid-cp-1");
+    assert_eq!(cp.labels["uuid"], "4c4c4544-0000-0000-0000-000000000004");
+    assert_eq!(cp.labels["hostname"], "cp-1.cluster.example");
+    assert_eq!(cp.labels["addresses"], "192.0.2.4");
+    assert_eq!(cp.labels["roles"], "control-plane");
+    assert_eq!(cp.labels["os_image"], "Ubuntu 24.04.1 LTS");
+    assert_eq!(value(&samples, "node_cpu_cores", "cp-1"), Some(4.0));
+    assert_eq!(
+        value(&samples, "node_memory_bytes", "cp-1"),
+        Some(8.0 * 1024.0 * 1024.0 * 1024.0)
+    );
+    assert_eq!(value(&samples, "node_pods_capacity", "cp-1"), Some(110.0));
+    // web-1, api-1 and dns-1; not the pending pod, nor the one that finished.
+    assert_eq!(value(&samples, "node_pods", "cp-1"), Some(3.0));
+    assert_eq!(value(&samples, "node_pods", "worker-1"), Some(0.0));
+    assert_eq!(value(&samples, "node_cpu_usage_ratio", "cp-1"), Some(0.25));
+    assert_eq!(
+        value(&samples, "node_memory_usage_ratio", "cp-1"),
+        Some(0.25)
+    );
+    // metrics-server says nothing of worker-1.
+    assert_eq!(value(&samples, "node_cpu_usage_ratio", "worker-1"), None);
+
+    // Namespaces, empty ones too, with their use and failed jobs.
+    assert_eq!(
+        find(&samples, "namespace_info", "shop").labels["key"],
+        "uid-ns-shop"
+    );
+    assert_eq!(
+        find(&samples, "namespace_info", "old").labels["phase"],
+        "Terminating"
+    );
+    assert_eq!(value(&samples, "namespace_pods", "empty"), Some(0.0));
+    let cpu = value(&samples, "namespace_cpu_usage_cores", "shop").unwrap();
+    assert!((cpu - 0.3).abs() < 1e-9, "{cpu}");
+    assert_eq!(
+        value(&samples, "namespace_memory_usage_bytes", "shop"),
+        Some(96.0 * 1024.0 * 1024.0)
+    );
+    let failed = find(&samples, "namespace_jobs_failed", "shop");
+    assert_eq!(failed.value, 2.0);
+    assert_eq!(failed.labels["jobs"], "report-1, migrate");
+    assert_eq!(
+        value(&samples, "namespace_jobs_failed", "kube-system"),
+        Some(0.0)
+    );
+    assert_eq!(value(&samples, "jobs_failed", ""), Some(2.0));
+    let report = find(&samples, "job_info", "shop/report-1");
+    assert_eq!(report.labels["cron_job"], "report");
+    assert_eq!(report.labels["reason"], "DeadlineExceeded");
+    assert_eq!(report.labels["failed_at"], "2026-11-27T01:05:00Z");
+    assert!(!samples.iter().any(|s| s.instance == "shop/backup-100"));
+
+    // Workloads, with what their pods use.
+    let web = find(&samples, "workload_info", "shop/deployment/web");
+    assert_eq!(web.labels["key"], "uid-deploy-web");
+    assert_eq!(web.labels["workload"], "deployment");
+    let cpu = value(&samples, "workload_cpu_usage_cores", "shop/deployment/web").unwrap();
+    assert!((cpu - 0.25).abs() < 1e-9, "{cpu}");
+    assert_eq!(
+        value(
+            &samples,
+            "workload_memory_usage_bytes",
+            "shop/statefulset/db"
+        ),
+        Some(0.0)
+    );
+
+    // Each object's samples say its kind; all share the collection's time.
+    let at = samples[0].timestamp_unix_ms;
+    assert!(samples.iter().all(|s| s.timestamp_unix_ms == at));
+    for (metric, instance, kind) in [
+        ("node_ready", "cp-1", "node"),
+        ("namespace_pods", "shop", "namespace"),
+        ("workload_ready_ratio", "shop/deployment/web", "workload"),
+        ("job_info", "shop/migrate", "job"),
+    ] {
+        assert_eq!(find(&samples, metric, instance).labels["virt"], kind);
+    }
+    assert!(!find(&samples, "nodes", "").labels.contains_key("virt"));
+    assert!(!find(&samples, "jobs_failed", "")
+        .labels
+        .contains_key("virt"));
+}
+
+#[tokio::test]
+async fn reads_without_what_the_inventory_adds() {
+    let fake = serve().await;
+    {
+        let mut cluster = fake.cluster.lock().unwrap();
+        // A ClusterRole of before the inventory, and no metrics-server.
+        cluster
+            .forbidden
+            .extend([super::inventory::NAMESPACES, super::inventory::JOBS]);
+        cluster.missing.push(super::inventory::NODE_METRICS);
+    }
+    let sensor = build(KUBERNETES, &params(&fake, &[]), Place::Relay).unwrap();
+    let samples = collect(&sensor).await;
+    let first = up(&samples);
+    assert_eq!(first.value, 1.0, "{samples:#?}");
+    assert_eq!(
+        first.labels["unread"],
+        "namespaces (not allowed), jobs (not allowed), metrics-server (not installed)"
+    );
+    assert_eq!(value(&samples, "namespace_pods", "empty"), None);
+    assert_eq!(
+        find(&samples, "namespace_info", "shop").labels["key"],
+        "shop"
+    );
+    assert_eq!(value(&samples, "namespace_jobs_failed", "shop"), None);
+    assert_eq!(value(&samples, "jobs_failed", ""), None);
+    assert_eq!(value(&samples, "node_cpu_usage_ratio", "cp-1"), None);
+    assert_eq!(value(&samples, "namespace_cpu_usage_cores", "shop"), None);
+    assert_eq!(value(&samples, "node_cpu_cores", "cp-1"), Some(4.0));
+    // Pods' use is not asked for without metrics-server.
+    let seen = fake.cluster.lock().unwrap().seen.clone();
+    assert!(!seen
+        .iter()
+        .any(|s| s.starts_with(super::inventory::POD_METRICS)));
+
+    // A failure says it is the source's.
+    fake.cluster.lock().unwrap().forbidden.push("/api/v1/pods");
+    let samples = collect(&sensor).await;
+    assert_eq!(up(&samples).labels["virt"], "source");
+}
+
+#[test]
+fn quantities_and_owners() {
+    use super::inventory::{owner, quantity};
+    assert_eq!(quantity("250m"), Some(0.25));
+    assert_eq!(quantity("2"), Some(2.0));
+    assert_eq!(quantity("1Gi"), Some(1_073_741_824.0));
+    assert_eq!(quantity("1500Ki"), Some(1_536_000.0));
+    assert_eq!(quantity("129e6"), Some(129e6));
+    assert_eq!(quantity("1E"), Some(1e18));
+    assert_eq!(quantity("12u"), Some(12e-6));
+    assert_eq!(quantity("junk"), None);
+    assert_eq!(quantity(""), None);
+    assert_eq!(owner(&web_pod()).as_deref(), Some("shop/deployment/web"));
+    let mut p = pod("db", "pg-0", "Running", true, 0);
+    p["metadata"]["ownerReferences"] = json!([{"kind": "StatefulSet", "name": "pg"}]);
+    assert_eq!(owner(&p).as_deref(), Some("db/statefulset/pg"));
+    // A replica set of no deployment, and a job's pod.
+    p["metadata"]["ownerReferences"] = json!([{"kind": "ReplicaSet", "name": "lone"}]);
+    assert_eq!(owner(&p), None);
+    p["metadata"]["ownerReferences"] = json!([{"kind": "Job", "name": "migrate"}]);
+    assert_eq!(owner(&p), None);
 }
 
 #[test]

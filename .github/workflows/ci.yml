@@ -122,8 +122,11 @@ jobs:
         run: rustup toolchain install && rustc --version
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: choco install protoc --no-progress -y
-      - run: cargo clippy -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common --all-targets -- -D warnings
+      - run: cargo clippy -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common -p monitorflow-apps --all-targets -- -D warnings
       - run: cargo test --no-fail-fast -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common
+      # SQL Server's Windows sign-in through SSPI against Windows's own
+      # server side, the TDS client and the check's parameters (ADR-0183).
+      - run: "cargo test --no-fail-fast -p monitorflow-apps --lib -- tds:: sql_server windows_accounts an_instance"
       - run: cargo build --release -p monitorflow-agent
       # The MSI package (ADR-0050), and a second one with a higher version
       # to test upgrades; the smoke test installs, upgrades and removes
@@ -138,6 +141,16 @@ jobs:
         run: |
           $msi = (Get-ChildItem target\msi\*.msi).FullName
           deploy/windows/smoke-test.ps1 -Msi $msi -UpgradeMsi target\msi-upgrade\monitorflow-agent-255.0.0-x64.msi
+      # An MSI package installed and removed by the update service's code
+      # (ADR-0188): downloaded, checked, then msiexec /i and /x.
+      - name: Install a tiny MSI package as the update service does
+        shell: pwsh
+        run: |
+          Push-Location deploy/windows
+          dotnet wix build -arch x64 -o ..\..\target\msi-test\tiny.msi test-msi\Tiny.wxs
+          Pop-Location
+          $env:MF_TEST_MSI = (Resolve-Path target\msi-test\tiny.msi).Path
+          cargo test -p monitorflow-agent --test msi_windows -- --nocapture
       - name: Upload the MSI logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -146,6 +159,7 @@ jobs:
           path: |
             ${{ runner.temp }}/monitorflow-msi
             C:/ProgramData/MonitorFlow/agent/logs
+            target/msi-test/work/*.log
           if-no-files-found: ignore
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -157,6 +171,24 @@ jobs:
           name: monitorflow-agent-windows-x86_64-msi
           path: target/msi/*.msi
           if-no-files-found: error
+  # A remote desktop against a real Windows host (ADR-0192): this runner's
+  # own Remote Desktop, turned on for the test, reached through the agent's
+  # tunnel to 127.0.0.1:3389 by IronRDP's client, which signs in with
+  # network level authentication and waits for the first picture.
+  windows-remote-desktop:
+    runs-on: windows-latest
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: choco install protoc --no-progress -y
+      - run: cargo test -p monitorflow-agent --test desktop_rdp --no-run
+      - name: Open a remote desktop on this runner
+        shell: pwsh
+        run: deploy/windows/rdp-test.ps1
   web:
     runs-on: ubuntu-latest
     defaults:
@@ -290,6 +322,21 @@ jobs:
           name: sso-test-failure
           path: ${{ runner.temp }}/sso-test-failure.png
           if-no-files-found: ignore
+  # The Kubernetes check and its inventory (ADR-0183) against k3s in a
+  # container, with its pod network and metrics-server: the guide's
+  # read-only service account, a deployment short of replicas, a claim
+  # pending, a job that failed, nodes' and pods' resource use.
+  kubernetes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # monitorflow-apps builds monitorflow-common, whose build script runs protoc.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: scripts/kubernetes-test.sh --full
   # Website checks (ADR-0150) against nginx in a container: pages with
   # chosen status codes, text and redirects, and certificates of a
   # throwaway CA (valid, expired, another name, 5 days left, self-signed),

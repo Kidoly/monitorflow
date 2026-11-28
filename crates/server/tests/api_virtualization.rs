@@ -1,7 +1,7 @@
 //! The virtual inventory of ADR-0156 against a real PostgreSQL: samples
-//! of a vCenter and a Hyper-V host written, matched to servers of their
-//! customer only, and read through the API. Ignored without
-//! `DATABASE_URL`.
+//! of a vCenter, a Hyper-V host and a Kubernetes cluster (ADR-0183)
+//! written, matched to servers of their customer only, and read through
+//! the API. Ignored without `DATABASE_URL`.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -172,7 +172,127 @@ fn vm(key: &str, name: &str) -> Vm {
     }
 }
 
+/// A sample as `(metric, instance, value, labels)`.
+type Written<'a> = (&'a str, &'a str, f64, &'a [(&'a str, &'a str)]);
+
+/// What the `kubernetes` check of `peer` writes of a cluster (its own
+/// tests in `crates/apps` check it writes these): a sample per `(metric,
+/// instance, value, labels)`, through the server's validation.
+fn kubernetes(peer: &str, samples: &[Written<'_>], at: i64) -> Vec<Series> {
+    let batch = SampleBatch {
+        samples: samples
+            .iter()
+            .map(|(metric, instance, value, labels)| {
+                let mut sample =
+                    monitorflow_sensors::Sample::metric(format!("kubernetes_{metric}"), *value)
+                        .with_instance(*instance);
+                for (k, v) in *labels {
+                    sample.labels.insert((*k).into(), (*v).into());
+                }
+                sample.timestamp_unix_ms = at;
+                monitorflow_probe::sample_to_proto(sample)
+            })
+            .collect(),
+    };
+    let identity = Identity {
+        peer: peer.into(),
+        site: "paris".into(),
+    };
+    let checked = check_batch(&identity, batch, chrono::Utc::now().timestamp_millis());
+    assert_eq!(checked.invalid, 0, "{:?}", checked.first_error);
+    checked.series
+}
+
 db_tests! {
+    #[sqlx::test]
+    async fn a_kubernetes_cluster_is_listed_and_its_nodes_matched(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let cluster = server(&pool, paris, "k8s-1", "device", Some("192.0.2.60")).await;
+        let worker = server(&pool, paris, "worker-1", "agent", None).await;
+        sqlx::query("UPDATE servers SET system_uuid = $2 WHERE id = $1")
+            .bind(worker).bind(Uuid::parse_str(VM_UUID).unwrap()).execute(&pool).await.unwrap();
+        let cp = server(&pool, paris, "cp-1", "agent", None).await;
+        let now = chrono::Utc::now().timestamp_millis();
+        let node = [("virt", "node")];
+        let samples: Vec<Written<'_>> = vec![
+            ("up", "", 1.0, &[("virt", "source"), ("product", "Kubernetes"), ("version", "v1.31.4"),
+                              ("unread", "metrics-server (not installed)")]),
+            ("nodes", "", 3.0, &[]),
+            ("node_info", "worker-1", 1.0, &[("virt", "node"), ("key", "uid-w1"), ("uuid", VM_UUID),
+                                              ("hostname", "worker-1"), ("addresses", "192.0.2.31"),
+                                              ("os_image", "Ubuntu 24.04.1 LTS")]),
+            ("node_ready", "worker-1", 1.0, &[("virt", "node"), ("roles", "worker"), ("kubelet_version", "v1.31.4")]),
+            ("node_cpu_cores", "worker-1", 4.0, &node),
+            // Matched by its host name's first label.
+            ("node_info", "cp-1", 1.0, &[("virt", "node"), ("key", "uid-cp"), ("hostname", "cp-1.cluster.example")]),
+            ("node_ready", "cp-1", 0.0, &node),
+            // No server: the agent can be installed on it.
+            ("node_info", "spare-1", 1.0, &[("virt", "node"), ("key", "uid-s1"), ("hostname", "spare-1"),
+                                             ("os_image", "Windows Server 2022 Datacenter")]),
+            ("namespace_info", "shop", 1.0, &[("virt", "namespace"), ("key", "uid-ns"), ("phase", "Active")]),
+            ("namespace_pods", "shop", 3.0, &[("virt", "namespace")]),
+            ("namespace_jobs_failed", "shop", 1.0, &[("virt", "namespace"), ("jobs", "migrate")]),
+            ("workload_info", "shop/deployment/web", 1.0, &[("virt", "workload"), ("key", "uid-web"),
+                ("namespace", "shop"), ("workload", "deployment"), ("name", "web")]),
+            ("workload_replicas_desired", "shop/deployment/web", 3.0, &[("virt", "workload"), ("workload", "deployment")]),
+            ("job_info", "shop/migrate", 1.0, &[("virt", "job"), ("key", "uid-job"), ("namespace", "shop"),
+                ("reason", "BackoffLimitExceeded")]),
+        ];
+        monitorflow_server::virt::apply(&pool, &[kubernetes("k8s-1", &samples, now)]).await.unwrap();
+
+        let links: Vec<(String, String, Option<Uuid>, Option<String>)> = sqlx::query_as(
+            "SELECT kind, instance, server_id, matched_by FROM virtual_objects ORDER BY kind, instance")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(links, vec![
+            ("job".into(), "shop/migrate".into(), None, None),
+            ("namespace".into(), "shop".into(), None, None),
+            ("node".into(), "cp-1".into(), Some(cp), Some("name".into())),
+            ("node".into(), "spare-1".into(), None, None),
+            ("node".into(), "worker-1".into(), Some(worker), Some("uuid".into())),
+            ("workload".into(), "shop/deployment/web".into(), None, None),
+        ]);
+
+        let admin = session(&pool, "admin", Role::Administrator, None).await;
+        let (status, body) = call(&pool, &admin, "GET", &format!("/api/servers/{cluster}/virtualization"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["source"]["details"]["product"], "Kubernetes");
+        assert_eq!(body["source"]["details"]["unread"], "metrics-server (not installed)");
+        let kinds: Vec<&str> = body["objects"].as_array().unwrap().iter().map(|o| o["kind"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["node", "node", "node", "namespace", "workload", "job"]);
+        let w1 = &body["objects"][2];
+        assert_eq!(w1["name"], "worker-1");
+        assert_eq!(w1["metrics"]["ready"], 1.0);
+        assert_eq!(w1["metrics"]["cpu_cores"], 4.0);
+        assert_eq!(w1["details"]["roles"], Value::Null, "labels of numbers are not details");
+        assert_eq!(w1["key"], "uid-w1");
+        assert_eq!(body["objects"][3]["metrics"]["jobs_failed"], 1.0);
+        assert_eq!(body["objects"][4]["metrics"]["replicas_desired"], 3.0);
+        assert_eq!(body["objects"][5]["details"]["reason"], "BackoffLimitExceeded");
+
+        // The server's page says which node it is.
+        let (_, page) = call(&pool, &admin, "GET", &format!("/api/servers/{worker}/virtualization"), None).await;
+        assert_eq!(page["guest_of"][0]["object"]["kind"], "node");
+        assert_eq!(page["guest_of"][0]["source_name"], "k8s-1");
+
+        // A person corrects a node's match; a namespace is no server.
+        let id = |kind: &str, name: &str| {
+            body["objects"].as_array().unwrap().iter()
+                .find(|o| o["kind"] == kind && o["name"] == name).unwrap()["id"].as_str().unwrap().to_owned()
+        };
+        let (status, view) = call(&pool, &admin, "PUT", &format!("/api/virtual-objects/{}/server", id("node", "cp-1")),
+            Some(json!({"server_id": null}))).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["link_fixed"], true);
+        let (status, _) = call(&pool, &admin, "PUT", &format!("/api/virtual-objects/{}/server", id("namespace", "shop")),
+            Some(json!({"server_id": cp}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        // "Install the agent" on a node without a server.
+        let (status, waiting) = call(&pool, &admin, "POST", &format!("/api/virtual-objects/{}/install-agent", id("node", "spare-1")), None).await;
+        assert_eq!(status, StatusCode::CREATED, "{waiting}");
+        assert_eq!(waiting["hostname"], "spare-1");
+        assert_eq!(waiting["os_family"], "windows");
+    }
+
     #[sqlx::test]
     async fn an_inventory_is_kept_matched_and_read(pool: PgPool) {
         let paris = site(&pool, "paris").await;

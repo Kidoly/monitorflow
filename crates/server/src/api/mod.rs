@@ -50,6 +50,7 @@
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | POST | `/api/servers/{id}/jmx/test` | modify | body [`jmx_test::JmxTestRequest`]; 200 [`jmx_test::JmxTested`]: a Jolokia's HTTPS certificate from the probe, and its reads when it is trusted (ADR-0183) |
 //! | POST | `/api/devices` | modify | body [`devices::DeviceRequest`]; 201 [`servers::ServerView`]: a device, pinged from the site's default probe unless told otherwise; audited (ADR-0148) |
 //! | PUT | `/api/devices/{id}` | modify | body [`devices::DeviceUpdate`]; 200 [`servers::ServerView`]; audited |
 //! | GET | `/api/devices/templates` | read | [`devices::TemplateList`]: the kinds of SNMP devices, their checks and thresholds (ADR-0149) |
@@ -61,7 +62,7 @@
 //! | POST | `/api/virtual-objects/{id}/install-agent` | admin | 201 [`servers::ServerView`]: a server waiting for its agent, named after the virtual machine and tied to it; audited |
 //! | POST | `/api/devices/vmware/test` | modify | body [`devices::VmwareTestRequest`]; 200 [`devices::VmwareTested`]: what a vCenter or ESXi host answers, its certificate, and the login when it is trusted |
 //! | GET, PUT, DELETE | `/api/devices/{id}/vmware` | read, modify | [`crate::vmware::View`] without the password; body [`crate::vmware::CredentialsRequest`]; audited |
-//! | POST | `/api/devices/cloud/test` | modify | body [`devices::CloudTestRequest`]; 200 [`devices::CloudTested`]: whether an AWS account or Azure subscription signs in, its machines and metrics (ADR-0183) |
+//! | POST | `/api/devices/cloud/test` | modify | body [`devices::CloudTestRequest`]; 200 [`devices::CloudTested`]: whether an AWS account, Azure subscription or Google Cloud project signs in, its machines and metrics (ADR-0183) |
 //! | GET, PUT, DELETE | `/api/devices/{id}/cloud` | read, modify | [`crate::cloud::View`] without the secret; body [`crate::cloud::CredentialsRequest`]; audited |
 //! | GET, POST | `/api/devices/{id}/snmp-checks` | read, modify | [`snmp_checks::CheckList`]; body [`snmp_checks::CheckRequest`], 201 [`snmp_checks::CheckView`]: a custom SNMP check with its channels' limits (ADR-0157); audited |
 //! | PUT, DELETE | `/api/devices/{id}/snmp-checks/{name}` | modify | the same body; [`snmp_checks::CheckView`]; 204; audited |
@@ -292,6 +293,7 @@
 //! | GET | `/api/software` | any role | [`software::Catalog`]: the software catalogue, shared entries and those of visible customers; `?customer_id=` narrows (ADR-0188) |
 //! | POST | `/api/software` | customer administrator, global for a shared entry | body [`software::EntryRequest`]; 201 [`software::Entry`]; 409 when the package is listed already |
 //! | PUT, DELETE | `/api/software/{id}` | as POST | body [`software::EntryRequest`]; 200 [`software::Entry`], or 204 |
+//! | POST | `/api/software/files` | customer administrator | body an MSI file; `?file_name=`; 201 [`software::SoftwareFile`]; 409 past 20 GiB in all (ADR-0188) |
 //! | GET | `/api/remediation/rules` | customer role | [`remediation::RuleList`], see below |
 //! | POST | `/api/remediation/rules` | customer administrator | body [`remediation::RuleRequest`]; 201 the stored rule |
 //! | DELETE | `/api/remediation/rules/{id}` | customer administrator | 204 |
@@ -302,6 +304,7 @@
 //! | PUT | `/api/servers/{id}/proxmox` | customer administrator | body [`proxmox::MappingRequest`]; 200 [`proxmox::ProxmoxView`] |
 //! | DELETE | `/api/servers/{id}/proxmox` | customer administrator | 204; 404 without a mapping |
 //! | GET | `/api/servers/{id}/proxmox/guests` | customer administrator | [`proxmox::GuestList`], see below |
+//! | POST | `/api/servers/{id}/major-upgrade/preupgrade` | administrator of the customer | 201 with the `leapp_preupgrade` command: `leapp preupgrade` alone on a server of the RHEL family, its report in the server's progress (ADR-0182); 409 saying why not |
 //! | GET | `/api/major-upgrades` | read | [`major_upgrades::MajorUpgradeList`]: per server, the next release, the checks before upgrading to it, the rollback and the last upgrade (ADR-0182); `customer_id`, `site_id`, `server_id` |
 //! | GET | `/api/servers/{id}/rollback` | read | [`rollback::RollbackView`]: what a change gets first, a Proxmox, LVM or ZFS snapshot or why none, and the local snapshots with when they are deleted (ADR-0094) |
 //! | GET | `/api/notifications/channels` | any administrator | [`notifications::ChannelList`]: the channels of what the user administers, without secrets, with `has_secret` and the last error (ADR-0060, ADR-0078) |
@@ -827,6 +830,7 @@ pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
 pub mod inventory;
+pub mod jmx_test;
 pub mod license;
 pub mod login_limit;
 pub mod logs;
@@ -969,6 +973,8 @@ pub struct ApiSettings {
     /// Where agents download releases from, and the server's cache of
     /// them (ADR-0053).
     pub agent_releases: agent_releases::Sources,
+    /// MSI files of the software catalogue (ADR-0188).
+    pub software_files: crate::software_files::Store,
     /// Server updates through the updater container (ADR-0056).
     pub server_update: server_update::ServerUpdateSettings,
     /// What the configuration sets about install sources (ADR-0054).
@@ -998,6 +1004,7 @@ impl ApiSettings {
             )),
             live: agent_releases.live.clone(),
             agent_releases,
+            software_files: crate::software_files::Store::in_mirror_dir(&config.mirror_dir()),
             server_update: server_update::ServerUpdateSettings::from_config(config),
             agent_install: settings::InstallConfig::from_config(config),
             auto_update_enabled: config.auto_update.enabled,
@@ -1570,6 +1577,7 @@ pub fn router(state: ApiState) -> Router {
                 .delete(devices::delete_vmware),
         )
         .route("/api/servers/{id}/sensors", get(sensors::effective))
+        .route("/api/servers/{id}/jmx/test", post(jmx_test::test_jmx))
         .route(
             "/api/servers/{id}/recommendations",
             get(recommendations::list),
@@ -1683,6 +1691,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers/{id}/rollback", get(rollback::get))
         .route("/api/major-upgrades", get(major_upgrades::list))
         .route(
+            "/api/servers/{id}/major-upgrade/preupgrade",
+            post(major_upgrades::preupgrade),
+        )
+        .route(
             "/api/servers/{id}/commands",
             get(commands::list).post(commands::create),
         )
@@ -1700,6 +1712,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/remote-sessions/{id}/recording",
             get(remote_sessions::recording),
+        )
+        .route(
+            "/api/remote-sessions/{id}/recording/frames/{seq}",
+            get(remote_sessions::frame),
         )
         .route(
             "/api/remote-sessions/{id}/socket",
@@ -1782,6 +1798,13 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/campaigns/{id}/relaunch", post(campaigns::relaunch))
         .route("/api/campaigns/{id}/runs", get(campaigns::runs))
         .route("/api/software", get(software::list).post(software::create))
+        .route(
+            "/api/software/files",
+            // A little over the largest file, so the handler says why.
+            post(software::upload).layer(DefaultBodyLimit::max(
+                (crate::software_files::MAX_FILE_BYTES + 1) as usize,
+            )),
+        )
         .route(
             "/api/software/{id}",
             put(software::update).delete(software::delete),

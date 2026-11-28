@@ -102,7 +102,7 @@ impl Area {
                 "sensors" | "sensor_configs" | "thresholds" | "offline-alerts"
                 | "check-interval" | "dependencies" => Self::Alerts,
                 "commands" | "packages" | "sources" | "rollback" | "update"
-                | "agent-auto-update" | "software" => Self::Updates,
+                | "agent-auto-update" | "software" | "major-upgrade" => Self::Updates,
                 "ai-commands" => Self::Remediation,
                 "probes" => Self::Servers,
                 _ if first == "sites" => Self::Administration,

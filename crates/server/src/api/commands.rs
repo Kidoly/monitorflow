@@ -33,7 +33,7 @@ use super::sensors::{body, parse_id};
 use super::servers::{decode_cursor, encode_cursor, page_limit};
 use super::software::{resolve, SoftwareRequest};
 use super::{ApiError, ApiState};
-use crate::campaign::{software_refusal, ThirdPartySpec, UpdateSpec};
+use crate::campaign::{software_refusal, MsiSources, ThirdPartySpec, UpdateSpec, MSI_TOO_OLD};
 use crate::commands::{CommandRow, CommandStore, NewCommand, State as CommandState};
 
 pub const DEFAULT_TTL_S: u64 = 3600;
@@ -253,6 +253,12 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
             Ok(p) => json!({"from": p.from, "to": p.to, "impact": "high_impact"}),
             Err(_) => Value::Null,
         },
+        // `POST .../major-upgrade/preupgrade` only: leapp's report, nothing
+        // changed (ADR-0182).
+        command::LEAPP_PREUPGRADE => match MajorUpgrade::decode(payload) {
+            Ok(p) => json!({"from": p.from, "to": p.to}),
+            Err(_) => Value::Null,
+        },
         _ => Value::Null,
     }
 }
@@ -423,8 +429,9 @@ async fn create_software(
             target.os_family
         )));
     }
-    let (customer, state_word): (Uuid, Option<String>) = sqlx::query_as(
-        "SELECT t.customer_id, s.command_kinds->>'software'
+    let (customer, state_word, msi_known): (Uuid, Option<String>, bool) = sqlx::query_as(
+        "SELECT t.customer_id, s.command_kinds->>'software',
+             coalesce(s.command_kinds ? 'software_msi', false)
          FROM servers s JOIN sites t ON t.id = s.site_id WHERE s.id = $1",
     )
     .bind(target.id)
@@ -441,9 +448,19 @@ async fn create_software(
                 .into(),
         ));
     }
+    let relay =
+        crate::mirror::relays::url_for_server(&mut *state.pool.acquire().await?, target.id).await?;
+    let msi = MsiSources::new(
+        relay.as_deref(),
+        state.settings.live.mirror_public_url().as_deref(),
+        msi_known,
+    );
     let payload = spec
-        .change_for(&target.os_family, request.allow_reboot)
-        .map_err(ApiError::Invalid)?
+        .change_for(&target.os_family, request.allow_reboot, &msi)
+        .map_err(|error| match error.as_str() {
+            MSI_TOO_OLD => ApiError::Conflict(error),
+            _ => ApiError::Invalid(error),
+        })?
         .encode_to_vec();
     queue(state, user, target, &request.kind, payload, ttl).await
 }
@@ -719,6 +736,7 @@ mod tests {
             packages: vec![monitorflow_common::proto::v1::SoftwarePackage {
                 id: "7zip.7zip".into(),
                 source: "winget".into(),
+                msi: None,
             }],
             allow_reboot: true,
         };

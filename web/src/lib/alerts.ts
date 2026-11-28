@@ -512,10 +512,43 @@ function appTypes(device: boolean): CheckType[] {
       get label() {
         return t("checks.type.mssql");
       },
+      // A named instance's port comes from SQL Server Browser when the
+      // port is left empty. Windows sign-in runs on a Windows agent only,
+      // so a device's check and a Linux server's do not offer it.
       get fields(): CheckField[] {
-        const fields = connectionFields(1433, "monitorflow", device);
-        fields[2] = { ...fields[2]!, hint: t("checks.field.mssqlUserHint") };
-        return [...fields, tlsField()];
+        const [host, , , password] = connectionFields(1433, "monitorflow", device);
+        const sql = { value: "sql", label: t("checks.field.mssqlAuthSql") };
+        const auth: CheckField[] = device
+          ? []
+          : [
+              {
+                key: "auth",
+                label: t("checks.field.mssqlAuth"),
+                placeholder: "",
+                initial: "sql",
+                optional: true,
+                input: "select",
+                options: [sql, { value: "windows", label: t("checks.field.mssqlAuthWindows") }],
+                hint: t("checks.field.mssqlAuthHint"),
+              },
+            ];
+        const tls = tlsField();
+        return [
+          host!,
+          { key: "instance", label: t("checks.field.mssqlInstance"), placeholder: "SQLEXPRESS", hint: t("checks.field.mssqlInstanceHint"), optional: true },
+          { key: "port", label: t("checks.field.port"), placeholder: "1433", hint: t("checks.field.mssqlPortHint"), optional: true, check: portNumber },
+          ...auth,
+          { key: "user", label: t("checks.field.username"), placeholder: "monitorflow", hint: t("checks.field.mssqlUserHint"), optional: true },
+          password!,
+          { ...tls, options: [...tls.options!.slice(0, 2), { value: "strict", label: t("checks.field.tlsStrict") }, ...tls.options!.slice(2)] },
+        ];
+      },
+      get on() {
+        return {
+          linux: {
+            auth: { options: [{ value: "sql", label: t("checks.field.mssqlAuthSql") }], hint: t("checks.field.mssqlAuthLinuxHint") },
+          },
+        };
       },
     },
     {
@@ -569,6 +602,15 @@ function appTypes(device: boolean): CheckType[] {
               { value: "off", label: t("checks.field.tlsHttp") },
               { value: "verify", label: t("checks.field.tlsVerify") },
             ],
+          },
+          {
+            key: "fingerprint",
+            label: t("checks.field.fingerprint"),
+            placeholder: "AB:CD:…",
+            hint: t("checks.field.fingerprintHint"),
+            optional: true,
+            advanced: true,
+            check: (v: string) => (/^[0-9a-f]{64}$/i.test(v.replace(/[:\s-]/g, "")) ? null : t("checks.error.fingerprint")),
           },
         ];
       },
@@ -967,6 +1009,8 @@ function ownTitle(sensor: EffectiveSensor): string {
       return t("cloud.check.aws");
     case "azure":
       return t("cloud.check.azure");
+    case "gcp":
+      return t("cloud.check.gcp");
     case "postgresql":
     case "mysql":
     case "mssql":

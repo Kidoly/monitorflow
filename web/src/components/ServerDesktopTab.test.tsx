@@ -12,17 +12,41 @@ import { describeDesktopError } from "./RemoteDesktop";
 import { ServerDesktopTab } from "./ServerDesktopTab";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
-// IronRDP's client needs a real browser: the live desktop is a stand-in here.
-vi.mock("next/dynamic", () => ({
-  default: () =>
-    function Stub({ serverId, credentials }: { serverId: string; credentials: { username: string; password: string } }) {
-      return (
-        <div data-testid="desktop">
-          {serverId} {credentials.username} {credentials.password}
-        </div>
-      );
-    },
-}));
+const sendFiles = vi.fn(async () => {});
+const downloadFiles = vi.fn(async () => {});
+// IronRDP's client needs a real browser: the live desktop, and the replay, are stand-ins here. The
+// account "files" gets a session that copies files.
+vi.mock("next/dynamic", async () => {
+  const { useEffect } = await import("react");
+  return {
+    default: () =>
+      function Stub({
+        serverId,
+        credentials,
+        sessionId,
+        onControls,
+        onFiles,
+      }: {
+        serverId?: string;
+        credentials?: { username: string; password: string };
+        sessionId?: string;
+        onControls?: (c: unknown) => void;
+        onFiles?: (e: unknown) => void;
+      }) {
+        useEffect(() => {
+          if (credentials?.username !== "files") return;
+          onControls?.({ ctrlAltDel: () => {}, sendFiles, downloadFiles });
+          onFiles?.({ kind: "offered", names: ["report.pdf", "notes.txt"] });
+        }, [credentials, onControls, onFiles]);
+        if (sessionId) return <div data-testid="replay">{sessionId}</div>;
+        return (
+          <div data-testid="desktop">
+            {serverId} {credentials?.username} {credentials?.password}
+          </div>
+        );
+      },
+  };
+});
 
 const operator = me({ role: "operator", customer_id: null, site_id: "site-1" });
 
@@ -30,7 +54,7 @@ function detail(overrides: Partial<ServerDetail> = {}): ServerDetail {
   return {
     ...server({ os_family: "windows", command_kinds: { remote_session: "off", remote_desktop: "accepted" } }),
     certificate: null,
-    remote_terminal: { can_open: true, can_review: true, recorded: true, idle_timeout_minutes: 15 },
+    remote_terminal: { can_open: true, can_review: true, recorded: true, idle_timeout_minutes: 15, desktop_clipboard: true, desktop_files: false },
     ...overrides,
   };
 }
@@ -49,6 +73,8 @@ const session = (overrides: Partial<RemoteSession> = {}): RemoteSession => ({
   recorded: false,
   bytes_in: 10,
   bytes_out: 100,
+  clipboard: false,
+  file_transfer: false,
   ...overrides,
 });
 
@@ -63,7 +89,11 @@ describe("ServerDesktopTab", () => {
     stubFetch({
       [`GET /api/servers/${s.id}/remote-sessions`]: {
         status: 200,
-        body: [session(), session({ id: "t1", kind: "terminal", close_reason: "closed by carol" })],
+        body: [
+          session(),
+          session({ id: "d2", recorded: true, close_reason: "closed by dave" }),
+          session({ id: "t1", kind: "terminal", close_reason: "closed by carol" }),
+        ],
       },
     });
     render(
@@ -71,12 +101,16 @@ describe("ServerDesktopTab", () => {
         <ServerDesktopTab server={s} />
       </As>,
     );
-    expect(screen.getByText(/closes after 15 minutes without input and is not recorded/)).toBeInTheDocument();
+    expect(screen.getByText(/closes after 15 minutes without input\. What it shows is recorded\./)).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Remote desktop sessions" });
     expect(within(table).getByText("closed after 15 minutes without input")).toBeInTheDocument();
     expect(within(table).queryByText("closed by carol")).not.toBeInTheDocument();
-    expect(within(table).queryByText("Recorded")).not.toBeInTheDocument();
-    expect(within(table).queryByRole("button", { name: "Replay" })).not.toBeInTheDocument();
+    expect(within(table).getByText("Recorded")).toBeInTheDocument();
+    // Only the recorded session has a replay, for the site's administrators.
+    const replays = within(table).getAllByRole("button", { name: "Replay" });
+    expect(replays).toHaveLength(1);
+    await userEvent.click(replays[0]!);
+    expect(screen.getByTestId("replay")).toHaveTextContent("d2");
 
     await userEvent.type(screen.getByLabelText("Account"), "Administrator");
     await userEvent.type(screen.getByLabelText("Password"), "s3cret");
@@ -84,6 +118,33 @@ describe("ServerDesktopTab", () => {
     expect(screen.getByTestId("desktop")).toHaveTextContent(`${s.id} Administrator s3cret`);
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close the session" })).toBeInTheDocument();
+  });
+
+  it("says what the session shares, and copies files where it may", async () => {
+    const s = detail({
+      remote_terminal: {
+        can_open: true,
+        can_review: false,
+        recorded: false,
+        idle_timeout_minutes: 15,
+        desktop_clipboard: false,
+        desktop_files: true,
+      },
+    });
+    render(
+      <As user={siteAdmin}>
+        <ServerDesktopTab server={s} />
+      </As>,
+    );
+    expect(screen.getByText(/The clipboard is not shared\. Files can be copied both ways\./)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Account"), "files");
+    await userEvent.type(screen.getByLabelText("Password"), "x");
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Send files" }));
+    expect(sendFiles).toHaveBeenCalled();
+    expect(screen.getByText("Files copied on the server: report.pdf, notes.txt")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Download the files" }));
+    expect(downloadFiles).toHaveBeenCalled();
   });
 
   it("gives administrators the lines that allow desktops where the server does not", async () => {

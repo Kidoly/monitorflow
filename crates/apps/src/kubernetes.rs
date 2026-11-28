@@ -2,7 +2,9 @@
 //! account token (ADR-0183): its nodes and their conditions, the pods of
 //! each namespace that do not run or restart, the deployments, stateful
 //! sets and daemon sets short of ready replicas, and the persistent volume
-//! claims left pending.
+//! claims left pending. Its nodes, namespaces, workloads and failed jobs
+//! are also the device's inventory, as a vCenter's objects are (ADR-0156,
+//! [`inventory`]), with their resource use when metrics-server runs.
 //!
 //! Parameters: `host` (the device's address), `port` (6443), `token` and
 //! `ca_certificate` (sealed together by the server, never stored with the
@@ -15,7 +17,7 @@
 //! kubeconfig, or the CA in PEM), else the machine's roots. Every request
 //! is a `GET`: the check changes nothing in the cluster.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -27,6 +29,9 @@ use rustls::pki_types::CertificateDer;
 use serde_json::Value;
 
 use crate::rates::{Rates, Round};
+use inventory::Extra;
+
+mod inventory;
 use crate::{check_place, down, label, ratio, within, Failure, Params, Place, Reason};
 
 /// The service account's token: a sealed parameter.
@@ -155,6 +160,16 @@ impl Kubernetes {
         query: &[(&str, &str)],
         budget: &mut usize,
     ) -> Result<Value, Failure> {
+        self.fetch(path, query, budget).await.map_err(|(_, f)| f)
+    }
+
+    /// As [`Self::get`], with the HTTP status of a refusal (0 without one).
+    async fn fetch(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        budget: &mut usize,
+    ) -> Result<Value, (u16, Failure)> {
         let token = self.token.as_deref().unwrap_or_default();
         let mut response = self
             .http
@@ -164,17 +179,19 @@ impl Kubernetes {
             .header(reqwest::header::ACCEPT, "application/json")
             .send()
             .await
-            .map_err(|e| self.failure(&e))?;
-        match response.status().as_u16() {
+            .map_err(|e| (0, self.failure(&e)))?;
+        let status = response.status().as_u16();
+        let refused = |failure| Err((status, failure));
+        match status {
             200 => {}
             401 => {
-                return Err(Failure::new(
+                return refused(Failure::new(
                     Reason::Login,
                     "the API refused the token (401): it expired, was revoked, or is for another cluster",
                 ))
             }
             403 => {
-                return Err(Failure::new(
+                return refused(Failure::new(
                     Reason::Permission,
                     format!(
                         "the service account may not read {path} (403): bind it to the monitorflow-reader ClusterRole of the guide"
@@ -182,29 +199,61 @@ impl Kubernetes {
                 ))
             }
             status => {
-                return Err(Failure::new(
+                return refused(Failure::new(
                     Reason::Protocol,
                     format!("the API answered {status} to {path}"),
                 ))
             }
         }
         let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|e| self.failure(&e))? {
+        while let Some(chunk) = response.chunk().await.map_err(|e| (0, self.failure(&e)))? {
             if chunk.len() > *budget {
-                return Err(Failure::new(
-                    Reason::Protocol,
-                    "the cluster's answers exceed 64 MiB in one collection",
+                return Err((
+                    0,
+                    Failure::new(
+                        Reason::Protocol,
+                        "the cluster's answers exceed 64 MiB in one collection",
+                    ),
                 ));
             }
             *budget -= chunk.len();
             body.extend_from_slice(&chunk);
         }
         serde_json::from_slice(&body)
-            .map_err(|e| Failure::new(Reason::Protocol, format!("{path}: {e}")))
+            .map_err(|e| (0, Failure::new(Reason::Protocol, format!("{path}: {e}"))))
     }
 
     /// Every item of a list, page after page.
     async fn list(&self, path: &str, budget: &mut usize) -> Result<Vec<Value>, Failure> {
+        self.pages(path, budget).await.map_err(|(_, f)| f)
+    }
+
+    /// A list the check does without: `None`, and in `unread` what was not
+    /// read and why, when it cannot be read.
+    async fn optional(
+        &self,
+        path: &str,
+        what: &str,
+        budget: &mut usize,
+        unread: &mut Vec<String>,
+    ) -> Option<Vec<Value>> {
+        match self.pages(path, budget).await {
+            Ok(items) => Some(items),
+            Err((status, failure)) => {
+                let why = match status {
+                    403 => "not allowed",
+                    404 => "not installed",
+                    503 => "not answering",
+                    _ if failure.reason == Reason::Timeout => "timed out",
+                    _ => "failed",
+                };
+                unread.push(format!("{what} ({why})"));
+                None
+            }
+        }
+    }
+
+    async fn pages(&self, path: &str, budget: &mut usize) -> Result<Vec<Value>, (u16, Failure)> {
         let limit = PAGE.to_string();
         let mut items = Vec::new();
         let mut next = String::new();
@@ -213,7 +262,7 @@ impl Kubernetes {
             if !next.is_empty() {
                 query.push(("continue", next.as_str()));
             }
-            let mut page = self.get(path, &query, budget).await?;
+            let mut page = self.fetch(path, &query, budget).await?;
             if let Value::Array(found) = page["items"].take() {
                 items.extend(found);
             }
@@ -225,9 +274,14 @@ impl Kubernetes {
                 return Ok(items);
             }
             if items.len() >= MAX_OBJECTS {
-                return Err(Failure::new(
-                    Reason::Protocol,
-                    format!("{path} lists more than {MAX_OBJECTS} objects; narrow `namespaces`"),
+                return Err((
+                    0,
+                    Failure::new(
+                        Reason::Protocol,
+                        format!(
+                            "{path} lists more than {MAX_OBJECTS} objects; narrow `namespaces`"
+                        ),
+                    ),
                 ));
             }
         }
@@ -286,25 +340,90 @@ impl Kubernetes {
             workloads.push((kind, self.list(path, &mut budget).await?));
         }
         let claims = self.list(CLAIMS, &mut budget).await?;
-        let mut out = vec![
-            Sample::metric("up", 1.0).with_label(
-                "version",
-                label(version["gitVersion"].as_str().unwrap_or(""), 64),
-            ),
-            Sample::metric("response_seconds", response),
-        ];
+        // Read since the inventory (ADR-0156): a ClusterRole of before, or
+        // a cluster without metrics-server, still gives the rest.
+        let mut unread = Vec::new();
+        let namespaces = self
+            .optional(
+                inventory::NAMESPACES,
+                "namespaces",
+                &mut budget,
+                &mut unread,
+            )
+            .await;
+        let jobs = self
+            .optional(inventory::JOBS, "jobs", &mut budget, &mut unread)
+            .await;
+        let node_metrics = self
+            .optional(
+                inventory::NODE_METRICS,
+                "metrics-server",
+                &mut budget,
+                &mut unread,
+            )
+            .await;
+        let pod_metrics = match node_metrics {
+            Some(_) => {
+                self.optional(
+                    inventory::POD_METRICS,
+                    "metrics-server pods",
+                    &mut budget,
+                    &mut unread,
+                )
+                .await
+            }
+            None => None,
+        };
+        let watched_ns: Option<Vec<Value>> = namespaces.map(|list| {
+            list.into_iter()
+                .filter(|n| self.watched(name_of(n)))
+                .collect()
+        });
+        let extra = Extra {
+            namespaces: watched_ns.as_deref(),
+            jobs: jobs.as_deref(),
+            node_metrics: node_metrics.as_deref(),
+            pod_metrics: pod_metrics.as_deref(),
+        };
+        let mut up = Sample::metric("up", 1.0).with_label(
+            "version",
+            label(version["gitVersion"].as_str().unwrap_or(""), 64),
+        );
+        if !unread.is_empty() {
+            up = up.with_label("unread", label(&unread.join(", "), 200));
+        }
+        let mut out = vec![up, Sample::metric("response_seconds", response)];
         out.extend(node_samples(&nodes));
+        out.extend(inventory::node_inventory(&nodes, &pods, &extra));
         let watched =
             |item: &Value| self.watched(item["metadata"]["namespace"].as_str().unwrap_or(""));
         let pods: Vec<&Value> = pods.iter().filter(|p| watched(p)).collect();
         let claims: Vec<&Value> = claims.iter().filter(|c| watched(c)).collect();
-        out.extend(namespace_samples(&pods, &claims, round));
+        let listed: Vec<&str> = extra
+            .namespaces
+            .into_iter()
+            .flatten()
+            .map(name_of)
+            .collect();
+        out.extend(namespace_samples(&pods, &claims, &listed, round));
         let workloads: Vec<(Workload, &Value)> = workloads
             .iter()
             .flat_map(|(kind, items)| items.iter().map(|i| (*kind, i)))
             .filter(|(_, i)| watched(i))
             .collect();
         out.extend(workload_samples(&workloads));
+        let seen: BTreeSet<String> = out
+            .iter()
+            .filter(|s| s.sensor == "namespace_pods")
+            .map(|s| s.instance.clone())
+            .collect();
+        out.extend(inventory::object_inventory(
+            &seen,
+            &workloads,
+            &pods,
+            &extra,
+            &|ns| self.watched(ns),
+        ));
         Ok(out)
     }
 }
@@ -526,10 +645,15 @@ struct Namespace {
 pub(crate) fn namespace_samples(
     pods: &[&Value],
     claims: &[&Value],
+    listed: &[&str],
     round: &mut Round,
 ) -> Vec<Sample> {
     let first = round.first();
     let mut spaces: BTreeMap<String, Namespace> = BTreeMap::new();
+    // Namespaces listed without pods or claims are shown too.
+    for ns in listed {
+        spaces.entry(label(ns, 128)).or_default();
+    }
     for pod in pods {
         let ns = pod["metadata"]["namespace"].as_str().unwrap_or("");
         let space = spaces.entry(label(ns, 128)).or_default();
@@ -626,21 +750,26 @@ impl Workload {
     }
 }
 
+/// A workload's instance: `namespace/kind/name`.
+fn workload_instance(kind: Workload, item: &Value) -> String {
+    label(
+        &format!(
+            "{}/{}/{}",
+            item["metadata"]["namespace"].as_str().unwrap_or(""),
+            kind.as_str(),
+            name_of(item)
+        ),
+        200,
+    )
+}
+
 /// The samples of each workload, named `namespace/kind/name`, and how
 /// many are short of ready replicas.
 pub(crate) fn workload_samples(workloads: &[(Workload, &Value)]) -> Vec<Sample> {
     let mut out = Vec::new();
     let mut short = 0u32;
     for (kind, item) in workloads {
-        let instance = label(
-            &format!(
-                "{}/{}/{}",
-                item["metadata"]["namespace"].as_str().unwrap_or(""),
-                kind.as_str(),
-                name_of(item)
-            ),
-            200,
-        );
+        let instance = workload_instance(*kind, item);
         let (desired, ready) = kind.replicas(item);
         short += u32::from(ready < desired);
         out.push(
@@ -662,17 +791,20 @@ pub(crate) fn workload_samples(workloads: &[(Workload, &Value)]) -> Vec<Sample> 
 impl Sensor for Kubernetes {
     async fn collect(&self, deadline: tokio::time::Instant) -> Result<Vec<Sample>, SensorError> {
         let mut round = self.rates.round();
-        match within(deadline, self.read(&mut round)).await {
+        let now_ms = Sample::now(0.0).timestamp_unix_ms;
+        let mut samples = match within(deadline, self.read(&mut round)).await {
             Ok(samples) => {
                 self.rates.finish(round);
-                Ok(samples)
+                samples
             }
             Err(failure) => {
                 self.rates.reset();
                 let failure = Failure::new(failure.reason, self.scrub(&failure.error));
-                Ok(vec![down(None, &failure)])
+                vec![down(None, &failure)]
             }
-        }
+        };
+        inventory::mark(&mut samples, now_ms);
+        Ok(samples)
     }
 }
 

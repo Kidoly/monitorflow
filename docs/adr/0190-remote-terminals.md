@@ -95,7 +95,7 @@ The service's certificate is not checked against an authority: Windows makes its
 
 **Same roles, audit and idle time.** No setting of its own: `remote_access_settings.min_role` decides who may open a desktop, as a terminal, and the site's administrators see the sessions and close anyone's. Each desktop is a row of `remote_sessions` with `kind` `desktop`, and the same audit entries with `kind` `desktop` in their details: `remote_session.start`, `.open`, `.close` with its duration, `.close_request`. The idle time is the same, counted from the last bytes the browser sent; the 12 hours too. People logged in on the host are told with `msg *` who opened it.
 
-**Not recorded.** A desktop's row is always `recorded = false`, whatever `record` says (a check of the table holds it): recording a screen is video, kept for later if asked.
+**Not recorded.** A desktop's row was always `recorded = false`, whatever `record` said (a check of the table held it): recording a screen is video, kept for later if asked. ADR-0192 records them since: the central server decodes the screen from the RDP it carries and keeps pictures of it.
 
 **In the browser.** A Remote desktop tab on Windows servers, for the same people as the Terminal tab: the account, password and domain on one line, the desktop scaled to fit the page, Ctrl+Alt+Del and Close, then the server's past desktop sessions. The interface's script policy gains `'wasm-unsafe-eval'` (it allows WebAssembly to compile, not JavaScript's `eval`), in the proxy's header and in each page's `<meta>` (ADR-0124), and `connect-src` gains `data:`, as the module reads its own inlined WebAssembly with `fetch` on a `data:` URL, which reaches no network.
 
@@ -120,5 +120,5 @@ The service's certificate is not checked against an authority: Windows makes its
 - A session waits for the agent's command queue: a terminal asked while a long command runs, an update for example, opens when it ends, or fails after two minutes.
 - `servers.command_kinds` gains `remote_desktop`. Windows agents older than it show the tab with "cannot open remote desktops yet"; they update by themselves. Linux agents report it unsupported.
 - Administrators reach a Windows server's desktop from its page without opening port 3389 anywhere, with a client of a few MB loaded only on that tab, and nothing to run on the central server besides itself.
-- Still to come: recording desktops, the clipboard and file transfers of IronRDP's client, Windows terminals as another account, and a check against a real Windows host in CI (the tests use a fake RDP service, TLS included).
+- Still to come: Windows terminals as another account. Recording desktops, the clipboard and file transfers of IronRDP's client, and a test against a real Windows host in CI came with ADR-0192.
 - Migrations: `20261220000000_remote_sessions` (the settings, the sessions and their recordings), `20270104000000_remote_desktop` (the kind `desktop`, never recorded).

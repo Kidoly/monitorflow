@@ -1,6 +1,6 @@
 ---
 title: "Comment surveiller Kubernetes"
-description: "Suivez un cluster Kubernetes par son API avec un jeton en lecture seule : les nœuds et leurs conditions, les pods qui ne tournent pas ou redémarrent, les déploiements sans assez de réplicas prêts et les volume claims en attente."
+description: "Suivez un cluster Kubernetes par son API avec un jeton en lecture seule : les nœuds et leurs conditions, les pods qui ne tournent pas ou redémarrent, les déploiements sans assez de réplicas prêts, les volume claims en attente et les jobs en échec, avec les nœuds, namespaces et charges du cluster listés sur sa page."
 slug: surveiller-kubernetes
 lang: fr
 translation: monitor-kubernetes
@@ -25,6 +25,10 @@ Le cluster est un **équipement** dans MonitorFlow, et son contrôle « Cluster
 | Pods | `pods`, `pods_not_running`, `namespace_pods`, `namespace_pods_not_running` (l’étiquette `pods` les nomme et dit pourquoi), `namespace_pod_restarts` (redémarrages de conteneurs depuis le dernier contrôle) | namespace |
 | Deployments, stateful sets et daemon sets | `workload_replicas_desired`, `workload_replicas_ready`, `workload_ready_ratio`, `workloads_short` | charge, nommée `namespace/deployment/nom` |
 | Persistent volume claims | `claims_pending`, `namespace_claims_pending`, `namespace_claims_lost` (l’étiquette `claims` les nomme) | namespace |
+| Jobs en échec | `jobs_failed`, `namespace_jobs_failed` (l’étiquette `jobs` les nomme) | namespace |
+| Taille et utilisation | `node_cpu_cores`, `node_memory_bytes`, `node_pods`, `node_pods_capacity`, et avec metrics-server `node_cpu_usage_ratio`, `node_memory_usage_ratio`, `namespace_cpu_usage_cores`, `namespace_memory_usage_bytes`, `workload_cpu_usage_cores`, `workload_memory_usage_bytes` | nœud, namespace, charge |
+
+**Un job compte comme en échec** quand Kubernetes le marque `Failed` (ses nouvelles tentatives sont épuisées, ou il a dépassé son délai). Pour un CronJob, seule sa dernière exécution compte : un échec que l’exécution suivante a rattrapé appartient au passé. Le job est compté tant qu’il existe : supprimez-le, ou laissez son CronJob le remplacer, une fois le problème réglé.
 
 **Un pod compte comme ne tournant pas** quand il est en attente, en échec ou inconnu, ou qu’il tourne sans être prêt, comme un pod en `CrashLoopBackOff`. Les pods terminés (`Succeeded`), les pods en échec d’un job et ceux en cours de suppression sont laissés de côté. « Namespaces » limite les pods, les charges et les claims aux namespaces qui correspondent à une expression régulière ; les nœuds sont toujours ceux de tout le cluster.
 
@@ -43,12 +47,25 @@ Avec « Ajouter les alertes recommandées » activé, ces alertes l’accompag
 | `monitorflow_kubernetes_workload_ready_ratio` (par charge) | Sous 1 | Sous 0,5 | 10 minutes |
 | `monitorflow_kubernetes_namespace_claims_pending` (par namespace) | Plus de 0 | Aucun | 10 minutes |
 | `monitorflow_kubernetes_namespace_claims_lost` (par namespace) | Aucun | Plus de 0 | Tout de suite |
+| `monitorflow_kubernetes_namespace_jobs_failed` (par namespace) | Plus de 0 | Aucun | Tout de suite |
+| `monitorflow_kubernetes_node_memory_usage_ratio` (par nœud, avec metrics-server) | Plus de 0,9 | Aucun | 10 minutes |
 
 Une alerte couvre tous les nœuds, namespaces ou charges : un pod qui plante dans `shop` est un seul incident qui nomme `shop` et le pod.
 
+## La page du cluster
+
+La page de l’équipement liste ce qu’a lu le dernier contrôle, comme celle d’un vCenter liste ses machines virtuelles :
+
+- **Les nœuds**, avec leur état (« Prêt », « Pas prêt », « Isolé »), leurs rôles, la version du kubelet, le processeur et la mémoire, et leurs pods face au nombre qu’ils acceptent. Chaque nœud est associé au serveur que MonitorFlow surveille déjà quand c’en est un du même client : par son identifiant matériel (l’UUID SMBIOS que rapporte le kubelet, que l’agent rapporte aussi), puis une adresse, puis son nom d’hôte. Un nœud n’a pas de carte réseau dans l’API, l’adresse MAC ne l’associe donc pas. La colonne « Serveur » mène à ce serveur, et la page du serveur indique « Nœud Kubernetes worker-1 de k8s-prod ». « Pas celle-ci » annule pour de bon une mauvaise association ; un nœud sans serveur propose « Installer l’agent », comme une machine virtuelle.
+- **Les namespaces**, avec leurs pods et combien ne tournent pas, ce qu’utilisent leurs pods, et leurs jobs en échec.
+- **Les charges de travail** : deployments, stateful sets et daemon sets avec leurs réplicas prêts et ce qu’utilisent leurs pods.
+- **Les jobs en échec**, avec leur CronJob, la raison de l’échec et sa date.
+
+L’utilisation du processeur et de la mémoire vient de **metrics-server**, que la plupart des clusters font tourner (`kubectl top nodes` répond quand c’est le cas). Sans lui, ou sans les droits ci-dessous, la page dit ce qu’elle n’a pas pu lire, et le reste est lu comme avant. Un nœud ou une charge que le cluster ne liste plus affiche « Plus vu depuis » et disparaît au bout d’un jour.
+
 ## Donner à MonitorFlow un compte en lecture seule
 
-Le contrôle a besoin d’un compte de service qui peut seulement **lire et lister** (`get`, `list`) les nœuds, les pods, les persistent volume claims, les deployments, les stateful sets et les daemon sets. Il ne peut ni lire les secrets, ni ouvrir un shell dans un pod, ni rien modifier. Enregistrez ceci sous `monitorflow-reader.yaml` (il est aussi dans le dépôt, sous `deploy/kubernetes/`) :
+Le contrôle a besoin d’un compte de service qui peut seulement **lire et lister** (`get`, `list`) les nœuds, les namespaces, les pods, les persistent volume claims, les deployments, les stateful sets, les daemon sets et les jobs, ainsi que ce que mesure metrics-server des nœuds et des pods. Il ne peut ni lire les secrets, ni ouvrir un shell dans un pod, ni rien modifier. Enregistrez ceci sous `monitorflow-reader.yaml` (il est aussi dans le dépôt, sous `deploy/kubernetes/`) :
 
 ```yaml
 apiVersion: v1
@@ -68,10 +85,16 @@ metadata:
   name: monitorflow-reader
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods", "persistentvolumeclaims"]
+    resources: ["nodes", "namespaces", "pods", "persistentvolumeclaims"]
     verbs: ["get", "list"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -112,6 +135,8 @@ kubectl auth can-i list pods -A --as=system:serviceaccount:monitorflow:monitorfl
 kubectl auth can-i get secrets -A --as=system:serviceaccount:monitorflow:monitorflow-reader    # no
 ```
 
+Un cluster préparé avec une version précédente de ce fichier est toujours lu : appliquez-le de nouveau pour ajouter les namespaces, les jobs et metrics-server, et la page cesse de dire ce qu’elle n’a pas pu lire.
+
 Le jeton de ce secret n’expire pas, et supprimer le secret le révoque. Pour un jeton qui expire, créez-en un avec `kubectl -n monitorflow create token monitorflow-reader --duration=8760h` et saisissez le suivant sur le contrôle avant son expiration : sinon le contrôle indique `up` à 0 avec la raison `login`.
 
 **Le réseau :** le serveur central ou le relais qui vérifie le cluster doit joindre son serveur d’API, en général sur le port 6443. Un cluster managé (EKS, AKS, GKE) dont l’API est privée se vérifie depuis un relais dans son réseau.
@@ -147,7 +172,9 @@ L’API publique ajoute le même contrôle : `POST /api/v1/servers/{id}/sensor_
 }
 ```
 
-La réponse indique `"secret_set": true` et ne renvoie jamais le jeton ni la CA. Une mise à jour sans `token` garde les deux ; une mise à jour avec `token` remplace les deux, donnez donc aussi `ca_certificate`. Un jeton gardé ne suit jamais le contrôle vers une nouvelle adresse ou un nouveau port : si vous les changez, redonnez le jeton.
+`GET /api/v1/servers/{id}/virtualization` sur l’équipement renvoie la page du cluster : ses nœuds, namespaces, charges et jobs en échec avec leurs nombres, et le serveur qu’est chaque nœud. `PUT /api/v1/virtual-objects/{id}/server` corrige l’association d’un nœud, et `POST /api/v1/virtual-objects/{id}/install-agent` ajoute le serveur en attente de son agent.
+
+La réponse au `POST` ci-dessus indique `"secret_set": true` et ne renvoie jamais le jeton ni la CA. Une mise à jour sans `token` garde les deux ; une mise à jour avec `token` remplace les deux, donnez donc aussi `ca_certificate`. Un jeton gardé ne suit jamais le contrôle vers une nouvelle adresse ou un nouveau port : si vous les changez, redonnez le jeton.
 
 ## Modifier l’alerte
 
@@ -183,6 +210,7 @@ Cliquez sur « Prendre en charge », puis vérifiez :
 2. **Un pod qui ne tourne pas :** l’étiquette `pods` de l’incident le nomme et dit pourquoi (`CrashLoopBackOff`, `ImagePullBackOff`, `Pending`). `kubectl -n <namespace> describe pod <nom>` et `kubectl -n <namespace> logs <nom> --previous` en disent plus.
 3. **Une charge sans assez de réplicas :** `kubectl -n <namespace> rollout status deployment/<nom>`, puis ses pods comme ci-dessus.
 4. **Un claim en attente :** `kubectl -n <namespace> describe pvc <nom>` montre si sa storage class existe et ce qu’a répondu le provisionneur.
+5. **Un job en échec :** l’étiquette `jobs` de l’incident et le tableau « Jobs en échec » le nomment et disent pourquoi. `kubectl -n <namespace> describe job <nom>` et `kubectl -n <namespace> logs job/<nom>` en disent plus.
 
 ## Venir d’un autre outil
 

@@ -87,12 +87,15 @@ fn progress(
     }
 }
 
-/// Runs `major_upgrade` through the root helper.
+/// Runs `major_upgrade`, or `leapp_preupgrade` alone, through the root
+/// helper, which reads the kind from the signed command.
 pub struct MajorUpgradeHandler {
     tools: Tools,
     reports: Reports,
     /// `packages.major_upgrades`, and sudo rules that know the helper.
     allowed: bool,
+    /// `leapp_preupgrade`: only a leapp step.
+    preupgrade: bool,
 }
 
 impl MajorUpgradeHandler {
@@ -101,7 +104,36 @@ impl MajorUpgradeHandler {
             tools,
             reports,
             allowed,
+            preupgrade: false,
         }
+    }
+
+    /// The handler of `leapp_preupgrade` (ADR-0182).
+    pub fn preupgrade(tools: Tools, reports: Reports, allowed: bool) -> Self {
+        Self {
+            preupgrade: true,
+            ..Self::new(tools, reports, allowed)
+        }
+    }
+}
+
+/// Why the agent refuses `payload` before asking the helper, if it does.
+pub fn refusal(payload: &[u8], preupgrade: bool) -> Option<String> {
+    match MajorUpgrade::decode(payload) {
+        Ok(request) => match major_upgrade::step(&request.from, &request.to) {
+            Some(upgrade) if preupgrade && upgrade.method != major_upgrade::Method::Leapp => {
+                Some(format!(
+                    "leapp preupgrade is for the RHEL family, not {}",
+                    upgrade.from_label()
+                ))
+            }
+            Some(_) => None,
+            None => Some(format!(
+                "this agent does not know an upgrade from {} to {}",
+                request.from, request.to
+            )),
+        },
+        Err(e) => Some(format!("invalid payload: {e}")),
     }
 }
 
@@ -140,15 +172,8 @@ impl Handler for MajorUpgradeHandler {
                 super::helper::ALLOW_LINE
             ));
         }
-        match MajorUpgrade::decode(command.payload.as_slice()) {
-            Ok(request) if major_upgrade::step(&request.from, &request.to).is_some() => {}
-            Ok(request) => {
-                return Output::rejected(format!(
-                    "this agent does not know an upgrade from {} to {}",
-                    request.from, request.to
-                ))
-            }
-            Err(e) => return Output::rejected(format!("invalid payload: {e}")),
+        if let Some(refusal) = refusal(&command.payload, self.preupgrade) {
+            return Output::rejected(refusal);
         }
         let request = HelperRequest::of(command).framed();
         let run = self
@@ -158,7 +183,11 @@ impl Handler for MajorUpgradeHandler {
         let mut output = Output::default();
         match run {
             Ok(run) => {
-                tracing::info!(exit_code = run.code, "major upgrade helper finished");
+                tracing::info!(
+                    exit_code = run.code,
+                    preupgrade = self.preupgrade,
+                    "major upgrade helper finished"
+                );
                 if !run.success() {
                     output.exit_code = if run.code == 0 { 1 } else { run.code };
                     output.error = Some(PackageError::helper(&run).to_string());
@@ -225,6 +254,29 @@ mod tests {
             major_upgrade::next(&release).is_some(),
             "{release}"
         );
+    }
+
+    #[test]
+    fn leapp_preupgrade_is_for_the_rhel_family_only() {
+        let payload = |from: &str, to: &str| {
+            MajorUpgrade {
+                from: from.into(),
+                to: to.into(),
+            }
+            .encode_to_vec()
+        };
+        assert_eq!(refusal(&payload("rocky 8", "rocky 9"), true), None);
+        assert_eq!(refusal(&payload("debian 12", "debian 13"), false), None);
+        assert_eq!(
+            refusal(&payload("debian 12", "debian 13"), true).unwrap(),
+            "leapp preupgrade is for the RHEL family, not Debian 12 (bookworm)"
+        );
+        assert!(refusal(&payload("rocky 9", "rocky 10"), true)
+            .unwrap()
+            .starts_with("this agent does not know"));
+        assert!(refusal(b"\xff", false)
+            .unwrap()
+            .starts_with("invalid payload"));
     }
 
     #[test]

@@ -40,6 +40,10 @@ pub struct State {
     /// The boot the upgrade started in, then the one it asked to reboot.
     #[serde(default)]
     pub boot_id: String,
+    /// `leapp preupgrade` alone (`leapp_preupgrade`): no upgrade, no
+    /// reboot; `done` once leapp found no inhibitor.
+    #[serde(default)]
+    pub preupgrade_only: bool,
     pub started_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,
 }
@@ -56,6 +60,7 @@ impl State {
             disabled_sources: Vec::new(),
             report: String::new(),
             boot_id: boot_id.to_owned(),
+            preupgrade_only: false,
             started_at_unix_ms: now,
             updated_at_unix_ms: now,
         }
@@ -96,6 +101,7 @@ impl State {
             sources_restored: self.sources_restored,
             disabled_sources: self.disabled_sources.clone(),
             report: self.report.clone(),
+            preupgrade_only: self.preupgrade_only,
             started_at_unix_ms: self.started_at_unix_ms,
             updated_at_unix_ms: self.updated_at_unix_ms,
         }
@@ -233,6 +239,19 @@ mod tests {
         assert_eq!(mode, 0o644);
         fs::write(path(dir.path()), "{").unwrap();
         assert!(read(dir.path()).is_err());
+    }
+
+    #[test]
+    fn a_state_file_of_an_older_agent_reads_as_an_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut old = serde_json::to_value(state(Phase::Done)).unwrap();
+        old.as_object_mut().unwrap().remove("preupgrade_only");
+        fs::write(path(dir.path()), old.to_string()).unwrap();
+        let read = read(dir.path()).unwrap().unwrap();
+        assert!(!read.preupgrade_only);
+        let mut preupgrade = state(Phase::Done);
+        preupgrade.preupgrade_only = true;
+        assert!(preupgrade.to_progress().preupgrade_only);
     }
 
     #[test]

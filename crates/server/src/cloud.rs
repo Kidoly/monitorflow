@@ -1,5 +1,5 @@
-//! Cloud accounts on the server (ADR-0183): an AWS account or an Azure
-//! subscription is a device whose virtual machines are its inventory.
+//! Cloud accounts on the server (ADR-0183): an AWS account, an Azure
+//! subscription or a Google Cloud project is a device whose virtual machines are its inventory.
 //! Its credentials are sealed and never shown back; its check runs on
 //! the central server only, and gets the alerts that come with it.
 
@@ -30,18 +30,21 @@ pub fn is_kind(kind: &str) -> bool {
 
 /// Body of a device's cloud credentials. On a change, what is left out
 /// is kept, the secret only while the provider and the identity it
-/// belongs to (access key ID, or tenant and application) stay the same.
+/// belongs to (access key ID, tenant and application, or service
+/// account) stay the same.
 #[derive(Debug, Clone, Default, Deserialize, utoipa::ToSchema)]
 #[schema(as = CloudCredentialsRequest)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialsRequest {
-    /// `aws` or `azure`. Required the first time; it cannot change.
+    /// `aws`, `azure` or `gcp`. Required the first time; it cannot change.
     pub provider: Option<String>,
     /// AWS: the access key ID (`AKIA…`). Azure: the application (client)
-    /// ID of the service principal.
+    /// ID of the service principal. Google Cloud: the service account's
+    /// address, taken from the key when one is given.
     pub key_id: Option<String>,
-    /// AWS: the secret access key. Azure: the client secret. Secret,
-    /// never returned.
+    /// AWS: the secret access key. Azure: the client secret. Google
+    /// Cloud: the service account's JSON key file, whole. Secret, never
+    /// returned.
     pub secret: Option<String>,
     /// AWS: the regions to read, like `["eu-west-3", "us-east-1"]`.
     pub regions: Option<Vec<String>>,
@@ -49,6 +52,9 @@ pub struct CredentialsRequest {
     pub tenant: Option<String>,
     /// Azure: the subscription ID.
     pub subscription: Option<String>,
+    /// Google Cloud: the project ID, like `my-project-123`; the key's own
+    /// project when left out.
+    pub project: Option<String>,
 }
 
 /// Credentials checked and ready to store or use.
@@ -60,6 +66,7 @@ pub struct Credentials {
     pub regions: Vec<String>,
     pub tenant: Option<String>,
     pub subscription: Option<String>,
+    pub project: Option<String>,
 }
 
 impl std::fmt::Debug for Credentials {
@@ -70,6 +77,7 @@ impl std::fmt::Debug for Credentials {
             .field("regions", &self.regions)
             .field("tenant", &self.tenant)
             .field("subscription", &self.subscription)
+            .field("project", &self.project)
             .finish_non_exhaustive()
     }
 }
@@ -90,6 +98,9 @@ impl Credentials {
         if let Some(subscription) = &self.subscription {
             params.insert("subscription".into(), subscription.clone());
         }
+        if let Some(project) = &self.project {
+            params.insert("project".into(), project.clone());
+        }
         params
     }
 
@@ -98,6 +109,7 @@ impl Credentials {
         json!({
             "key_id": self.key_id, "regions": self.regions,
             "tenant": self.tenant, "subscription": self.subscription,
+            "project": self.project,
         })
     }
 
@@ -107,6 +119,7 @@ impl Credentials {
             Some(region) if self.provider == monitorflow_cloud::AWS => {
                 format!("ec2.{region}.amazonaws.com")
             }
+            _ if self.provider == monitorflow_cloud::GCP => "compute.googleapis.com".into(),
             _ => "management.azure.com".into(),
         }
     }
@@ -130,16 +143,39 @@ pub fn check(
         }
         (Some(p), _) => p,
         (None, Some(b)) => b.provider.clone(),
-        (None, None) => return Err("`provider` is required: `aws` or `azure`".into()),
+        (None, None) => return Err("`provider` is required: `aws`, `azure` or `gcp`".into()),
     };
     if !is_kind(&provider) {
-        return Err("`provider` must be `aws` or `azure`".into());
+        return Err("`provider` must be `aws`, `azure` or `gcp`".into());
     }
     let aws = provider == monitorflow_cloud::AWS;
+    let gcp = provider == monitorflow_cloud::GCP;
+    // A Google key names its service account and project.
+    let key = match given(&request.secret).filter(|_| gcp) {
+        Some(text) => {
+            Some(monitorflow_cloud::gcp::read_key(&text).map_err(|e| format!("`secret`: {e}"))?)
+        }
+        None => None,
+    };
     let key_id = given(&request.key_id)
+        .or_else(|| key.as_ref().map(|k| k.email.clone()))
         .or_else(|| before.map(|b| b.key_id.clone()))
-        .ok_or("`key_id` is required")?;
-    let tenant = if aws {
+        .ok_or(if gcp {
+            "`secret` is required"
+        } else {
+            "`key_id` is required"
+        })?;
+    let project = if gcp {
+        Some(
+            given(&request.project)
+                .or_else(|| before.and_then(|b| b.project.clone()))
+                .or_else(|| key.as_ref().and_then(|k| k.project.clone()))
+                .ok_or("`project` is required")?,
+        )
+    } else {
+        None
+    };
+    let tenant = if aws || gcp {
         None
     } else {
         Some(
@@ -149,7 +185,7 @@ pub fn check(
                 .to_ascii_lowercase(),
         )
     };
-    let subscription = if aws {
+    let subscription = if aws || gcp {
         None
     } else {
         Some(
@@ -183,6 +219,7 @@ pub fn check(
         regions,
         tenant,
         subscription,
+        project,
     };
     let target = monitorflow_cloud::parse(&credentials.provider, &credentials.params())?;
     // What the check reads, in its own form.
@@ -203,6 +240,10 @@ pub fn check(
             credentials.tenant = Some(tenant);
             credentials.subscription = Some(subscription);
         }
+        monitorflow_cloud::Account::Gcp { key, project } => {
+            credentials.key_id = key.email;
+            credentials.project = Some(project);
+        }
     }
     credentials.secret = credentials.secret.trim().to_owned();
     Ok(credentials)
@@ -212,16 +253,19 @@ pub fn check(
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, utoipa::ToSchema)]
 #[schema(as = CloudCredentials)]
 pub struct View {
-    /// `aws` or `azure`.
+    /// `aws`, `azure` or `gcp`.
     pub provider: String,
-    /// The access key ID, or the application (client) ID.
+    /// The access key ID, the application (client) ID, or the service
+    /// account's address.
     pub key_id: String,
     /// AWS: the regions read; empty for Azure.
     pub regions: Vec<String>,
-    /// Azure: the tenant; `null` for AWS.
+    /// Azure: the tenant; `null` otherwise.
     pub tenant: Option<String>,
-    /// Azure: the subscription; `null` for AWS.
+    /// Azure: the subscription; `null` otherwise.
     pub subscription: Option<String>,
+    /// Google Cloud: the project; `null` otherwise.
+    pub project: Option<String>,
     pub secret_set: bool,
     pub updated_at: DateTime<Utc>,
 }
@@ -245,6 +289,7 @@ fn read(provider: String, settings: &Value, secret: String) -> Credentials {
             .collect(),
         tenant: text("tenant"),
         subscription: text("subscription"),
+        project: text("project"),
     }
 }
 
@@ -280,6 +325,7 @@ pub async fn view(db: &mut PgConnection, server: Uuid) -> Result<Option<View>, s
             regions: c.regions,
             tenant: c.tenant,
             subscription: c.subscription,
+            project: c.project,
             secret_set: !sealed.is_empty(),
             updated_at,
         }
@@ -358,12 +404,22 @@ pub const AZURE_THRESHOLDS: [Threshold; 2] = rules(
     "monitorflow_azure_vm_status_checks_failed",
 );
 
+/// What a Google Cloud project gets: Compute Engine has no status
+/// checks, so only the project's own state.
+pub const GCP_THRESHOLDS: [Threshold; 1] = [Threshold {
+    metric: "monitorflow_gcp_up",
+    comparison: "<",
+    warning: None,
+    critical: Some(1.0),
+    duration_s: 600,
+}];
+
 /// The alerts of `provider`.
 pub fn thresholds(provider: &str) -> &'static [Threshold] {
-    if provider == monitorflow_cloud::AWS {
-        &AWS_THRESHOLDS
-    } else {
-        &AZURE_THRESHOLDS
+    match provider {
+        monitorflow_cloud::AWS => &AWS_THRESHOLDS,
+        monitorflow_cloud::GCP => &GCP_THRESHOLDS,
+        _ => &AZURE_THRESHOLDS,
     }
 }
 
@@ -480,7 +536,7 @@ mod tests {
         for bad in [
             CredentialsRequest::default(),
             CredentialsRequest {
-                provider: Some("gcp".into()),
+                provider: Some("oracle".into()),
                 ..CredentialsRequest::default()
             },
             CredentialsRequest {
@@ -512,6 +568,7 @@ mod tests {
             tenant: Some(GUID.into()),
             subscription: Some(GUID.into()),
             regions: Some(vec!["ignored".into()]),
+            project: None,
         };
         let first = check(&request, None).unwrap();
         assert_eq!(first.key_id, GUID);
@@ -533,8 +590,78 @@ mod tests {
         assert!(check(&moved, Some(&first)).is_err());
     }
 
+    const GCP_KEY: &str = include_str!("../../cloud/tests/fixtures/gcp_key.json");
+
+    #[test]
+    fn google_credentials_come_from_the_key() {
+        let request = CredentialsRequest {
+            provider: Some("gcp".into()),
+            secret: Some(GCP_KEY.into()),
+            ..CredentialsRequest::default()
+        };
+        let first = check(&request, None).unwrap();
+        assert_eq!(
+            first.key_id,
+            "reader@example-project.iam.gserviceaccount.com"
+        );
+        assert_eq!(first.project.as_deref(), Some("example-project"));
+        assert_eq!(first.address(), "compute.googleapis.com");
+        assert!(first.tenant.is_none() && first.regions.is_empty());
+        assert!(!format!("{first:?}").contains("PRIVATE KEY"));
+        assert!(!audit(&first).to_string().contains("PRIVATE KEY"));
+        assert!(monitorflow_cloud::parse("gcp", &first.params()).is_ok());
+        let stored = read(
+            first.provider.clone(),
+            &first.settings(),
+            first.secret.clone(),
+        );
+        assert_eq!(stored, first);
+        // Another project keeps the key.
+        let moved = check(
+            &CredentialsRequest {
+                project: Some("another-project".into()),
+                ..CredentialsRequest::default()
+            },
+            Some(&first),
+        )
+        .unwrap();
+        assert_eq!(moved.secret, first.secret);
+        assert_eq!(moved.project.as_deref(), Some("another-project"));
+        // Another service account needs its own key.
+        let other = CredentialsRequest {
+            key_id: Some("other@example-project.iam.gserviceaccount.com".into()),
+            ..CredentialsRequest::default()
+        };
+        assert_eq!(
+            check(&other, Some(&first)).unwrap_err(),
+            "`secret` is required"
+        );
+        for bad in [
+            CredentialsRequest {
+                provider: Some("gcp".into()),
+                ..CredentialsRequest::default()
+            },
+            CredentialsRequest {
+                provider: Some("gcp".into()),
+                secret: Some("{\"type\": \"service_account\"}".into()),
+                ..CredentialsRequest::default()
+            },
+            CredentialsRequest {
+                provider: Some("gcp".into()),
+                secret: Some(GCP_KEY.into()),
+                key_id: Some("other@example-project.iam.gserviceaccount.com".into()),
+                ..CredentialsRequest::default()
+            },
+        ] {
+            let error = check(&bad, None).unwrap_err();
+            assert!(!error.contains("PRIVATE KEY"), "{error}");
+        }
+    }
+
     #[test]
     fn default_alerts_name_the_checks_metrics() {
+        assert_eq!(thresholds("gcp")[0].metric, "monitorflow_gcp_up");
+        assert_eq!(thresholds("gcp").len(), 1);
         for (provider, rules) in [("aws", &AWS_THRESHOLDS), ("azure", &AZURE_THRESHOLDS)] {
             for t in rules {
                 assert!(

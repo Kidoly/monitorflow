@@ -6,8 +6,15 @@
 # crates/apps/tests/real.rs against the cluster's API, then removes the
 # container. Needs Docker with privileged containers. Port 30643 on
 # 127.0.0.1.
+#
+# `--full` (what CI runs) keeps k3s's pod network and metrics-server, and
+# adds a job that fails, for the inventory's resource use and failed jobs.
+# It needs the iptables modules a CI runner has, and pulls busybox.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+full=0
+if [ "${1:-}" = "--full" ]; then full=1; fi
 
 name=mf-k8s-test
 port=30643
@@ -24,10 +31,16 @@ trap cleanup EXIT
 # test machine may lack, and the check reads the API, not the pods'
 # traffic. The node then stays not ready and every pod pending, which
 # the test reads as such.
-docker run -d --name "$name" --privileged -p "127.0.0.1:$port:6443" \
-    rancher/k3s:v1.31.4-k3s1 server --tls-san 127.0.0.1 \
-    --disable traefik --disable metrics-server --disable-network-policy \
-    --disable-kube-proxy --flannel-backend=none >/dev/null
+if [ "$full" = 1 ]; then
+    docker run -d --name "$name" --privileged -p "127.0.0.1:$port:6443" \
+        rancher/k3s:v1.31.4-k3s1 server --tls-san 127.0.0.1 \
+        --disable traefik >/dev/null
+else
+    docker run -d --name "$name" --privileged -p "127.0.0.1:$port:6443" \
+        rancher/k3s:v1.31.4-k3s1 server --tls-san 127.0.0.1 \
+        --disable traefik --disable metrics-server --disable-network-policy \
+        --disable-kube-proxy --flannel-backend=none >/dev/null
+fi
 
 kubectl() {
     docker exec -i "$name" kubectl "$@"
@@ -86,16 +99,48 @@ YAML
 # The pod exists and waits for its image.
 wait_for sh -c "docker exec $name kubectl -n mf-test get pods -o name | grep -q broken-"
 
+if [ "$full" = 1 ]; then
+    kubectl apply -f - >/dev/null <<'YAML'
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fails
+  namespace: mf-test
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: main
+          image: busybox:1.37
+          command: ["sh", "-c", "exit 1"]
+YAML
+    wait_for kubectl wait --for=condition=Ready node --all --timeout=5s
+    wait_for kubectl -n mf-test wait --for=condition=Failed job/fails --timeout=5s
+    # metrics-server answers once it has scraped every node.
+    wait_for sh -c "docker exec $name kubectl top nodes --no-headers | grep -qv unknown"
+    wait_for sh -c "docker exec $name kubectl top pods -n kube-system --no-headers | grep -q ."
+fi
+
 token=$(kubectl -n monitorflow get secret monitorflow-reader-token -o jsonpath='{.data.token}' | base64 -d)
 kubectl -n monitorflow get secret monitorflow-reader-token -o jsonpath='{.data.ca\.crt}' | base64 -d >"$work/ca.crt"
 
 # The service account lists what the check reads, and nothing more.
 reader=system:serviceaccount:monitorflow:monitorflow-reader
-for allowed in "list nodes" "list pods" "list persistentvolumeclaims" \
-    "list deployments.apps" "list statefulsets.apps" "list daemonsets.apps"; do
+for allowed in "list nodes" "list namespaces" "list pods" "list persistentvolumeclaims" \
+    "list deployments.apps" "list statefulsets.apps" "list daemonsets.apps" \
+    "list jobs.batch"; do
     # shellcheck disable=SC2086 # the verb and the resource
     kubectl auth can-i $allowed --as="$reader" -A >/dev/null
 done
+# Asked only where metrics-server runs: without it the API has no such type.
+if [ "$full" = 1 ]; then
+    for allowed in "list nodes.metrics.k8s.io" "list pods.metrics.k8s.io"; do
+        # shellcheck disable=SC2086
+        kubectl auth can-i $allowed --as="$reader" -A >/dev/null
+    done
+fi
 for refused in "delete deployments.apps" "create pods" "get secrets" \
     "create pods/exec" "patch nodes"; do
     # shellcheck disable=SC2086
@@ -108,4 +153,5 @@ done
 MF_APPS_TEST_KUBERNETES="127.0.0.1:$port" \
     MF_APPS_TEST_KUBERNETES_TOKEN="$token" \
     MF_APPS_TEST_KUBERNETES_CA="$work/ca.crt" \
+    MF_APPS_TEST_KUBERNETES_FULL="$full" \
     cargo test -p monitorflow-apps --test real kubernetes -- --nocapture

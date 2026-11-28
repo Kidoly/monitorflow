@@ -77,11 +77,19 @@ pub struct EntryRequest {
     /// (`127.0.0.1` from the agent; the device's address from a probe),
     /// `port`, `user` and `password` (kept sealed as above), and `tls`
     /// (`prefer`, `verify` or `off`): `postgresql` also `database` and
-    /// `slow_after`, `mysql` (MySQL and MariaDB), `mssql` (SQL Server)
-    /// and `redis` nothing more.
+    /// `slow_after`, `mysql` (MySQL and MariaDB) and `redis` nothing
+    /// more. `mssql` (SQL Server) also takes `instance` (a named
+    /// instance, its port from SQL Server Browser unless `port` is
+    /// given), `auth` (`sql`, or `windows` for a Windows account through
+    /// SSPI, on the server's Windows agent only: `user` then empty for
+    /// the agent's own account, or `DOMAIN\name` with its `password`),
+    /// and `tls` `strict` (TDS 8.0).
     /// `jmx` (a Java virtual machine through Jolokia) takes `tls` `off` or
     /// `verify` only, its password over HTTPS or to the loopback only, and
-    /// also `path` (`/jolokia/`) and `groups` (`tomcat`, `kafka`, `none`).
+    /// also `path` (`/jolokia/`), `groups` (`tomcat`, `kafka`, `none`) and,
+    /// with `verify`, `fingerprint`: the SHA-256 of a certificate the
+    /// probe's roots do not trust (often Jolokia's self-signed one), as
+    /// `POST /api/servers/{id}/jmx/test` shows it.
     /// `docker`, run by the agent only, takes `engine` (`docker` or
     /// `podman`), `containers` (a regular expression on names) and
     /// `stats`. `kubernetes`, run from a probe only, takes `host` (the
@@ -353,6 +361,11 @@ pub fn validate_full(
         }
         monitorflow_webcheck::build(&check, None).map_err(|e| e.to_string())?;
     } else if app {
+        if request.kind == monitorflow_apps::JMX && config.params.contains_key("what") {
+            return Err(
+                "param `what` is not for a check: test with POST /api/servers/{id}/jmx/test".into(),
+            );
+        }
         // Checked with the address and secret it will run with (ADR-0183).
         let mut check = config.params.clone();
         if let Some(address) = address {
@@ -896,6 +909,15 @@ pub fn check_run_by(valid: &mut ValidEntry, by: &RunBy) -> Result<(), ApiError> 
             PROBE_KINDS_TEXT, valid.kind
         )));
     }
+    // SSPI is Windows's: only the Windows agent signs in with an account
+    // of the domain (ADR-0183).
+    if valid.kind == monitorflow_apps::MSSQL
+        && valid.params.get("auth").and_then(Value::as_str) == Some("windows")
+    {
+        return Err(ApiError::Invalid(
+            "a SQL Server check signing in with a Windows account (`auth` `windows`) runs on the server's Windows agent: leave `probe` unset".into(),
+        ));
+    }
     if crate::cloud::is_kind(&valid.kind) && (by.probe != Some("central") || by.address.is_none()) {
         return Err(ApiError::Invalid(
             "cloud checks are for cloud accounts and run on the central server: add the account as a device (POST /api/devices with `cloud`)".into(),
@@ -956,7 +978,7 @@ pub fn probe_kind(kind: &str) -> bool {
 }
 
 const PROBE_KINDS_TEXT: &str =
-    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql`, `mssql`, `redis`, `jmx`, `kubernetes`, `aws` and `azure`";
+    "`ping`, `port`, `snmp`, `snmp_custom`, `vmware`, `http`, `postgresql`, `mysql`, `mssql`, `redis`, `jmx`, `kubernetes`, `aws`, `azure` and `gcp`";
 
 async fn create(
     state: &ApiState,

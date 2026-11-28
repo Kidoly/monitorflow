@@ -19,8 +19,20 @@ pub const KEY: &str = "key";
 /// Longest label value the server accepts (ADR-0013).
 pub const MAX_LABEL: usize = 256;
 
-/// The kinds of objects.
-pub const KINDS: [&str; 4] = ["vm", "host", "cluster", "datastore"];
+/// The kinds of objects: a hypervisor's, then a Kubernetes cluster's
+/// (ADR-0183), whose `node` is matched to a server as a `vm` is.
+pub const KINDS: [&str; 8] = [
+    "vm",
+    "host",
+    "cluster",
+    "datastore",
+    "node",
+    "namespace",
+    "workload",
+    "job",
+];
+/// The kinds that are machines, matched to the servers monitored.
+pub const MACHINES: [&str; 2] = ["vm", "node"];
 /// The [`LABEL`] of the source's own `up` sample: the vCenter, ESXi or
 /// Hyper-V host as a whole.
 pub const SOURCE: &str = "source";

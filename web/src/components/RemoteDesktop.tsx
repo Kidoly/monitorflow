@@ -1,6 +1,7 @@
 "use client";
 
-import type { IronError, UserInteraction } from "@devolutions/iron-remote-desktop";
+import type { FileTransferProvider, IronError, UserInteraction } from "@devolutions/iron-remote-desktop";
+import type { FileInfo, RdpFileTransferProvider } from "@devolutions/iron-remote-desktop-rdp";
 import { useEffect, useRef } from "react";
 
 import { t } from "@/i18n";
@@ -23,9 +24,30 @@ export interface DesktopCredentials {
   domain: string;
 }
 
-/** What `ctrlAltDel` and closing need from a live desktop. */
+/** What the page can do with a live desktop. */
 export interface DesktopControls {
   ctrlAltDel: () => void;
+  /** Where the session copies files (ADR-0192): pick files to put on the server's clipboard. */
+  sendFiles?: () => Promise<void>;
+  /** Download the files copied on the server. */
+  downloadFiles?: () => Promise<void>;
+}
+
+/** What happened to files, for the line above the desktop. */
+export type FilesEvent =
+  | { kind: "offered"; names: string[] }
+  | { kind: "sent"; count: number }
+  | { kind: "received"; count: number }
+  | { kind: "error"; message: string };
+
+/** Saves `blob` as a download named `name`. */
+function save(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 /** IronRDP's error kinds (`IronErrorKind`), as numbers so the client loads only with the tab. */
@@ -55,7 +77,11 @@ export function describeDesktopError(error: unknown): string {
 }
 
 /** IronRDP's web component and its RDP module, loaded only when a desktop is shown. */
-async function loadClient(): Promise<{ element: HTMLElement; ready: Promise<UserInteraction> }> {
+async function loadClient(): Promise<{
+  element: HTMLElement;
+  ready: Promise<UserInteraction>;
+  rdp: typeof import("@devolutions/iron-remote-desktop-rdp");
+}> {
   const [, rdp] = await Promise.all([
     import("@devolutions/iron-remote-desktop"),
     import("@devolutions/iron-remote-desktop-rdp"),
@@ -73,7 +99,7 @@ async function loadClient(): Promise<{ element: HTMLElement; ready: Promise<User
       { once: true },
     );
   });
-  return { element, ready };
+  return { element, ready, rdp };
 }
 
 /**
@@ -87,6 +113,7 @@ export function RemoteDesktop({
   credentials,
   onState,
   onControls,
+  onFiles,
 }: {
   serverId: string;
   hostname: string;
@@ -94,16 +121,20 @@ export function RemoteDesktop({
   /** Called as the session moves on, for the line above the desktop. */
   onState: (state: DesktopState, sessionId: string | null) => void;
   onControls: (controls: DesktopControls | null) => void;
+  /** What happened to files, where the session copies them. */
+  onFiles?: (event: FilesEvent) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const report = useRef(onState);
   const controls = useRef(onControls);
+  const filesReport = useRef(onFiles);
   // Read once, when the session starts: a new sign-in is a new component.
   const account = useRef(credentials);
   useEffect(() => {
     report.current = onState;
     controls.current = onControls;
-  }, [onState, onControls]);
+    filesReport.current = onFiles;
+  }, [onState, onControls, onFiles]);
 
   useEffect(() => {
     const container = box.current;
@@ -112,6 +143,7 @@ export function RemoteDesktop({
     let closed = false;
     let ui: UserInteraction | null = null;
     let element: HTMLElement | null = null;
+    let provider: RdpFileTransferProvider | null = null;
     let sessionId: string | null = null;
     const close = async (fallback: string) => {
       if (closed) return;
@@ -130,8 +162,10 @@ export function RemoteDesktop({
     };
     void (async () => {
       let ready: Promise<UserInteraction>;
+      let rdp: typeof import("@devolutions/iron-remote-desktop-rdp");
       try {
         const client = await loadClient();
+        rdp = client.rdp;
         if (cancelled) return;
         element = client.element;
         ready = client.ready;
@@ -164,12 +198,47 @@ export function RemoteDesktop({
         .build();
       // Only the client holds it now, for its network level authentication.
       account.current = { ...account.current, password: "" };
+      // The clipboard and files as the session allows them; the central server lets nothing else through.
+      ui.setEnableClipboard(start.session.clipboard);
+      ui.setEnableAutoClipboard(start.session.clipboard);
+      let offered: FileInfo[] = [];
+      if (start.session.file_transfer) {
+        const files = new rdp.RdpFileTransferProvider();
+        provider = files;
+        // The two packages declare the provider apart; it is the one the component expects.
+        ui.enableFileTransfer(files as unknown as FileTransferProvider);
+        files.on("files-available", (list) => {
+          offered = list;
+          const names = list.filter((f) => !f.isDirectory).map((f) => f.name);
+          if (names.length > 0) filesReport.current?.({ kind: "offered", names });
+        });
+        files.on("upload-complete", () => filesReport.current?.({ kind: "sent", count: 1 }));
+        files.on("error", (e) => filesReport.current?.({ kind: "error", message: e.message }));
+      }
       try {
         const session = await ui.connect(config);
         if (cancelled) return;
         ui.setVisibility(true);
         const live = ui;
-        controls.current({ ctrlAltDel: () => live.ctrlAltDel() });
+        const files = provider;
+        controls.current({
+          ctrlAltDel: () => live.ctrlAltDel(),
+          ...(files && {
+            sendFiles: async () => {
+              const picked = await files.showFilePicker({ multiple: true });
+              if (picked.length > 0) files.uploadFiles(picked);
+            },
+            downloadFiles: async () => {
+              let count = 0;
+              for (const [index, file] of offered.entries()) {
+                if (file.isDirectory) continue;
+                save(await files.downloadFile(file, index).completion, file.name);
+                count++;
+              }
+              filesReport.current?.({ kind: "received", count });
+            },
+          }),
+        });
         report.current({ step: "open" }, sessionId);
         const ended = await session.run();
         await close(ended.reason() || t("remote.desktop.ended"));
@@ -181,6 +250,7 @@ export function RemoteDesktop({
       cancelled = true;
       closed = true;
       controls.current(null);
+      provider?.dispose();
       try {
         ui?.shutdown();
       } catch {

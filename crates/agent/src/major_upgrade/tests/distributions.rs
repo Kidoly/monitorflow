@@ -109,10 +109,49 @@ fn ubuntu_sources_are_read_and_never_rewritten_here() {
         )],
     );
     let mirrored = sources::plan(root.path(), ubuntu());
-    assert!(mirrored
-        .refusal
+    assert_eq!(mirrored.refusal, None);
+    assert!(mirrored.mirrored);
+    assert!(sources::blocker(&mirrored, Method::ReleaseUpgrade)
         .unwrap()
         .contains("MonitorFlow mirrors, which do-release-upgrade does not use"));
+    // The campaign puts the server's own sources back first: a warning.
+    let checks = checks::evaluate(&other(), ubuntu(), 0, &mirrored);
+    let check = checks.iter().find(|c| c.name == "sources").unwrap();
+    assert_eq!(check.state, WARNING);
+    assert!(
+        check
+            .detail
+            .contains("the campaign puts its own sources back before the upgrade"),
+        "{}",
+        check.detail
+    );
+    assert_eq!(checks::first_failure(&checks), None);
+}
+
+#[test]
+fn ubuntu_on_the_mirrors_is_refused_before_do_release_upgrade_runs() {
+    let (_dir, paths) = prepared(
+        ubuntu(),
+        &[(
+            "/etc/apt/sources.list.d/monitorflow.sources",
+            "Types: deb\nURIs: https://central.example.invalid/apt/ubuntu-22.04/current/\nSuites: jammy\nComponents: main\n",
+        )],
+    );
+    let mut tool = Tool {
+        root: paths.root.clone(),
+        ran: vec![],
+        on: vec![],
+    };
+    let state = helper::run(&paths, &mut tool, || 5).unwrap();
+    assert_eq!(state.phase, Phase::Failed);
+    assert!(
+        state
+            .error
+            .contains("a campaign puts its own sources back first"),
+        "{}",
+        state.error
+    );
+    assert!(tool.ran.is_empty());
 }
 
 #[test]
@@ -433,6 +472,109 @@ fn a_leapp_server_on_the_mirrors_is_refused_before_leapp_runs() {
     let state = helper::run(&paths, &mut tool, || 5).unwrap();
     assert_eq!(state.phase, Phase::Failed);
     assert!(tool.ran.is_empty());
+}
+
+/// A state of `leapp_preupgrade` for `upgrade`, as the helper writes it.
+fn preupgrade(upgrade: &Upgrade, files: &[(&str, &str)]) -> (tempfile::TempDir, Paths) {
+    let (dir, paths) = prepared(upgrade, files);
+    let mut s = state::read(&paths.state_dir).unwrap().unwrap();
+    s.preupgrade_only = true;
+    state::write(&paths.state_dir, &s).unwrap();
+    (dir, paths)
+}
+
+#[test]
+fn leapp_preupgrade_alone_keeps_the_report_and_never_upgrades() {
+    let report = vec![
+        ("var/log/leapp/leapp-report.json", CLEAN.to_owned()),
+        (
+            "var/log/leapp/leapp-report.txt",
+            "Risk Factor: info\n".to_owned(),
+        ),
+    ];
+    // On the mirrors too: it changes nothing, so it does not care.
+    let (_dir, paths) = preupgrade(
+        rocky(),
+        &[(
+            "/etc/yum.repos.d/monitorflow-baseos.repo",
+            "[monitorflow-baseos]\nbaseurl=https://central.example.invalid/dnf/rocky-8/current/\n",
+        )],
+    );
+    let mut tool = Tool {
+        root: paths.root.clone(),
+        ran: vec![],
+        on: vec![("preupgrade", 0, report)],
+    };
+    let state = helper::run(&paths, &mut tool, || 5).unwrap();
+    assert_eq!(state.phase, Phase::Done, "{}", state.error);
+    assert_eq!(tool.ran, ["/usr/bin/leapp preupgrade"]);
+    assert_eq!(state.report, "Risk Factor: info\n");
+    assert!(state.to_progress().preupgrade_only);
+    // Its final state stays done after a reboot, on the old release.
+    assert_eq!(
+        state.effective("other-boot", "rocky 8.10").phase,
+        Phase::Done
+    );
+
+    // An inhibitor fails it, with the report.
+    let (_dir, paths) = preupgrade(rocky(), &[("/etc/yum.repos.d/rocky.repo", ROCKY_REPO)]);
+    let mut tool = Tool {
+        root: paths.root.clone(),
+        ran: vec![],
+        on: vec![(
+            "preupgrade",
+            1,
+            vec![
+                ("var/log/leapp/leapp-report.json", LEAPP_JSON.into()),
+                ("var/log/leapp/leapp-report.txt", LEAPP_TXT.into()),
+            ],
+        )],
+    };
+    let state = helper::run(&paths, &mut tool, || 5).unwrap();
+    assert_eq!(state.phase, Phase::Failed);
+    assert!(state.error.contains("1 inhibitors"), "{}", state.error);
+    assert_eq!(state.report, LEAPP_TXT);
+    assert_eq!(tool.ran, ["/usr/bin/leapp preupgrade"]);
+
+    // Never outside leapp.
+    let (_dir, paths) = preupgrade(ubuntu(), &[("/etc/apt/sources.list", JAMMY)]);
+    let mut tool = Tool {
+        root: paths.root.clone(),
+        ran: vec![],
+        on: vec![],
+    };
+    let state = helper::run(&paths, &mut tool, || 5).unwrap();
+    assert_eq!(state.phase, Phase::Failed);
+    assert!(tool.ran.is_empty());
+}
+
+#[test]
+fn leapp_preupgrade_needs_leapp_and_no_upgrade_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = dir.path().join("state");
+    let missing = Other {
+        missing: vec!["leapp-data-rocky".into()],
+        ..other()
+    };
+    let error = helper::start_preupgrade("c2", rocky(), &missing, &state_dir, 5).unwrap_err();
+    assert!(
+        error.starts_with("leapp: install leapp and the ELevate data first"),
+        "{error}"
+    );
+    let error = helper::start_preupgrade("c2", ubuntu(), &other(), &state_dir, 5).unwrap_err();
+    assert_eq!(
+        error,
+        "leapp preupgrade is for the RHEL family, not Ubuntu 22.04 (jammy)"
+    );
+
+    let mut running = State::new("c1", "rocky 8", "rocky 9", &state::boot_id(), 1);
+    running.phase = Phase::Upgrading;
+    state::write(&state_dir, &running).unwrap();
+    let error = helper::start_preupgrade("c2", rocky(), &other(), &state_dir, 5).unwrap_err();
+    assert_eq!(
+        error,
+        "an upgrade to rocky 9 is already running (upgrading)"
+    );
 }
 
 #[test]

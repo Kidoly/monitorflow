@@ -20,9 +20,11 @@ use tokio::sync::{watch, Semaphore};
 use super::origin::{Origin, ORIGIN};
 use super::packages::{PackageList, PACKAGES};
 use super::repo::fetch::{Expect, FetchError, Fetcher};
-use super::repo::meta::{Checksum, Package};
+use super::repo::meta::{Algorithm, Checksum, Package};
+use super::serve::SOFTWARE_DIR;
 use super::store::{self, Store};
 use super::Family;
+use crate::software::MAX_MSI_BYTES;
 
 /// Downloads toward upstreams at a time, per process.
 pub const MAX_DOWNLOADS: usize = 8;
@@ -64,6 +66,22 @@ struct Wanted {
     snapshot: String,
     snapshot_dir: PathBuf,
     package: Package,
+}
+
+/// What to fetch: a package of a snapshot, or a file of the software
+/// catalogue by its SHA-256 (ADR-0188).
+enum Fetch {
+    Package(Wanted),
+    Software(Checksum),
+}
+
+impl Fetch {
+    fn checksum(&self) -> &Checksum {
+        match self {
+            Self::Package(wanted) => &wanted.package.entry.checksum,
+            Self::Software(checksum) => checksum,
+        }
+    }
 }
 
 type Outcome = Option<Result<PathBuf, DemandError>>;
@@ -177,21 +195,35 @@ impl OnDemand {
         let Some(package) = list.and_then(|l| l.get(rest).cloned()) else {
             return Ok(None);
         };
-        self.fetch(Wanted {
+        self.fetch(Fetch::Package(Wanted {
             family,
             mirror: mirror.to_owned(),
             snapshot: snapshot.to_owned(),
             snapshot_dir: snapshot_dir.to_owned(),
             package,
-        })
+        }))
         .await
         .map(Some)
     }
 
+    /// The stored MSI file of SHA-256 `sha256` (ADR-0188), fetched from
+    /// the upstream's listener at `/software/<sha256>.msi` when the store
+    /// lacks it, and kept only when its digest matches. `Ok(None)` on the
+    /// server, whose files are not fetched: they are uploaded.
+    pub async fn software(&self, sha256: &str) -> Result<Option<PathBuf>, DemandError> {
+        let Source::Listener(_) = &self.0.source else {
+            return Ok(None);
+        };
+        let Some(checksum) = Checksum::new(Algorithm::Sha256, sha256) else {
+            return Ok(None);
+        };
+        self.fetch(Fetch::Software(checksum)).await.map(Some)
+    }
+
     /// The stored file of `wanted`, fetched if needed, one download per
     /// file whoever asks.
-    async fn fetch(&self, wanted: Wanted) -> Result<PathBuf, DemandError> {
-        let checksum = wanted.package.entry.checksum.clone();
+    async fn fetch(&self, wanted: Fetch) -> Result<PathBuf, DemandError> {
+        let checksum = wanted.checksum().clone();
         let stored = self.0.store.package_path(&checksum);
         let waiting = {
             let mut inflight = lock(&self.0.inflight);
@@ -226,13 +258,17 @@ impl OnDemand {
     }
 
     /// Downloads `wanted` into the store, under a permit.
-    async fn download(&self, wanted: &Wanted) -> Result<PathBuf, DemandError> {
+    async fn download(&self, wanted: &Fetch) -> Result<PathBuf, DemandError> {
         let _permit = self
             .0
             .permits
             .acquire()
             .await
             .map_err(|e| DemandError::Local(e.to_string()))?;
+        let wanted = match wanted {
+            Fetch::Package(wanted) => wanted,
+            Fetch::Software(checksum) => return self.download_software(checksum).await,
+        };
         let entry = &wanted.package.entry;
         let candidates: Vec<(Fetcher, String)> = match &self.0.source {
             Source::Listener(fetcher) => vec![(
@@ -290,12 +326,52 @@ impl OnDemand {
         }
         Err(failure.unwrap_or(DemandError::Missing))
     }
+
+    /// Downloads the MSI file of `checksum` from the upstream's listener,
+    /// of at most [`MAX_MSI_BYTES`], and keeps it once its SHA-256 is the
+    /// one asked for.
+    async fn download_software(&self, checksum: &Checksum) -> Result<PathBuf, DemandError> {
+        let Source::Listener(fetcher) = &self.0.source else {
+            return Err(DemandError::Missing);
+        };
+        let path = format!("{SOFTWARE_DIR}/{}.msi", checksum.hex());
+        let temp = self.0.store.temp_path();
+        let fetched = fetcher
+            .file(&path, &temp, Expect::AtMost(MAX_MSI_BYTES))
+            .await;
+        let entry = match fetched {
+            Ok(Some(entry)) if entry.checksum == *checksum => entry,
+            Ok(Some(_)) => {
+                let _ = tokio::fs::remove_file(&temp).await;
+                tracing::warn!(%path, "the upstream sent another file than the MSI file asked for");
+                return Err(DemandError::Upstream(
+                    "the file's SHA-256 is not its name".into(),
+                ));
+            }
+            Ok(None) => return Err(DemandError::Missing),
+            Err(error) => {
+                let _ = tokio::fs::remove_file(&temp).await;
+                tracing::warn!(%path, %error, "cannot fetch an MSI file");
+                return Err(DemandError::Upstream(error.to_string()));
+            }
+        };
+        let (store, kept_checksum) = (self.0.store.clone(), checksum.clone());
+        let kept = tokio::task::spawn_blocking(move || store.keep_package(&temp, &kept_checksum))
+            .await
+            .map_err(|e| DemandError::Local(e.to_string()))?
+            .map_err(|e| DemandError::Local(e.to_string()))?;
+        tracing::info!(%path, bytes = entry.size, "MSI file fetched");
+        if let Some(hook) = &self.0.kept {
+            hook(entry.size);
+        }
+        Ok(kept)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mirror::repo::meta::{Algorithm, Entry};
+    use crate::mirror::repo::meta::Entry;
 
     #[test]
     fn package_lists_are_read_once_while_unchanged() {

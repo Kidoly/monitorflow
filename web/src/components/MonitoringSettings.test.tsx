@@ -304,6 +304,78 @@ describe("MonitoringSettings", () => {
     expect(bodyOf(fetchMock, "POST /api/servers/srv-1/sensor_configs")).toMatchObject({ kind: "http", probe: "r-1" });
   });
 
+  it("tests a Java check's HTTPS certificate from its relay and adds it trusted", async () => {
+    const user = userEvent.setup();
+    const print = Array.from({ length: 32 }, () => "AB").join(":");
+    const fetchMock = stubFetch({
+      ...serverRoutes([disk()], [sensor({})]),
+      "GET /api/plugins/usable": { status: 200, body: { plugins: [] } },
+      "GET /api/sites/site-1/probes": {
+        status: 200,
+        body: { probes: [{ probe: "relay", relay_id: "r-1", key: "relay-paris", name: "relay-paris", online: true, default: true }] },
+      },
+      "POST /api/servers/srv-1/jmx/test": {
+        status: 200,
+        body: {
+          answers: true,
+          error: null,
+          certificate: { fingerprint: print, trusted: false, by_roots: false, subject: "jvm.example.test", not_after: null },
+          reads: null,
+          vm: null,
+          version: null,
+          probe: "relay-paris",
+        },
+      },
+      "POST /api/servers/srv-1/sensor_configs": { status: 201, body: {} },
+    });
+    render(<MonitoringSettings target={SERVER} canEdit />);
+    await user.click(await screen.findByRole("button", { name: "Add a check" }));
+    const catalogue = screen.getByRole("group", { name: "Check catalogue" });
+    await user.type(within(catalogue).getByLabelText("Find a check"), "jolokia");
+    await user.click(within(catalogue).getAllByRole("button", { name: /Java/ })[0]!);
+    const form = screen.getByRole("form", { name: "Add a check" });
+    await within(form).findByRole("option", { name: "Relay relay-paris (recommended)" });
+    await user.selectOptions(within(form).getByLabelText("Checked from"), "r-1");
+    await user.click(within(form).getByText("More options"));
+    expect(within(form).queryByRole("button", { name: "Test the certificate" })).not.toBeInTheDocument();
+    await user.selectOptions(within(form).getByLabelText("Encryption"), "verify");
+    await user.click(within(form).getByRole("button", { name: "Test the certificate" }));
+    expect(await within(form).findByText(print)).toBeInTheDocument();
+    // Not added before the certificate is trusted.
+    await user.click(within(form).getByRole("button", { name: "Add check" }));
+    expect(await within(form).findByText("Trust the certificate the test showed, or choose HTTP.")).toBeInTheDocument();
+    await user.click(within(form).getByLabelText(/trust this certificate/));
+    expect(within(form).getByLabelText("Certificate fingerprint")).toHaveValue(print);
+    await user.click(within(form).getByRole("button", { name: "Add check" }));
+    expect(await screen.findByRole("button", { name: "Add a check" })).toBeInTheDocument();
+    expect(bodyOf(fetchMock, "POST /api/servers/srv-1/jmx/test")).toMatchObject({ probe: "r-1", port: 8778 });
+    expect(bodyOf(fetchMock, "POST /api/servers/srv-1/sensor_configs")).toMatchObject({
+      kind: "jmx",
+      probe: "r-1",
+      params: { tls: "verify", fingerprint: print },
+    });
+  });
+
+  it("offers to test the certificate of a Java check over HTTPS again", async () => {
+    const jmx = sensor({
+      origin: "server",
+      entry_id: "j1",
+      kind: "jmx",
+      name: "jmx",
+      instance: "relay-paris",
+      probe: "relay",
+      probe_relay_id: "r-1",
+      params: { host: "192.0.2.40", tls: "verify" },
+    });
+    const row = { id: "j1", site_id: null, server_id: "srv-1", kind: "jmx", name: "jmx", instance: "relay-paris", interval_ms: 60_000, timeout_ms: null, enabled: true, probe: "relay", probe_relay_id: "r-1", params: { host: "192.0.2.40", tls: "verify" } };
+    stubFetch(serverRoutes([disk()], [sensor({}), jmx], [row]));
+    render(<MonitoringSettings target={SERVER} canEdit />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /^Test the certificate of Java/ }));
+    expect(screen.getByRole("button", { name: "Test the certificate" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Test the certificate of Port/ })).not.toBeInTheDocument();
+  });
+
   it("removes a check added here with its alerts, and turns off an inherited one", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({

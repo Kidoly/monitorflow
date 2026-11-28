@@ -145,6 +145,71 @@ impl Harness {
     }
 }
 
+/// A minimal MSI package with a Property table.
+fn msi_package(properties: &[(&str, &str)]) -> Vec<u8> {
+    let mut package = msi::Package::create(
+        msi::PackageType::Installer,
+        std::io::Cursor::new(Vec::new()),
+    )
+    .unwrap();
+    package
+        .create_table(
+            "Property",
+            vec![
+                msi::Column::build("Property").primary_key().id_string(72),
+                msi::Column::build("Value").nullable().text_string(0),
+            ],
+        )
+        .unwrap();
+    let rows = properties
+        .iter()
+        .map(|(k, v)| vec![msi::Value::from(*k), msi::Value::from(*v)])
+        .collect();
+    package
+        .insert_rows(msi::Insert::into("Property").rows(rows))
+        .unwrap();
+    package.into_inner().unwrap().into_inner()
+}
+
+/// Settings whose MSI files live in `dir`, with a mirror URL.
+fn msi_settings(dir: &std::path::Path) -> ApiSettings {
+    let mut settings = ApiSettings::default();
+    settings.software_files = monitorflow_server::software_files::Store::in_mirror_dir(dir);
+    settings.live = settings
+        .live
+        .clone()
+        .with_mirror_url(Some("http://mf.example:7480"));
+    settings
+}
+
+impl Harness {
+    /// Sends `file` as the raw body of `POST uri`.
+    async fn upload(
+        &self,
+        settings: ApiSettings,
+        uri: &str,
+        cookie: &str,
+        file: Vec<u8>,
+    ) -> (StatusCode, Value) {
+        let state = ApiState::new(self.pool.clone(), Registry::default(), settings);
+        let request = Request::post(uri)
+            .header(CSRF_HEADER, "1")
+            .header("content-type", "application/octet-stream")
+            .header("cookie", cookie)
+            .body(Body::from(file))
+            .unwrap();
+        let response = api::router(state).oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+}
+
 impl Harness {
     /// Sets what the server's agent reported for its command kinds.
     async fn kinds(&self, kinds: Option<Value>) {
@@ -493,5 +558,118 @@ db_tests! {
         let (_, server) = h.send("GET", &format!("/api/servers/{}", h.server), &operator, None).await;
         assert_eq!(server["software_off_change"]["command_id"], second["id"]);
         assert_eq!(server["software_off_change"]["requested_by"], "admin");
+    }
+
+    #[sqlx::test]
+    async fn msi_files_are_uploaded_listed_sent_by_digest_and_swept(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let dir = tempfile::tempdir().unwrap();
+        let settings = || msi_settings(dir.path());
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let operator = h.login("op", Role::Operator, GrantScope::Customer(h.customer)).await;
+        let other: Uuid = sqlx::query_scalar("INSERT INTO customers (name) VALUES ('globex') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let stranger = h.login("stranger", Role::Administrator, GrantScope::Customer(other)).await;
+        let code = "{6F1C2E7A-3B9D-4C55-A0E2-8D4F7B1A9C30}";
+        let file = msi_package(&[
+            ("ProductCode", &code.to_lowercase()),
+            ("ProductName", "Example Tool"),
+            ("ProductVersion", "1.2.0"),
+            ("Manufacturer", "Example"),
+        ]);
+        let uri = "/api/software/files?file_name=C:%5Cdl%5Ctool-1.2.msi";
+
+        let (status, _) = h.upload(settings(), uri, &operator, file.clone()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, body) = h.upload(settings(), uri, &admin, b"MZ not an msi".to_vec()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("not a Windows Installer"), "{body}");
+        let (status, uploaded) = h.upload(settings(), uri, &admin, file.clone()).await;
+        assert_eq!(status, StatusCode::CREATED, "{uploaded}");
+        assert_eq!(uploaded["product_code"], code);
+        assert_eq!(uploaded["product_name"], "Example Tool");
+        assert_eq!(uploaded["file_name"], "tool-1.2.msi");
+        assert_eq!(uploaded["size"], file.len());
+        let sha256 = uploaded["sha256"].as_str().unwrap().to_owned();
+        let stored = dir.path().join("software").join(format!("{sha256}.msi"));
+        assert_eq!(std::fs::read(&stored).unwrap(), file);
+        assert_eq!(h.audit_count("software.upload").await, 1);
+
+        let entry = json!({"customer_id": h.customer, "name": "Example Tool", "manager": "msi",
+                           "file_sha256": sha256, "properties": [{"name": "MARKER", "value": "x"}]});
+        // Only who uploaded a file may name it.
+        let theirs = json!({"customer_id": other, "name": "Example Tool", "manager": "msi",
+                            "file_sha256": sha256});
+        let (status, _) = h.send("POST", "/api/software", &stranger, Some(theirs)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let mut reboot = entry.clone();
+        reboot["properties"] = json!([{"name": "REBOOT", "value": "Force"}]);
+        let (status, _) = h.send("POST", "/api/software", &admin, Some(reboot)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, created) = h.send("POST", "/api/software", &admin, Some(entry)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(created["package_id"], code);
+        assert_eq!(created["file"]["sha256"], sha256.as_str());
+        assert_eq!(created["properties"][0]["name"], "MARKER");
+        let (_, list) = h.send("GET", "/api/software", &operator, None).await;
+        assert_eq!(list["software"][0]["file"]["product_version"], "1.2.0");
+
+        // A command carries the digest and the URLs; only agents that know
+        // MSI packages get one.
+        let command = json!({"kind": "software",
+                             "software": {"action": "install", "catalog_ids": [created["id"]]}});
+        let commands = format!("/api/servers/{}/commands", h.server);
+        h.kinds(Some(json!({"software": "accepted"}))).await;
+        let (status, body) = h.send_with(settings(), "POST", &commands, &admin, Some(command.clone())).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("too old to install MSI"), "{body}");
+        h.kinds(Some(json!({"software": "accepted", "software_msi": "accepted"}))).await;
+        let (status, queued) = h.send_with(settings(), "POST", &commands, &admin, Some(command)).await;
+        assert_eq!(status, StatusCode::CREATED, "{queued}");
+        let change = SoftwareChange::decode(h.payload(&queued).await.as_slice()).unwrap();
+        let msi = change.packages[0].msi.as_ref().unwrap();
+        assert_eq!(change.packages[0].id, code);
+        assert_eq!(msi.sha256, sha256);
+        assert_eq!(msi.size, file.len() as u64);
+        assert_eq!(msi.urls, [format!("http://mf.example:7480/software/{sha256}.msi")]);
+        assert_eq!(msi.properties[0].value, "x");
+
+        // Bounded in all: 20 GiB already stored refuses a new file.
+        for i in 0..10 {
+            sqlx::query("INSERT INTO software_files (sha256, size) VALUES ($1, 2147483648)")
+                .bind(format!("{i:064x}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let (status, body) = h.upload(settings(), uri, &admin, msi_package(&[("ProductName", "Other")])).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        // The same file again is no new storage.
+        let (status, _) = h.upload(settings(), uri, &admin, file.clone()).await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        // Named, it stays; once nothing names it, it goes 8 days later.
+        let store = monitorflow_server::software_files::Store::in_mirror_dir(dir.path());
+        monitorflow_server::software_files::sweep(&pool, &store).await.unwrap();
+        assert!(stored.is_file());
+        let path = format!("/api/software/{}", created["id"].as_str().unwrap());
+        let (status, _) = h.send("DELETE", &path, &admin, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        monitorflow_server::software_files::sweep(&pool, &store).await.unwrap();
+        assert!(stored.is_file(), "removed before 8 days");
+        sqlx::query("UPDATE software_files SET unreferenced_since = now() - interval '9 days'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let swept = monitorflow_server::software_files::sweep(&pool, &store).await.unwrap();
+        assert_eq!(swept.removed, 11);
+        assert!(!stored.exists());
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM software_files")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
     }
 }

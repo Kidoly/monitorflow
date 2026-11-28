@@ -13,6 +13,7 @@ import admin from "./AdminPages.module.css";
 import styles from "./ServerRollback.module.css";
 import { ButtonLink } from "./ui/Button";
 import { type Column, DataTable } from "./ui/DataTable";
+import { InlineConfirm } from "./ui/InlineConfirm";
 import { ErrorState } from "./ui/PageState";
 import { RelativeTime } from "./ui/RelativeTime";
 import { Label } from "./ui/StatusLabel";
@@ -117,16 +118,19 @@ export function MajorUpgradeChecks({ servers }: { servers: ServerUpgrade[] }) {
   );
 }
 
-/** The last upgrade of a server, as its agent tells it. */
+/** The last upgrade of a server, or its last `leapp preupgrade` alone, as its agent tells it. */
 function LastUpgrade({ server }: { server: ServerUpgrade }) {
   const progress = server.progress;
   if (!progress) return null;
+  const preupgrade = progress.preupgrade_only === true;
   return (
     <div>
-      <strong>{t("campaigns.major.last")}</strong>{" "}
+      <strong>{t(preupgrade ? "campaigns.major.lastPreupgrade" : "campaigns.major.last")}</strong>{" "}
       {t("campaigns.update.major", { from: releaseLabel(progress.from), to: releaseLabel(progress.to) })}{" "}
       <Label tone={progress.phase === "done" ? "ok" : progress.phase === "failed" ? "bad" : "info"}>
-        {t(`campaigns.major.phase.${progress.phase}`)}
+        {preupgrade && progress.phase === "done"
+          ? t("campaigns.major.preupgradeDone")
+          : t(`campaigns.major.phase.${progress.phase}`)}
       </Label>
       {progress.error && <p className={styles.note}>{t("campaigns.major.lastFailed", { error: progress.error })}</p>}
       {progress.sources_restored && <p className={styles.note}>{t("campaigns.major.lastRestored")}</p>}
@@ -134,13 +138,19 @@ function LastUpgrade({ server }: { server: ServerUpgrade }) {
         <p className={styles.note}>{t("campaigns.major.disabled", { sources: progress.disabled_sources.join(", ") })}</p>
       )}
       {progress.report && (
-        <details className={styles.report}>
+        <details className={styles.report} open={preupgrade}>
           <summary>{t("campaigns.major.report")}</summary>
           <pre>{progress.report}</pre>
         </details>
       )}
     </div>
   );
+}
+
+/** An upgrade or a `leapp preupgrade` is under way on the server: nothing else starts. */
+function running(server: ServerUpgrade): boolean {
+  const phase = server.progress?.phase;
+  return phase !== undefined && phase !== "done" && phase !== "failed";
 }
 
 /** The Major upgrade section of a server's Updates tab (ADR-0182); nothing on a release without a next one. */
@@ -184,6 +194,26 @@ export function ServerMajorUpgrade({ server }: { server: ServerDetail }) {
             </p>
             <CheckList checks={upgrade.checks} />
           </>
+        )}
+        {upgrade.target && upgrade.can_preupgrade && !running(upgrade) && (
+          <div>
+            <InlineConfirm
+              trigger={t("campaigns.major.preupgrade.trigger")}
+              triggerVariant="default"
+              title={t("campaigns.major.preupgrade.title", { server: server.hostname })}
+              consequence={t("campaigns.major.preupgrade.consequence", {
+                release: upgrade.target_label ?? upgrade.target,
+              })}
+              confirmLabel={t("campaigns.major.preupgrade.confirm")}
+              confirmVariant="k"
+              pendingLabel={t("campaigns.major.preupgrade.sending")}
+              onConfirm={async () => {
+                await api.leappPreupgrade(server.id);
+                refresh();
+              }}
+              describeError={(e) => t("campaigns.major.preupgrade.failed", { error: describeError(e) })}
+            />
+          </div>
         )}
         <LastUpgrade server={upgrade} />
       </div>

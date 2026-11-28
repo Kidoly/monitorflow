@@ -8,7 +8,9 @@
 //! `MF_APPS_TEST_MSSQL`, `MF_APPS_TEST_REDIS`, `MF_APPS_TEST_TOMCAT` and
 //! `MF_APPS_TEST_KAFKA` (their Jolokia agents) are `host:port`; the account is `monitorflow`
 //! with the password in `MF_APPS_TEST_PASSWORD`. `MF_APPS_TEST_DOCKER=1`
-//! reads the local engine.
+//! reads the local engine. `MF_APPS_TEST_MSSQL_STRICT` is a SQL Server
+//! 2025 whose certificate the CA in `SSL_CERT_FILE` signed, for strict
+//! encryption.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -269,13 +271,96 @@ async fn mssql() {
     );
 }
 
+/// TDS 8.0's strict encryption against SQL Server 2025, its certificate
+/// verified against the test's CA; the 2022 server's own certificate is
+/// refused for it.
+#[tokio::test]
+async fn mssql_strict() {
+    let Some((host, port)) = target("MF_APPS_TEST_MSSQL_STRICT") else {
+        eprintln!("MF_APPS_TEST_MSSQL_STRICT not set: skipped");
+        return;
+    };
+    let password = std::env::var("MF_APPS_TEST_PASSWORD").unwrap_or_default();
+    let mut strict = params(&host, &port, &password);
+    strict.insert("tls".into(), "strict".into());
+    let samples = collect("mssql", &strict).await;
+    let up = find(&samples, "up").unwrap();
+    assert_eq!(up.value, 1.0, "{samples:#?}");
+    assert!(up.labels["version"].starts_with("17."), "{up:?}");
+    assert!(find(&samples, "page_life_expectancy_seconds").is_some());
+    let mut wrong = strict.clone();
+    wrong.insert("password".into(), format!("{password}-wrong"));
+    let up = collect("mssql", &wrong).await;
+    assert_eq!(find(&up, "up").unwrap().labels["reason"], "login", "{up:?}");
+    // The same server by address: the certificate is for `localhost`.
+    let mut by_address = strict.clone();
+    by_address.insert("host".into(), "127.0.0.1".into());
+    let up = collect("mssql", &by_address).await;
+    assert_eq!(find(&up, "up").unwrap().labels["reason"], "tls", "{up:?}");
+
+    let Some((host, port)) = target("MF_APPS_TEST_MSSQL") else {
+        return;
+    };
+    let mut self_signed = params(&host, &port, &password);
+    self_signed.insert("tls".into(), "strict".into());
+    let up = collect("mssql", &self_signed).await;
+    assert_eq!(find(&up, "up").unwrap().labels["reason"], "tls", "{up:?}");
+}
+
+/// A named instance: the test plays SQL Server Browser on UDP 1434 of
+/// 127.0.0.1, giving the 2022 server's port, then stops answering.
+#[tokio::test]
+async fn mssql_named_instance() {
+    let Some((host, port)) = target("MF_APPS_TEST_MSSQL") else {
+        eprintln!("MF_APPS_TEST_MSSQL not set: skipped");
+        return;
+    };
+    let browser = tokio::net::UdpSocket::bind("127.0.0.1:1434")
+        .await
+        .expect("UDP 1434 of 127.0.0.1 is free for the test's SQL Server Browser");
+    let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = served.clone();
+    let answer = format!(
+        "ServerName;MF-TEST;InstanceName;MFTEST;IsClustered;No;Version;16.0.4000.0;tcp;{port};;"
+    );
+    let browsing = tokio::spawn(async move {
+        let mut buf = [0u8; 64];
+        loop {
+            let (n, from) = browser.recv_from(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], b"\x04MFTEST\x00");
+            let mut out = vec![0x05];
+            out.extend_from_slice(&u16::try_from(answer.len()).unwrap().to_le_bytes());
+            out.extend_from_slice(answer.as_bytes());
+            browser.send_to(&out, from).await.unwrap();
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    let password = std::env::var("MF_APPS_TEST_PASSWORD").unwrap_or_default();
+    let mut named = params(&host, &port, &password);
+    named.remove("port");
+    named.insert("instance".into(), "MFTEST".into());
+    let samples = collect("mssql", &named).await;
+    assert_eq!(find(&samples, "up").unwrap().value, 1.0, "{samples:#?}");
+    assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // No Browser: `connect`, saying so.
+    browsing.abort();
+    let _ = browsing.await;
+    let up = collect("mssql", &named).await;
+    let up = find(&up, "up").unwrap();
+    assert_eq!(up.labels["reason"], "connect", "{up:?}");
+    assert!(up.labels["error"].contains("Browser"), "{up:?}");
+}
+
 /// A real cluster (`scripts/kubernetes-test.sh` starts k3s):
 /// `MF_APPS_TEST_KUBERNETES` is `host:port` of its API,
 /// `MF_APPS_TEST_KUBERNETES_TOKEN` the token of the guide's read-only
 /// service account and `MF_APPS_TEST_KUBERNETES_CA` the file of the
 /// cluster's CA. The script runs k3s without a pod network, so its node
 /// is not ready and its pods pending, and leaves a deployment short of
-/// replicas and a claim of a storage class that does not exist.
+/// replicas and a claim of a storage class that does not exist. With
+/// `MF_APPS_TEST_KUBERNETES_FULL=1` (`--full`, as CI runs it) the cluster
+/// has its pod network and metrics-server, and a job that failed: the
+/// node is then ready and the inventory has resource use.
 #[tokio::test]
 async fn kubernetes() {
     let Some((host, port)) = target("MF_APPS_TEST_KUBERNETES") else {
@@ -326,6 +411,49 @@ async fn kubernetes() {
     );
     assert_eq!(value("namespace_claims_pending", "mf-test"), Some(1.0));
     assert!(value("namespace_pod_restarts", "kube-system").is_some());
+
+    // The inventory (ADR-0156): the node with what matches it to a
+    // server, the namespaces listed, the workloads.
+    let full = std::env::var("MF_APPS_TEST_KUBERNETES_FULL").is_ok_and(|v| v == "1");
+    let info = samples
+        .iter()
+        .find(|s| s.sensor == "node_info")
+        .unwrap_or_else(|| panic!("{samples:#?}"));
+    assert_eq!(info.labels["virt"], "node");
+    assert!(!info.labels["key"].is_empty(), "{info:?}");
+    assert!(info.labels.contains_key("hostname"), "{info:?}");
+    assert!(info.labels["addresses"].contains('.'), "{info:?}");
+    assert!(value("node_cpu_cores", &node.instance).unwrap() > 0.0);
+    assert!(value("node_memory_bytes", &node.instance).unwrap() > 0.0);
+    let ns = samples
+        .iter()
+        .find(|s| s.sensor == "namespace_info" && s.instance == "mf-test")
+        .unwrap_or_else(|| panic!("{samples:#?}"));
+    assert_eq!(ns.labels["phase"], "Active");
+    assert!(samples
+        .iter()
+        .any(|s| s.sensor == "workload_info" && s.instance == "mf-test/deployment/broken"));
+    let unread = up.labels.get("unread").cloned().unwrap_or_default();
+    assert!(
+        !unread.contains("jobs") && !unread.contains("namespaces"),
+        "{unread}"
+    );
+    if full {
+        assert_eq!(node.value, 1.0, "{node:?}");
+        assert!(unread.is_empty(), "{unread}");
+        let used = value("node_cpu_usage_ratio", &node.instance).unwrap();
+        assert!(used > 0.0 && used <= 1.0, "{used}");
+        assert!(value("namespace_memory_usage_bytes", "kube-system").unwrap() > 0.0);
+        assert_eq!(value("namespace_jobs_failed", "mf-test"), Some(1.0));
+        let job = samples
+            .iter()
+            .find(|s| s.sensor == "job_info" && s.instance == "mf-test/fails")
+            .unwrap_or_else(|| panic!("{samples:#?}"));
+        assert_eq!(job.labels["reason"], "BackoffLimitExceeded", "{job:?}");
+    } else {
+        assert_eq!(unread, "metrics-server (not installed)");
+        assert_eq!(value("namespace_jobs_failed", "mf-test"), Some(0.0));
+    }
     for sample in &samples {
         assert!(!format!("{sample:?}").contains(&token));
     }

@@ -203,7 +203,10 @@ struct Row {
     at: DateTime<Utc>,
 }
 
-async fn histories(pool: &PgPool, servers: &[Uuid]) -> Result<HashMap<Uuid, History>, sqlx::Error> {
+async fn histories(
+    pool: impl sqlx::PgExecutor<'_>,
+    servers: &[Uuid],
+) -> Result<HashMap<Uuid, History>, sqlx::Error> {
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT DISTINCT ON (server_id, outcome) *
          FROM (SELECT server_id, kind, payload, state, error,
@@ -339,7 +342,7 @@ async fn ready(pool: &PgPool, distribution: &Distribution) -> Result<Ready, sqlx
 /// The servers among `servers` whose packages come from the mirrors now
 /// (ADR-0074), for the mirror check of a major upgrade (ADR-0182).
 pub(crate) async fn using_mirror(
-    pool: &PgPool,
+    pool: impl sqlx::PgExecutor<'_>,
     servers: &[Uuid],
 ) -> Result<HashSet<Uuid>, sqlx::Error> {
     Ok(histories(pool, servers)
@@ -360,6 +363,32 @@ pub(crate) async fn mirror_problem(pool: &PgPool, id: &str) -> Result<Option<Str
         Ready::Yes(_) => None,
         Ready::No { problem, .. } => Some(problem),
     })
+}
+
+/// The `configure_sources` payload pointing a server of `os_family` on
+/// `os_version` at the mirrors of that release, as `use-mirror` builds
+/// it: after a major upgrade, the mirrors of the new release (ADR-0182).
+/// `Ok(Err(why))` when the mirrors do not carry it.
+pub(crate) async fn mirror_spec(
+    pool: &PgPool,
+    public_url: Option<&str>,
+    key: &ArchiveKey,
+    server: Uuid,
+    os_family: &str,
+    os_version: &str,
+) -> Result<Result<Vec<u8>, String>, sqlx::Error> {
+    let Some(distribution) = catalog::for_os_version(os_version) else {
+        return Ok(Err(format!("MonitorFlow has no mirror for {os_version}.")));
+    };
+    let selected = match ready(pool, distribution).await? {
+        Ready::Yes(selected) => selected,
+        Ready::No { problem, .. } => return Ok(Err(problem)),
+    };
+    let relay = relays::for_server(&mut *pool.acquire().await?, server).await?;
+    let Some(base) = sources::base_url(public_url, relay.as_ref(), &selected) else {
+        return Ok(Err(NO_ADDRESS.into()));
+    };
+    Ok(sources::build(&base, Mode::Replace, os_family, &selected, key).map(|s| s.encode_to_vec()))
 }
 
 /// Sorts out servers and caches what each distribution holds.

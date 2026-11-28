@@ -12,8 +12,10 @@
 //! at them before its update and gets its previous sources back after.
 //!
 //! A major upgrade campaign (ADR-0182) moves its servers to the next
-//! release of their distribution instead, with a snapshot first.
+//! release of their distribution instead, with a snapshot first; Ubuntu
+//! and RHEL servers on the mirrors go back to their own sources for it.
 
+mod major_sources;
 mod model;
 mod pin;
 pub mod query;
@@ -22,9 +24,10 @@ mod store;
 
 pub use model::{
     plan_waves, software_refusal, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime,
-    MajorUpgradeSpec, PinnedMirror, PlanError, SoftwareItem, SoftwareSpec, SourcesMode, SourcesPin,
-    ThirdPartySpec, UpdateSpec, WaveSpec, Window, MAX_PACKAGES, MAX_TARGETS, MAX_WAVES,
-    MAX_WINDOWS, NO_APPROVALS, NO_THIRD_PARTY,
+    MajorUpgradeSpec, MsiItem, MsiPropertyItem, MsiSources, PinnedMirror, PlanError, SoftwareItem,
+    SoftwareSpec, SourcesMode, SourcesPin, ThirdPartySpec, UpdateSpec, WaveSpec, Window,
+    MAX_PACKAGES, MAX_TARGETS, MAX_WAVES, MAX_WINDOWS, MSI, MSI_TOO_OLD, NO_APPROVALS, NO_MSI_URL,
+    NO_SOFTWARE_FOR, NO_THIRD_PARTY,
 };
 pub use pin::write_pins;
 pub use runner::{Runner, Step, MIN_WINDOW_LEFT, POLL};

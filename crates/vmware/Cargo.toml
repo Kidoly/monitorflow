@@ -11,17 +11,15 @@ description = "vCenter and ESXi checks through the vSphere API, run from a probe
 
 [dependencies]
 monitorflow-sensors.workspace = true
+# The certificate verifier pinned by fingerprint, shared with Jolokia's.
+monitorflow-common.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 quick-xml.workspace = true
 reqwest.workspace = true
-ring.workspace = true
 rustls.workspace = true
-rustls-native-certs.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-webpki-roots.workspace = true
-x509-parser.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true

@@ -809,7 +809,7 @@ db_tests! {
         let alerts: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM thresholds WHERE server_id = $1::uuid AND metric LIKE 'monitorflow_kubernetes_%'")
             .bind(&device).fetch_one(&pool).await.unwrap();
-        assert_eq!(alerts, 11);
+        assert_eq!(alerts, monitorflow_apps::templates::KUBERNETES_TEMPLATE.alerts.len() as i64);
 
         // The probe gets both, at the device's address.
         let probe_params = || async {
@@ -942,6 +942,28 @@ db_tests! {
              AND metric = 'monitorflow_mssql_page_life_expectancy_seconds'")
             .bind(f.paris_server).fetch_one(&pool).await.unwrap();
         assert_eq!(ple, (Some(300.0), 900));
+
+        // A Windows sign-in runs on the Windows agent, never from a probe;
+        // a named instance's port comes from SQL Server Browser.
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "mssql", "name": "mssql_sales", "interval_ms": 60_000, "probe": "central",
+            "params": {"host": "192.0.2.13", "instance": "SALES", "auth": "windows"}
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("Windows agent"), "{body}");
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "mssql", "name": "mssql_sales", "interval_ms": 60_000,
+            "params": {"instance": "SALES", "auth": "windows", "tls": "strict"}
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["params"]["instance"], "SALES");
+        assert_eq!(body["secret_set"], false);
+        let (status, body) = call(&pool, &operator, "POST", &uri, Some(json!({
+            "kind": "mssql", "name": "mssql_bad", "interval_ms": 60_000,
+            "params": {"auth": "windows", "user": "EXAMPLE\\svc"}
+        }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("needs its password"), "{body}");
 
         for (_, _, details) in audit(&pool).await {
             let text = details.to_string();

@@ -7,10 +7,17 @@
 //! Parameters: `host` (`127.0.0.1`), `port` (8778, the Jolokia agent's),
 //! `path` (`/jolokia/`), `user` and `password` (Jolokia's HTTP Basic
 //! authentication, none by default), `tls` (`off` for HTTP, or `verify`
-//! for HTTPS with the certificate verified) and `groups` (`tomcat,kafka`
-//! by default; `none` reads the JVM alone). A password goes over HTTPS
-//! only, or to this machine's loopback, so it never crosses a network in
-//! clear.
+//! for HTTPS with the certificate verified), `fingerprint` (with
+//! `verify`: the SHA-256 of a certificate the machine's roots do not
+//! trust, often Jolokia's self-signed one, confirmed by a person, as for
+//! vCenter, ADR-0156) and `groups` (`tomcat,kafka` by default; `none`
+//! reads the JVM alone). A password goes over HTTPS only, or to this
+//! machine's loopback, so it never crosses a network in clear; over
+//! HTTPS, never before the certificate is trusted.
+//!
+//! `what` `test` (from a probe, for the check's form) looks at the
+//! certificate without trusting it, over a handshake that sends nothing,
+//! and reads Jolokia only when the roots or the fingerprint trust it.
 //!
 //! One `POST` per collection carries every read, as a Jolokia bulk
 //! request; each read answers on its own, so a missing MBean (no Tomcat
@@ -19,8 +26,10 @@
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use monitorflow_common::tls::trust::{self, Trust, Verifier};
 use monitorflow_sensors::{BuildError, Sample, Sensor, SensorError};
 use serde_json::{json, Value};
 
@@ -75,12 +84,24 @@ impl Groups {
     }
 }
 
+/// What a check does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum What {
+    Collect,
+    /// Shows the certificate, and reads only when it is trusted.
+    Test,
+}
+
 #[derive(Debug)]
 pub struct Jmx {
     target: Target,
     url: String,
     groups: Groups,
     client: reqwest::Client,
+    /// Over HTTPS: what verifies the certificate, and saw it last.
+    verifier: Option<Arc<Verifier>>,
+    fingerprint: Option<trust::Fingerprint>,
+    what: What,
     rates: Rates,
 }
 
@@ -111,6 +132,29 @@ impl Jmx {
                 "is sent over HTTPS only (`tls` `verify`), or to this machine's loopback",
             ));
         }
+        let fingerprint = match p.get("fingerprint").filter(|s| !s.is_empty()) {
+            None => None,
+            Some(_) if target.tls != Tls::Verify => {
+                return Err(p.bad("fingerprint", "is for HTTPS only (`tls` `verify`)"))
+            }
+            Some(text) => Some(trust::parse_fingerprint(text).ok_or_else(|| {
+                p.bad(
+                    "fingerprint",
+                    "must be a SHA-256 fingerprint: 64 hexadecimal digits",
+                )
+            })?),
+        };
+        let what = match p.get("what") {
+            None | Some("collect") => What::Collect,
+            Some("test") if target.tls == Tls::Verify => What::Test,
+            Some("test") => {
+                return Err(p.bad(
+                    "what",
+                    "`test` looks at an HTTPS certificate: set `tls` `verify`",
+                ))
+            }
+            Some(_) => return Err(p.bad("what", "must be `collect` or `test`")),
+        };
         let groups = Groups::parse(p)?;
         let scheme = if target.tls == Tls::Off {
             "http"
@@ -123,7 +167,19 @@ impl Jmx {
             target.host.clone()
         };
         let url = format!("{scheme}://{host}:{}{path}", target.port);
-        let client = reqwest::Client::builder()
+        let verifier = (target.tls == Tls::Verify)
+            .then(|| Verifier::new(crate::roots(), Trust::Verify(fingerprint)))
+            .transpose()
+            .map_err(|e| p.refused(format!("cannot prepare its TLS client: {e}")))?;
+        let mut client = reqwest::Client::builder();
+        if let Some(verifier) = &verifier {
+            // The machine's roots and the name, or the pinned certificate.
+            let config = verifier
+                .config()
+                .map_err(|e| p.refused(format!("cannot prepare its TLS client: {e}")))?;
+            client = client.use_preconfigured_tls(config);
+        }
+        let client = client
             // A proxy of the environment would see the password, and a
             // redirect would take it elsewhere.
             .no_proxy()
@@ -139,8 +195,73 @@ impl Jmx {
             url,
             groups,
             client,
+            verifier,
+            fingerprint,
+            what,
             rates: Rates::default(),
         })
+    }
+
+    /// Why a request failed; for a refused certificate, what it is now,
+    /// as the handshake saw it.
+    fn failure(&self, error: reqwest::Error) -> Failure {
+        let failure = failure(error);
+        match self.verifier.as_ref().and_then(|v| v.failure()) {
+            Some(text) if failure.reason == Reason::Tls => Failure::new(Reason::Tls, text),
+            _ => failure,
+        }
+    }
+
+    /// The certificate of `host:port`, over a handshake that accepts any
+    /// and sends nothing after it.
+    async fn look(&self) -> Result<trust::Seen, Failure> {
+        let verifier =
+            Verifier::new(crate::roots(), Trust::Look).map_err(|e| Failure::new(Reason::Tls, e))?;
+        let config = verifier
+            .config()
+            .map_err(|e| Failure::new(Reason::Tls, e))?;
+        let name = rustls::pki_types::ServerName::try_from(self.target.host.clone())
+            .map_err(|_| Failure::new(Reason::Tls, "the host is not a name TLS can use"))?;
+        let tcp = tokio::net::TcpStream::connect((self.target.host.as_str(), self.target.port))
+            .await
+            .map_err(|e| Failure::new(Reason::Connect, e.to_string()))?;
+        let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
+            .connect(name, tcp)
+            .await
+            .map_err(|e| Failure::new(Reason::Tls, format!("no TLS handshake: {e}")))?;
+        drop(stream);
+        verifier
+            .seen()
+            .ok_or_else(|| Failure::new(Reason::Tls, "no certificate"))
+    }
+
+    /// `answers`, the certificate, then a collection's samples when the
+    /// certificate is trusted: the password is never sent otherwise.
+    async fn test(&self, round: &mut Round) -> Vec<Sample> {
+        let seen = match self.look().await {
+            Ok(seen) => seen,
+            Err(failure) => {
+                let mut answers = down(Some(&self.target), &failure);
+                answers.sensor = "answers".into();
+                return vec![answers];
+            }
+        };
+        let trusted = seen.trusted || self.fingerprint == Some(seen.fingerprint);
+        let mut out = vec![
+            Sample::metric("answers", 1.0),
+            Sample::metric("certificate_trusted", f64::from(u8::from(trusted)))
+                .with_label("fingerprint", trust::show_fingerprint(&seen.fingerprint))
+                .with_label("by_roots", if seen.trusted { "true" } else { "false" })
+                .with_label("subject", label(&seen.subject, 200))
+                .with_label("not_after", seen.not_after.to_string()),
+        ];
+        if trusted {
+            match self.read(round).await {
+                Ok(samples) => out.extend(samples),
+                Err(failure) => out.push(down(Some(&self.target), &failure)),
+            }
+        }
+        out
     }
 
     async fn read(&self, round: &mut Round) -> Result<Vec<Sample>, Failure> {
@@ -155,7 +276,7 @@ impl Jmx {
         if let Some(password) = &self.target.password {
             request = request.basic_auth(self.target.user.as_deref().unwrap_or(""), Some(password));
         }
-        let mut response = request.send().await.map_err(failure)?;
+        let mut response = request.send().await.map_err(|e| self.failure(e))?;
         match response.status().as_u16() {
             200 => {}
             401 => return Err(Failure::new(Reason::Login, "Jolokia refused the login")),
@@ -179,7 +300,7 @@ impl Jmx {
             }
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(failure)? {
+        while let Some(chunk) = response.chunk().await.map_err(|e| self.failure(e))? {
             if bytes.len() + chunk.len() > MAX_BODY {
                 return Err(Failure::new(Reason::Protocol, "the answer is too large"));
             }
@@ -706,6 +827,12 @@ fn gc_samples(value: &Value, round: &mut Round, out: &mut Vec<Sample>) {
 impl Sensor for Jmx {
     async fn collect(&self, deadline: tokio::time::Instant) -> Result<Vec<Sample>, SensorError> {
         let mut round = self.rates.round();
+        if self.what == What::Test {
+            let test = async { Ok::<_, Failure>(self.test(&mut round).await) };
+            return Ok(within(deadline, test)
+                .await
+                .unwrap_or_else(|failure| vec![down(Some(&self.target), &failure)]));
+        }
         match within(deadline, self.read(&mut round)).await {
             Ok(samples) => {
                 self.rates.finish(round);

@@ -174,6 +174,9 @@ pub enum Tls {
     /// Encrypted, the certificate verified against the machine's roots and
     /// the host name.
     Verify,
+    /// SQL Server only: TDS 8.0's strict encryption, TLS before anything
+    /// else, verified as `Verify` is.
+    Strict,
 }
 
 impl Tls {
@@ -183,6 +186,10 @@ impl Tls {
             Some("off") => Ok(Self::Off),
             Some("prefer") => Ok(Self::Prefer),
             Some("verify") => Ok(Self::Verify),
+            Some("strict") if p.kind() == MSSQL => Ok(Self::Strict),
+            Some(_) if p.kind() == MSSQL => {
+                Err(p.bad("tls", "must be `off`, `prefer`, `verify` or `strict`"))
+            }
             Some(_) => Err(p.bad("tls", "must be `off`, `prefer` or `verify`")),
         }
     }
@@ -402,18 +409,7 @@ async fn within<T>(
 /// this crate's: the system's, or Mozilla's when the system has none (a
 /// minimal container). Loaded once per process.
 fn roots() -> Arc<rustls::RootCertStore> {
-    static ROOTS: std::sync::OnceLock<Arc<rustls::RootCertStore>> = std::sync::OnceLock::new();
-    ROOTS
-        .get_or_init(|| {
-            let mut store = rustls::RootCertStore::empty();
-            let native = rustls_native_certs::load_native_certs();
-            let (added, _) = store.add_parsable_certificates(native.certs);
-            if added == 0 {
-                store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            }
-            Arc::new(store)
-        })
-        .clone()
+    monitorflow_common::tls::trust::roots()
 }
 
 /// A sample of `metric` at `value`, finite values only.

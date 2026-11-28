@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
+import type { DesktopFrame } from "./api";
 import {
+  clock,
   decodeChunk,
   desktopAcceptance,
   desktopSize,
+  framesToDraw,
   hasDesktopTab,
   isOpen,
+  isWhole,
   parseEvent,
   socketUrl,
   terminalAcceptance,
@@ -47,7 +51,7 @@ describe("remote terminals", () => {
 });
 
 describe("remote desktops", () => {
-  const access = { can_open: true, can_review: true, recorded: true, idle_timeout_minutes: 15 };
+  const access = { can_open: true, can_review: true, recorded: true, idle_timeout_minutes: 15, desktop_clipboard: true, desktop_files: false };
 
   it("have a tab on Windows servers only, for those who may open or review sessions", () => {
     expect(hasDesktopTab({ kind: "agent", os_family: "windows", remote_terminal: access })).toBe(true);
@@ -69,5 +73,44 @@ describe("remote desktops", () => {
     expect(desktopSize(300)).toEqual({ width: 1024, height: 576 });
     expect(desktopSize(5000)).toEqual({ width: 2560, height: 1440 });
     expect(desktopSize(1365)).toEqual({ width: 1366, height: 768 });
+  });
+});
+
+describe("desktop recordings", () => {
+  const frame = (seq: number, at_ms: number, whole: boolean): DesktopFrame => ({
+    seq,
+    at_ms,
+    x: whole ? 0 : 10,
+    y: whole ? 0 : 10,
+    width: whole ? 800 : 20,
+    height: whole ? 600 : 20,
+    screen_width: 800,
+    screen_height: 600,
+    bytes: 100,
+  });
+  const frames = [frame(0, 0, true), frame(1, 1000, false), frame(2, 2000, false), frame(3, 60000, true), frame(4, 61000, false)];
+  const seqs = (r: { draw: DesktopFrame[]; drawn: number }) => [r.draw.map((f) => f.seq), r.drawn];
+
+  it("tells whole pictures apart", () => {
+    expect(isWhole(frames[0]!)).toBe(true);
+    expect(isWhole(frames[1]!)).toBe(false);
+  });
+
+  it("draws forward from what is drawn, and starts again from a whole picture otherwise", () => {
+    expect(seqs(framesToDraw(frames, -1, 1500))).toEqual([[0, 1], 1]);
+    expect(seqs(framesToDraw(frames, 1, 2500))).toEqual([[2], 2]);
+    expect(seqs(framesToDraw(frames, 2, 2500))).toEqual([[], 2]);
+    // Past a whole picture: from it, not every picture on the way.
+    expect(seqs(framesToDraw(frames, 1, 61500))).toEqual([[3, 4], 4]);
+    // Back: from the whole picture before.
+    expect(seqs(framesToDraw(frames, 4, 1200))).toEqual([[0, 1], 1]);
+    expect(seqs(framesToDraw([], -1, 5000))).toEqual([[], -1]);
+  });
+
+  it("shows times as a clock", () => {
+    expect(clock(5_400)).toBe("0:05");
+    expect(clock(750_000)).toBe("12:30");
+    expect(clock(3_723_000)).toBe("1:02:03");
+    expect(clock(-5)).toBe("0:00");
   });
 });

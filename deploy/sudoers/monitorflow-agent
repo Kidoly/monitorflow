@@ -34,7 +34,8 @@ Cmnd_Alias MONITORFLOW_SNAPSHOTS = \
 # command the central server signed on stdin, starts it only if
 # `packages.major_upgrades` is set in agent.toml, the server runs the
 # release it names and every check passes, then runs it in a transient
-# systemd unit (ADR-0182). Never a command line.
+# systemd unit (ADR-0182). A signed `leapp_preupgrade` runs `leapp
+# preupgrade` alone there, on the same conditions. Never a command line.
 Cmnd_Alias MONITORFLOW_MAJOR_UPGRADE = /usr/bin/monitorflow-agent major-upgrade
 
 # AI root actions: the helper reads a `root_action` command the central

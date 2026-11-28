@@ -3,20 +3,25 @@
 //! processes, locks and deadlocks, the size and log use of each database,
 //! and the replicas of its Always On availability groups.
 //!
-//! Parameters: `host` (`127.0.0.1`), `port` (1433), `user`
-//! (`monitorflow`), `password`, `tls` (`prefer`, `verify` or `off`). A
-//! SQL Server login with `VIEW SERVER STATE` (`VIEW SERVER PERFORMANCE
+//! Parameters: `host` (`127.0.0.1`), `port` (1433), `instance` (a named
+//! instance, its port then asked from SQL Server Browser unless `port` is
+//! given), `auth` (`sql`, or `windows` on the Windows agent), `user`
+//! (`monitorflow` with `sql`; with `windows`, the agent's own account
+//! unless named), `password`, `tls` (`prefer`, `verify`, `strict` or
+//! `off`). A login with `VIEW SERVER STATE` (`VIEW SERVER PERFORMANCE
 //! STATE` is enough from SQL Server 2022) is all the check needs: it
 //! reads no database's data.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+use monitorflow_sensors::port::{parse_host, Host, PortTargets};
 use monitorflow_sensors::{Sample, Sensor, SensorError};
 
 use crate::rates::{Rates, Round};
+use crate::tds::sspi::{self, Account, Negotiate, Sspi};
 pub(crate) use crate::tds::TdsError;
-use crate::tds::{Client, Encryption, Login, Row, Value};
+use crate::tds::{browser, Client, Encryption, Login, Row, Value};
 use crate::{down, gauge, label, ratio, within, Failure, Params, Place, Reason, Target, Tls};
 
 /// Databases whose sizes are reported, the largest first.
@@ -80,6 +85,14 @@ const HIDDEN: [&str; 4] = [
 #[derive(Debug)]
 pub struct Mssql {
     target: Target,
+    /// A named instance, and whether its port is asked from SQL Server
+    /// Browser.
+    instance: Option<String>,
+    browse: bool,
+    /// The account of a Windows sign-in.
+    windows: Option<Account>,
+    /// The agent's `sensors.port_targets`, for the port Browser gives.
+    targets: Option<PortTargets>,
     rates: Rates,
 }
 
@@ -125,27 +138,151 @@ impl Mssql {
         p: &mut Params<'_>,
         place: Place<'_>,
     ) -> Result<Self, monitorflow_sensors::BuildError> {
+        let instance = match p.get("instance") {
+            None | Some("") => None,
+            Some(name) if browser::valid_instance(name) => Some(name.to_owned()),
+            Some(_) => {
+                return Err(p.bad(
+                    "instance",
+                    "must be an instance name: 1 to 16 letters, digits, `_`, `$` or `#`",
+                ))
+            }
+        };
+        let browse = instance.is_some() && p.get("port").is_none();
+        let windows = match p.get("auth") {
+            None | Some("sql") => false,
+            Some("windows") => true,
+            Some(_) => return Err(p.bad("auth", "must be `sql` or `windows`")),
+        };
+        if windows {
+            match place {
+                Place::Relay | Place::Central => {
+                    return Err(p.refused(
+                        "signing in with a Windows account runs on the server's Windows agent, not from a probe",
+                    ))
+                }
+                Place::Agent(_) if !cfg!(windows) => {
+                    return Err(p.refused(
+                        "signing in with a Windows account needs the agent on Windows",
+                    ))
+                }
+                _ => {}
+            }
+        }
+        // With a named instance and no port, the address checked first is
+        // SQL Server Browser's; the instance's port is checked once
+        // Browser gives it.
+        let default_port = if browse { browser::PORT } else { 1433 };
+        let default_user = (!windows).then_some("monitorflow");
+        let target = Target::parse(p, place, default_port, default_user, Tls::Prefer)?;
+        let windows = if windows {
+            Some(match (&target.user, &target.password) {
+                (None, None) => Account::Own,
+                (Some(user), Some(password)) => Account::named(user, password),
+                (Some(_), None) => {
+                    return Err(p.bad(
+                        crate::SECRET_PARAM,
+                        "the Windows account named in `user` needs its password",
+                    ))
+                }
+                (None, Some(_)) => {
+                    return Err(p.bad(
+                        "user",
+                        "name the Windows account of this password, as `DOMAIN\\name` or `name@domain`, or give no password to sign in as the agent's account",
+                    ))
+                }
+            })
+        } else {
+            None
+        };
+        let targets = match place {
+            Place::Agent(Some(targets)) if browse => Some(targets.clone()),
+            _ => None,
+        };
         Ok(Self {
-            target: Target::parse(p, place, 1433, Some("monitorflow"), Tls::Prefer)?,
+            target,
+            instance,
+            browse,
+            windows,
+            targets,
             rates: Rates::default(),
         })
+    }
+
+    /// Asks SQL Server Browser at `port` instead of 1434.
+    #[cfg(test)]
+    pub(crate) fn browse_at(&mut self, port: u16) {
+        self.target.port = port;
+    }
+
+    /// The port to connect to: the one given, or the instance's from SQL
+    /// Server Browser, within the agent's limits.
+    async fn port(&self) -> Result<u16, Failure> {
+        let t = &self.target;
+        let (Some(instance), true) = (&self.instance, self.browse) else {
+            return Ok(t.port);
+        };
+        let port = browser::port_of(&t.host, t.port, instance)
+            .await
+            .map_err(|e| failure(&e))?;
+        if let Some(targets) = &self.targets {
+            let allowed = match parse_host(&t.host) {
+                Ok(Host::Ip(ip)) => targets.allows_ip(ip, port),
+                Ok(Host::Name(name)) => targets.allows_name(&name, port),
+                Err(_) => false,
+            };
+            if !allowed {
+                return Err(Failure::new(
+                    Reason::Connect,
+                    format!(
+                        "the instance {instance} listens on port {port}, which is not in this agent's sensors.port_targets"
+                    ),
+                ));
+            }
+        }
+        Ok(port)
     }
 
     async fn read(&self, round: &mut Round) -> Result<Vec<Sample>, Failure> {
         let started = Instant::now();
         let t = &self.target;
+        let port = self.port().await?;
+        let windows = self.windows.is_some();
         let login = Login {
             host: &t.host,
-            user: t.user.as_deref().unwrap_or("monitorflow"),
-            password: t.password.as_deref().unwrap_or_default(),
+            instance: self.instance.as_deref(),
+            user: if windows {
+                ""
+            } else {
+                t.user.as_deref().unwrap_or("monitorflow")
+            },
+            // A Windows sign-in sends no password in LOGIN7: SSPI carries
+            // the account's, or none for the agent's own account.
+            password: t
+                .password
+                .as_deref()
+                .filter(|_| !windows)
+                .unwrap_or_default(),
             encryption: match t.tls {
                 Tls::Off => Encryption::Off,
                 Tls::Prefer => Encryption::Unverified,
                 Tls::Verify => Encryption::Verified,
+                Tls::Strict => Encryption::Strict,
             },
-            roots: (t.tls == Tls::Verify).then(crate::roots),
+            roots: matches!(t.tls, Tls::Verify | Tls::Strict).then(crate::roots),
         };
-        let mut client = Client::connect(t.port, &login)
+        let mut negotiate = match &self.windows {
+            Some(account) => {
+                let (account, spn) = (account.clone(), sspi::spn(&t.host, port));
+                let made = tokio::task::spawn_blocking(move || Negotiate::new(&account, &spn))
+                    .await
+                    .map_err(|e| Failure::new(Reason::Login, e.to_string()))?;
+                Some(made.map_err(|e| failure(&e))?)
+            }
+            None => None,
+        };
+        let sspi = negotiate.as_mut().map(|n| n as &mut dyn Sspi);
+        let mut client = Client::connect(port, &login, sspi)
             .await
             .map_err(|e| failure(&e))?;
         let result = queries(&mut client, started).await;
@@ -342,8 +479,9 @@ pub(crate) fn samples(r: &Readings, response: f64, round: &mut Round) -> Vec<Sam
 /// What a client error says about the server.
 pub(crate) fn failure(error: &TdsError) -> Failure {
     let reason = match error {
-        TdsError::Io(_) => Reason::Connect,
+        TdsError::Io(_) | TdsError::Browser(_) => Reason::Connect,
         TdsError::Tls(_) => Reason::Tls,
+        TdsError::Sspi(_) => Reason::Login,
         TdsError::Protocol(_) => Reason::Protocol,
         TdsError::Server { number, .. } => match number {
             // Login failed, its password expired or must change, its

@@ -25,7 +25,7 @@ function detail(overrides: Partial<ServerDetail> = {}): ServerDetail {
   return {
     ...server({ command_kinds: { remote_session: "accepted" } }),
     certificate: null,
-    remote_terminal: { can_open: true, can_review: true, recorded: true, idle_timeout_minutes: 15 },
+    remote_terminal: { can_open: true, can_review: true, recorded: true, idle_timeout_minutes: 15, desktop_clipboard: true, desktop_files: false },
     ...overrides,
   };
 }
@@ -44,6 +44,8 @@ const session = (overrides: Partial<RemoteSession> = {}): RemoteSession => ({
   recorded: true,
   bytes_in: 10,
   bytes_out: 100,
+  clipboard: false,
+  file_transfer: false,
   ...overrides,
 });
 
@@ -109,7 +111,7 @@ describe("ServerTerminalTab", () => {
   });
 
   it("says an agent too old for terminals updates by itself", () => {
-    const s = detail({ ...server({ command_kinds: {} }), remote_terminal: { can_open: true, can_review: false, recorded: false, idle_timeout_minutes: 15 } });
+    const s = detail({ ...server({ command_kinds: {} }), remote_terminal: { can_open: true, can_review: false, recorded: false, idle_timeout_minutes: 15, desktop_clipboard: true, desktop_files: false } });
     render(
       <As user={operator}>
         <ServerTerminalTab server={s} />

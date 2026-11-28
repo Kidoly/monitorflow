@@ -108,6 +108,10 @@ Le mot de passe est gardé scellé sur le serveur central, chiffré comme ses au
 
 **Le mot de passe ne part qu'en HTTPS, ou vers le serveur lui-même.** L'authentification Basic de Jolokia l'envoie avec chaque requête ; en HTTP simple depuis une autre machine, n'importe qui sur le réseau entre les deux pourrait le lire. Un contrôle avec un mot de passe et « Aucun (HTTP) » doit donc se connecter à `127.0.0.1` (ou `::1`, `localhost`) : depuis le serveur central ou un relais, donnez un certificat à Jolokia (ses options `protocol=https` et de keystore) et choisissez « Obligatoire, certificat vérifié ».
 
+**Un certificat auto-signé.** Le certificat HTTPS de Jolokia est souvent fait par lui-même ou par son keystore, sans autorité pour le signer. Depuis le serveur central ou un relais, un tel certificat est reconnu par son empreinte, comme celui d'un vCenter : avec « Obligatoire, certificat vérifié », « Tester le certificat » se connecte depuis le serveur central ou le relais qui fait le contrôle et affiche l'empreinte SHA-256 du certificat. Comparez-la avec celle qu'affiche le serveur Java (`keytool -list -v -keystore <keystore>`, ou `openssl s_client -connect <adresse>:8778 </dev/null | openssl x509 -noout -fingerprint -sha256`), puis activez « J’ai comparé : faire confiance à ce certificat ». L'empreinte va dans « Empreinte du certificat », sous « More options ». Le test ne lit Jolokia, avec le mot de passe, qu'une fois le certificat reconnu ; avant, il fait une poignée de main TLS et n'envoie rien. Un contrôle que fait l'agent prend l'empreinte de la même façon, saisie dans « Empreinte du certificat » : l'erreur du contrôle l'affiche.
+
+Quand le certificat change (un nouveau keystore), le contrôle échoue avec « the certificate changed: its fingerprint is now ... » et ne lui envoie jamais le mot de passe. Dans l'onglet « Sensors », le bouton « Certificat » du contrôle le teste de nouveau ; comparez la nouvelle empreinte, faites-lui confiance, puis « Faire confiance à ce certificat » l'enregistre. Le mot de passe est gardé.
+
 Un contrôle lit une JVM. Un serveur qui en fait tourner deux (Tomcat et Kafka, par exemple) a besoin de deux agents Jolokia sur deux ports, et de deux contrôles avec deux noms.
 
 ### Où tourne le contrôle
@@ -133,7 +137,7 @@ L'API publique ajoute le même contrôle : `POST /api/v1/servers/{id}/sensor_co
 }
 ```
 
-`groups` vaut `tomcat,kafka` par défaut, ou `tomcat`, `kafka` ou `none` ; `path` vaut `/jolokia/` ; `tls` vaut `off` ou `verify`.
+`groups` vaut `tomcat,kafka` par défaut, ou `tomcat`, `kafka` ou `none` ; `path` vaut `/jolokia/` ; `tls` vaut `off` ou `verify` ; `fingerprint`, avec `verify`, est le SHA-256 d'un certificat à reconnaître que les racines de la machine ne reconnaissent pas. `POST /api/v1/servers/{id}/jmx/test` affiche un certificat tel que le serveur central ou le relais le voit, avec les mêmes réglages et `probe`, et ne lit Jolokia qu'une fois celui-ci reconnu.
 
 ## Modifier l'alerte
 
@@ -163,7 +167,7 @@ Quand `jmx_up` vaut 0, son étiquette `reason` dit pourquoi, et son étiquette `
 | --- | --- |
 | `connect` | Rien ne répond à cette adresse et ce port : l'application est arrêtée, Jolokia n'est pas chargé (vérifiez l'option `-javaagent`), il écoute ailleurs (`host`, `port`), ou un pare-feu refuse la connexion |
 | `timeout` | Pas de réponse à temps : un pare-feu qui jette les paquets, ou une JVM si occupée à ramasser les miettes qu'elle ne peut plus répondre, souvent le pire des cas |
-| `tls` | Le certificat de Jolokia n'est pas reconnu par la machine qui fait le contrôle, ou pas pour ce nom |
+| `tls` | Le certificat de Jolokia n'est pas reconnu par la machine qui fait le contrôle, ou pas pour ce nom, ou il a changé depuis l'empreinte reconnue : l'erreur donne son empreinte |
 | `login` | Mauvais nom d'utilisateur ou mot de passe, ou Jolokia en demande un et aucun n'est saisi |
 | `permission` | La politique de Jolokia refuse de lire `java.lang:type=Memory` : autorisez `read` |
 | `protocol` | Autre chose a répondu sur ce port, ou rien à ce chemin (HTTP 404) : vérifiez « Chemin » |

@@ -307,9 +307,13 @@ export interface RemoteTerminalAccess {
   can_open: boolean;
   /** They may see the server's past sessions. */
   can_review: boolean;
-  /** New terminals are recorded; desktops never are. */
+  /** New terminals and desktops are recorded (ADR-0192). */
   recorded: boolean;
   idle_timeout_minutes: number;
+  /** New desktops share the clipboard with the browser (ADR-0192). */
+  desktop_clipboard: boolean;
+  /** New desktops copy files with the browser. */
+  desktop_files: boolean;
 }
 
 /** A remote terminal or desktop session (ADR-0190). */
@@ -330,6 +334,10 @@ export interface RemoteSession {
   recorded: boolean;
   bytes_in: number;
   bytes_out: number;
+  /** A desktop's clipboard passes, as the settings said when it started (ADR-0192). */
+  clipboard: boolean;
+  /** A desktop's file transfers pass. */
+  file_transfer: boolean;
 }
 
 /** Answer of `POST /api/servers/{id}/remote-sessions`. */
@@ -345,8 +353,25 @@ export interface RemoteSessionStart {
 /** What a recorded session printed. */
 export interface RemoteRecording {
   session: RemoteSession;
-  /** In order; `data` is base64. */
+  /** A terminal's, in order; `data` is base64. */
   chunks: { at_ms: number; data: string }[];
+  /** A desktop's pictures, in order (ADR-0192). */
+  frames: DesktopFrame[];
+}
+
+/** One picture of a desktop's recording: the part of the screen it covers (ADR-0192). */
+export interface DesktopFrame {
+  seq: number;
+  at_ms: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** The whole screen's size when it was taken. */
+  screen_width: number;
+  screen_height: number;
+  /** The size of its PNG. */
+  bytes: number;
 }
 
 /** `GET /api/settings/remote-access` (ADR-0190). */
@@ -356,6 +381,10 @@ export interface RemoteAccessSettings {
   record: boolean;
   idle_timeout_minutes: number;
   retention_days: number;
+  /** Desktops share the clipboard with the browser, both ways (ADR-0192). */
+  desktop_clipboard: boolean;
+  /** Desktops copy files with the browser, both ways. */
+  desktop_files: boolean;
 }
 
 /** An `ai_commands` command: who asked to turn AI commands on or off, and what came of it (ADR-0098). */
@@ -1051,24 +1080,26 @@ export interface DeviceRequest {
   template?: string;
   /** For a vCenter or ESXi host (ADR-0156): its `vmware` check and alerts come with it. */
   vmware?: VmwareCredentialsRequest;
-  /** For an AWS account or an Azure subscription (ADR-0183): read by the central server. */
+  /** For an AWS account, an Azure subscription or a Google Cloud project (ADR-0183): read by the central server. */
   cloud?: CloudCredentialsRequest;
 }
 
-export type CloudProvider = "aws" | "azure";
+export type CloudProvider = "aws" | "azure" | "gcp";
 
 /** Cloud credentials as sent; what is left out keeps the stored value (ADR-0183). */
 export interface CloudCredentialsRequest {
   provider?: CloudProvider;
-  /** AWS: the access key ID. Azure: the application (client) ID. */
+  /** AWS: the access key ID. Azure: the application (client) ID. Google Cloud: the service account, from the key. */
   key_id?: string;
-  /** The secret access key or the client secret. */
+  /** The secret access key, the client secret, or a service account's JSON key file. */
   secret?: string;
   /** AWS only. */
   regions?: string[];
   /** Azure only. */
   tenant?: string;
   subscription?: string;
+  /** Google Cloud only: the key's own project when left out. */
+  project?: string;
 }
 
 /** A device's cloud credentials, never the secret. */
@@ -1078,6 +1109,7 @@ export interface CloudCredentials {
   regions: string[];
   tenant: string | null;
   subscription: string | null;
+  project: string | null;
   secret_set: boolean;
   updated_at: string;
 }
@@ -1132,10 +1164,39 @@ export interface VmwareTested {
   probe: string;
 }
 
+/** The certificate a test met, to trust by its fingerprint. */
+export type TestedCertificate = NonNullable<VmwareTested["certificate"]>;
+
+/** A Java check's settings for a test of its HTTPS certificate (ADR-0183). */
+export interface JmxTestRequest {
+  /** `central` or a relay's ID; absent: a device's default probe. */
+  probe?: string;
+  /** Absent: the server's address. */
+  host?: string;
+  port?: number;
+  path?: string;
+  user?: string;
+  password?: string;
+  fingerprint?: string;
+}
+
+/** What a Jolokia over HTTPS answered to a test. */
+export interface JmxTested {
+  answers: boolean;
+  error: string | null;
+  certificate: TestedCertificate | null;
+  /** null when not tried: a certificate not trusted yet, the password never sent then. */
+  reads: boolean | null;
+  vm: string | null;
+  version: string | null;
+  probe: string;
+}
+
 /** One host, cluster, virtual machine or datastore of a source. */
 export interface VirtualObject {
   id: string;
-  kind: "vm" | "host" | "cluster" | "datastore";
+  /** A hypervisor's objects, or a Kubernetes cluster's (`node` to `job`). */
+  kind: "vm" | "host" | "cluster" | "datastore" | "node" | "namespace" | "workload" | "job";
   name: string;
   key: string;
   details: Record<string, string>;
@@ -3299,8 +3360,26 @@ export interface ThirdPartySelection {
   hold?: string[];
 }
 
-/** Software managers of the catalogue (ADR-0188): winget on Windows, apt on Debian and Ubuntu, dnf on RHEL. */
-export type SoftwareManager = "winget" | "apt" | "dnf";
+/** Software managers of the catalogue (ADR-0188): winget and MSI files on Windows, apt on Debian and Ubuntu, dnf on RHEL. */
+export type SoftwareManager = "winget" | "msi" | "apt" | "dnf";
+
+/** A public property passed to `msiexec` at every install of an MSI entry. */
+export interface MsiProperty {
+  name: string;
+  value: string;
+}
+
+/** An uploaded MSI file (ADR-0188), as `POST /api/software/files` answers. */
+export interface SoftwareFile {
+  sha256: string;
+  size: number;
+  file_name: string;
+  /** Read from the file; null when it has none. */
+  product_code: string | null;
+  product_name: string;
+  product_version: string;
+  manufacturer: string;
+}
 
 /** One entry of the software catalogue (ADR-0188). */
 export interface SoftwareEntry {
@@ -3315,6 +3394,10 @@ export interface SoftwareEntry {
   source: string;
   /** apt and dnf: the mirror it installs from; null for the servers' own sources. Absent from older servers. */
   mirror?: string | null;
+  /** msi: the uploaded file; null otherwise. Absent from older servers. */
+  file?: SoftwareFile | null;
+  /** msi: public properties passed to msiexec. */
+  properties?: MsiProperty[];
   description: string;
   created_by: string | null;
   created_at: string;
@@ -3332,6 +3415,10 @@ export interface SoftwareRequest {
   source?: string;
   /** apt and dnf only: a mirror of the same family. */
   mirror?: string | null;
+  /** msi only: the SHA-256 of an uploaded file. */
+  file_sha256?: string;
+  /** msi only: public properties passed to msiexec. */
+  properties?: MsiProperty[];
   description?: string;
 }
 
@@ -3355,6 +3442,8 @@ export interface CampaignSoftware {
     source: string;
     /** The mirror added to the servers' sources for it. */
     mirror?: string;
+    /** msi: the file and properties, as resolved. */
+    msi?: { sha256: string; size: number; properties: MsiProperty[] };
   }[];
 }
 
@@ -3462,6 +3551,8 @@ export interface MajorUpgradeProgress {
   disabled_sources: string[];
   /** leapp's report as it wrote it, inhibitors included; null outside the RHEL family. */
   report?: string | null;
+  /** `leapp preupgrade` alone, not an upgrade: `done` means no inhibitor, and the release did not change. */
+  preupgrade_only?: boolean;
   started_at: string | null;
   updated_at: string | null;
 }
@@ -3482,6 +3573,8 @@ export interface ServerUpgrade {
   progress: MajorUpgradeProgress | null;
   reported_at: string | null;
   can_upgrade: boolean;
+  /** The user may run `leapp preupgrade` alone on it now (RHEL family, ADR-0182). */
+  can_preupgrade?: boolean;
 }
 
 /** A past run of a campaign, as it ended (ADR-0173). */
@@ -6078,6 +6171,8 @@ export const api = {
     request<{ objects: SnmpObject[]; names: Record<string, string> }>(`/api/snmp-objects?q=${encodeURIComponent(q)}`, { signal }),
 
   /** What a vCenter or ESXi host answers, from its probe; logs in only once its certificate is trusted (ADR-0156). */
+  testJmx: (serverId: string, body: JmxTestRequest) =>
+    request<JmxTested>(`/api/servers/${encodeURIComponent(serverId)}/jmx/test`, { method: "POST", body }),
   testVmware: (body: { site_id: string; address: string; probe?: string; vmware: VmwareCredentialsRequest }) =>
     request<VmwareTested>("/api/devices/vmware/test", { method: "POST", body }),
 
@@ -6246,6 +6341,13 @@ export const api = {
 
   deleteSoftware: (id: string) => request<void>(`/api/software/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
+  /** Uploads an MSI file for the catalogue; its ProductCode is read from it (ADR-0188). */
+  uploadSoftwareFile: (file: Blob, fileName: string) =>
+    request<SoftwareFile>(`/api/software/files?file_name=${encodeURIComponent(fileName)}`, {
+      method: "POST",
+      file,
+    }),
+
   /** 409 when the campaign's state does not allow `action`. */
   campaignAction: (id: string, action: CampaignAction) =>
     request<CampaignDetail>(
@@ -6354,6 +6456,10 @@ export const api = {
     request<SourcesStatus>(`/api/servers/${encodeURIComponent(id)}/sources`, {
       signal,
     }),
+
+  /** Runs `leapp preupgrade` alone on the server; its report comes back in its major upgrade progress (ADR-0182). */
+  leappPreupgrade: (id: string) =>
+    request<CommandDetail>(`/api/servers/${encodeURIComponent(id)}/major-upgrade/preupgrade`, { method: "POST" }),
 
   /** Points the server at the mirrors of its distribution; 409 says why not. */
   useMirror: (id: string) =>
@@ -6553,6 +6659,22 @@ export const api = {
   /** What a recorded session printed; site administrators. */
   remoteRecording: (sessionId: string, signal?: AbortSignal) =>
     request<RemoteRecording>(`/api/remote-sessions/${encodeURIComponent(sessionId)}/recording`, { signal }),
+
+  /** One picture of a desktop's recording, a PNG. */
+  remoteDesktopFrame: async (sessionId: string, seq: number, signal?: AbortSignal): Promise<Blob> => {
+    let response: Response;
+    try {
+      response = await fetch(
+        `/api/remote-sessions/${encodeURIComponent(sessionId)}/recording/frames/${encodeURIComponent(seq)}`,
+        { credentials: "same-origin", signal },
+      );
+    } catch (cause) {
+      if (isAbortError(cause)) throw cause;
+      throw new ApiError(0, "network error", { cause });
+    }
+    if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+    return response.blob();
+  },
 
   remoteAccessSettings: (signal?: AbortSignal) =>
     request<RemoteAccessSettings>("/api/settings/remote-access", { signal }),
