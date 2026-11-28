@@ -2473,7 +2473,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-agent"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2523,7 +2523,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-ai"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2539,7 +2539,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-apps"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2567,7 +2567,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-cloud"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-common"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-e2e"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "monitorflow-agent",
  "serde_json",
@@ -2645,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-flow"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "monitorflow-common",
  "thiserror",
@@ -2655,7 +2655,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-import"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2674,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-loadtest"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2694,7 +2694,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-plugin"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2717,7 +2717,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-plugin-sdk"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2725,7 +2725,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-probe"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "monitorflow-apps",
@@ -2739,7 +2739,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-relay"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2779,7 +2779,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-sensors"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "regex",
@@ -2797,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-server"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-server-ee"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2885,7 +2885,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-snmp"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-snmp",
  "async-trait",
@@ -2899,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-updater"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2920,7 +2920,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-vmware"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2940,7 +2940,7 @@ dependencies = [
 
 [[package]]
 name = "monitorflow-webcheck"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
